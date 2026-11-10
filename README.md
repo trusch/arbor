@@ -9,6 +9,14 @@ npm run shots          # headless chromium proof shots -> shots/ (growth stages 
 node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 ```
 
+## Watching
+
+- **Presets** (top of the panel, regrows): Oak meadow, Windswept cypress, Weeping willow, Low-gravity alien, Crimson world, Bioluminescent night, Heavy world, Journey: Earth → alien. URL: `?preset=Crimson%20world`.
+- **Automation** folder: *Journey* keyframes (`Add keyframe (now)` snapshots every numeric param at the current tree age; values smoothstep between keyframes as the tree grows; presets can ship a journey). *Drift*: pick a param, toggle drift, set rate (Hz of sim time) and range (± relative); smooth low-frequency noise around the base value. The sim reads params live, so new growth records the history (bends, colour bands). If gravity/crown changes move the crown envelope, attractors are re-sampled during growth.
+- **Cinema** camera (default on): slow orbit with breathing height and rare slow push-ins, always framing the tree. Any drag pauses it; it resumes after 10 s idle.
+- Keys: **H** hide/show all UI (watch mode, also `?hideui=1`), **C** toggle cinema. A small overlay (preset · age · clock) fades out after 4 s without mouse movement.
+- Alien params: `growth.weeping` (twig downward tropism ∝ gravity), `growth.torsion` (spiral twist per segment), `crown.bole` (clear trunk height), `leaves.shape` (fan ↔ narrow), `leaves.lightness`, `leaves.glow`/`glowHue` (bioluminescence, strongest at night), `sky.skyHue`/`skyTint` (sky+fog tint), `sky.sunHue`/`sunTint`, `sky.sun2`/`sun2Hue`/`sun2Yaw` (companion star: fill light + disc), `sky.sunSize`, `sky.groundHue`/`groundTint`.
+
 ## Layout
 
 | Path | Role |
@@ -24,7 +32,9 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 | `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
 | `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
-| `src/ui.ts` | lil-gui panel. |
+| `src/ui.ts` | lil-gui panel (presets, automation, all params). |
+| `src/automation.ts` | `Automation`: journey keyframes + per-param drift, applied before every sim step (`main.ts advance`). |
+| `src/presets.ts` | Preset overrides + optional journeys. |
 | `scripts/screenshot.mjs` | Playwright-core + system chromium (SwiftShader) shots; uses `window.__arbor.fastForward(s)`. |
 
 ## Model
@@ -43,13 +53,15 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 
 ## Known weaknesses
 
-- Sky radiance is clamped at 1.8 (HDR) so bloom does not flood the frame at low sun; the sun disc is therefore not visible. A dedicated sun sprite would bring it back.
+- Sky radiance is clamped at 1.8 (HDR); the sun disc(s) are added in the sky shader after the clamp (sprites drew as solid quads in the GTAO pass).
 - God rays are screen-space and only appear with the sun on screen. They are not tuned yet (default strength is low).
 - Stars are point sprites; the moon is an unlit sphere with no phases.
 - Ground/hills colours and the noon sky are still somewhat desaturated and flat.
 
 - The branch mesh and leaf matrices are rebuilt on the CPU at about 8 Hz while growing (4 Hz when paused), not every frame. Leaf sway runs in the shader. Headless SwiftShader at t=90 (about 5k nodes, 10k drawn leaves) runs at 26 fps; it ran at 12–17 fps before the throttle. Incremental (dirty-subtree) rebuilds are not done yet.
 - Pruned twigs disappear at once instead of withering. The light grid ignores the actual sun direction.
-- The bark texture is unchanged: no deep fissures, no moss. Branches do not sway. The sun disc is still hidden (no sun sprite yet).
-- Low gravity alone gives a taller, stiffer tree rather than a strongly alien one. Alien looks need presets that combine gravity, wander, gravitropism and crown shape.
+- The bark texture is unchanged: no deep fissures, no moss. Branches do not sway.
+- Low-gravity alien preset grows a wide low bush on a thin spiralling stalk rather than the intended very tall tree (leader wander/turn too high); needs a retune.
+- Noon foliage is green now (leaf envMapIntensity 0.3, more saturation) but still reads dark from below.
+- Journey/drift changes to crown params only take effect via attractor re-sampling; cinema camera is not tested headless (shots disable it). Journey end shot (m3-journey-day-16.8-end) crops the crown top: framing lags the late upward growth after attractor re-sampling. Heavy world reads squat and buttressed but the crown is a dense flat mat.
 - Branches have no wind sway, only leaves do. Sag does not resolve collisions.

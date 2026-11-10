@@ -11,3 +11,6 @@
 - `scripts/screenshot.mjs` args: stages, extraQuery, prefix, `hour:name,...` list (or `none`). SHOT_W/SHOT_H env set the resolution. Each run takes about 70s on SwiftShader.
 - Chains can be `pruned` (shaded out by the light grid in `TreeSim.updateLight`). Renderers must skip pruned chains, and the pipe model ignores them. Radii never shrink.
 - `BranchMesh.update` is throttled in `main.ts` (`redraw`). Call it with `meshAge = Infinity` to force a rebuild (see `fastForward`).
+- Automation (`src/automation.ts`) writes into the live params object before every sim step; presets are copied into params in place (`loadPreset` in `main.ts`) so GUI controllers stay bound. Use `?preset=Name`.
+- Sun discs are drawn in the patched sky shader (`disc1*/disc2*` uniforms); do not use sprites (GTAO override material renders them as solid quads). The env-map sky has `discOn = 0`.
+- Screenshot script disables cinema (`cinema=false`) and accepts `PORT` env so several runs can go in parallel (more than ~4 in parallel times out).
