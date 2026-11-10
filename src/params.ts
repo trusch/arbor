@@ -69,6 +69,26 @@ export interface ArborParams {
     azimuth: number;
     elevation: number;
   };
+  /** Day/night cycle, atmosphere and render quality. */
+  sky: {
+    /** Hour of day 0..24. */
+    timeOfDay: number;
+    /** Advance timeOfDay automatically. */
+    cycle: boolean;
+    /** Real seconds per full day. */
+    dayLength: number;
+    /** Latitude in degrees; sets the height of the sun arc. */
+    latitude: number;
+    /** Rotates the sun arc around the vertical axis, degrees. */
+    sunYaw: number;
+    exposure: number;
+    skyGain: number;
+    /** Fog / aerial perspective density multiplier. */
+    fog: number;
+    stars: number;
+    godRays: number;
+    quality: 'High' | 'Low';
+  };
   camera: {
     autoFrame: boolean;
     autoRotate: boolean;
@@ -103,6 +123,7 @@ export function defaultParams(): ArborParams {
     thickness: { exponent: 2.3, twigRadius: 0.012, thickeningRate: 0.6 },
     leaves: { size: 0.16, density: 2, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.035 },
     light: { azimuth: 35, elevation: 50 },
+    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 200, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },
     camera: { autoFrame: true, autoRotate: true },
     seed: { seed: 1 },
   };

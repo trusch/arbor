@@ -1,5 +1,6 @@
 // Headless proof shots: starts vite, fast-forwards growth, saves PNGs to shots/.
-// Usage: node scripts/screenshot.mjs [stages=8,30,90] [extraQuery] [prefix]
+// Usage: node scripts/screenshot.mjs [stages=8,30,90] [extraQuery] [prefix] [times=7.5:morning,13:noon,...|none]
+// After the growth stages, the final tree is re-shot at each hour of the day cycle (sky.timeOfDay).
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
@@ -9,6 +10,9 @@ const extra = process.argv[3] ?? '';
 const prefix = process.argv[4] ?? 'earth';
 const names = ['sapling', 'young', 'mature', 'old', 'ancient'];
 const PORT = 5199;
+const timesArg = process.argv[5] ?? '7.5:morning,13:noon,18.6:golden,20.0:bluehour,23.5:night';
+const times = timesArg === 'none' ? [] : timesArg.split(',').map((t) => { const [h, n] = t.split(':'); return { h: Number(h), n: n ?? `h${h}` }; });
+const W = Number(process.env.SHOT_W ?? 1024), H = Number(process.env.SHOT_H ?? 640);
 
 mkdirSync('shots', { recursive: true });
 const vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -19,7 +23,7 @@ const browser = await chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
 });
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const page = await browser.newPage({ viewport: { width: W, height: H } });
   page.on('console', (m) => m.type() === 'error' && console.error('[page]', m.text()));
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   await page.goto(`http://localhost:${PORT}/?nogui=1&speed=0&autoRotate=false&${extra}`);
@@ -32,6 +36,13 @@ try {
     const file = `shots/${prefix}-${i + 1}-${names[i] ?? 'stage'}-t${stages[i]}.png`;
     await page.screenshot({ path: file });
     console.log(file, JSON.stringify(info));
+  }
+  for (const t of times) {
+    await page.evaluate((h) => { window.__arbor.params.sky.timeOfDay = h; return window.__arbor.fastForward(0); }, t.h);
+    await page.waitForTimeout(600);
+    const file = `shots/${prefix}-day-${t.h.toFixed(1).padStart(4, '0')}-${t.n}.png`;
+    await page.screenshot({ path: file });
+    console.log(file);
   }
 } finally {
   await browser.close();

@@ -60,7 +60,7 @@ function loop(now: number) {
   else sim.updateStructure(0);
   stage.frame(sim, params, dt);
   redraw(elapsed);
-  stage.renderer.render(stage.scene, stage.camera);
+  stage.render(params);
   frames++;
   fpsT += dt;
   if (fpsT > 0.5) {
@@ -88,7 +88,7 @@ requestAnimationFrame(loop);
     sim.updateStructure(0);
     stage.frame(sim, params, 0, true);
     redraw(elapsed);
-    stage.renderer.render(stage.scene, stage.camera);
+    stage.render(params);
     return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time };
   },
 };

@@ -50,9 +50,22 @@ export function buildGui(p: ArborParams, a: UiActions): GUI {
   l.add(p.leaves, 'saturation', 0, 1, 0.01);
   l.add(p.leaves, 'maxBranchRadius', 0.005, 0.2, 0.001);
 
-  const li = gui.addFolder('Light');
+  const li = gui.addFolder('Growth light (phototropism)');
   li.add(p.light, 'azimuth', 0, 360, 1);
   li.add(p.light, 'elevation', 5, 89, 1);
+
+  const sk = gui.addFolder('Sky & look');
+  sk.add(p.sky, 'timeOfDay', 0, 24, 0.01).listen();
+  sk.add(p.sky, 'cycle').name('day/night cycle');
+  sk.add(p.sky, 'dayLength', 10, 1800, 1).name('day length (s)');
+  sk.add(p.sky, 'latitude', 0, 75, 0.5);
+  sk.add(p.sky, 'sunYaw', 0, 360, 1);
+  sk.add(p.sky, 'exposure', 0.1, 3, 0.01);
+  sk.add(p.sky, 'skyGain', 0.1, 3, 0.01);
+  sk.add(p.sky, 'fog', 0, 5, 0.01);
+  sk.add(p.sky, 'stars', 0, 2, 0.01);
+  sk.add(p.sky, 'godRays', 0, 3, 0.01);
+  sk.add(p.sky, 'quality', ['High', 'Low']);
 
   const cam = gui.addFolder('Camera');
   cam.add(p.camera, 'autoFrame').listen();
