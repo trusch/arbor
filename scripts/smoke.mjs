@@ -1,6 +1,6 @@
 // Interaction smoke test in headless chromium (SwiftShader).
 // Usage: node scripts/smoke.mjs [url]   (default: the deployed app http://10.77.0.2:8050/; pass "dev" to start vite)
-// Checks: no console errors, preset dropdown, drift, journey keyframes + interpolation, H/C keys, cinema camera motion.
+// Checks: no console errors, reload survives, phone emulation picks Low (DPR 1, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset dropdown, drift, journey keyframes + interpolation, H/C keys, cinema camera motion.
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 
@@ -19,7 +19,7 @@ const errors = [];
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM ?? '/usr/sbin/chromium',
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-precise-memory-info'],
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
@@ -114,6 +114,57 @@ try {
   check('auto-frame keeps crown bbox in view', inView === 8, `${inView}/8 corners`);
 
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+  // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
+  await sel.selectOption({ label: names[names.length - 1] });
+  for (let i = 0; i < 2; i++) {
+    const before = errors.length;
+    await page.reload();
+    await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    const t0 = await page.evaluate(() => window.__arbor.sim.time);
+    await page.waitForTimeout(1500);
+    const t1 = await page.evaluate(() => ({ t: window.__arbor.sim.time, fe: window.__arbor.frameErrors() }));
+    check(`reload ${i + 1} runs`, errors.length === before && t1.t > t0 && t1.fe === 0, `sim ${t0.toFixed(2)}→${t1.t.toFixed(2)} frameErrors=${t1.fe}`);
+  }
+  // Junk query values must not poison params with NaN.
+  await page.goto(`${url}?quality=Low&t=abc&speed=xyz`);
+  await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+  const junk = await page.evaluate(() => ({ s: window.__arbor.params.time.speed, t: window.__arbor.sim.time }));
+  check('junk query values ignored', Number.isFinite(junk.s) && Number.isFinite(junk.t), JSON.stringify(junk));
+
+  // Android phone emulation (412x915 @ DPR 3, mobile UA): auto-Low, DPR 1, no post render targets, 1024 shadow map.
+  const mctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
+  const mp = await mctx.newPage();
+  const merr = [];
+  mp.on('pageerror', (e) => merr.push(e.message));
+  await mp.goto(url);
+  await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+  await mp.waitForTimeout(6000);
+  const mob = await mp.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, dpr: r.getPixelRatio(), post: !!A.stage._post, shadow: A.stage.sun.shadow.mapSize.x, maxNodes: A.params.growth.maxNodes, fe: A.frameErrors() }; });
+  check('phone: auto Low, DPR 1, no post RTs, small shadow map', mob.q === 'Low' && mob.dpr === 1 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, JSON.stringify(mob));
+  await mctx.close();
+
+  // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.
+  const SOAK = Number(process.env.SOAK_S ?? 120);
+  if (SOAK > 0) {
+    await page.goto(`${url}?quality=High`);
+    await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await page.evaluate(() => { const P = window.__arbor.params; P.time.speed = 8; P.sky.cycle = true; P.sky.dayLength = 20; });
+    const sample = () => page.evaluate(() => { const r = window.__arbor.stage.renderer; return { geo: r.info.memory.geometries, tex: r.info.memory.textures, prog: r.info.programs.length, heapMB: Math.round((performance.memory?.usedJSHeapSize ?? 0) / 1e6), nodes: window.__arbor.sim.nodes.length }; });
+    const samples = [];
+    // Warm-up: grow most of the tree so lazily created resources exist before the baseline.
+    await page.evaluate(() => window.__arbor.fastForward(40));
+    for (let t = 0; t <= SOAK; t += 10) {
+      samples.push(await sample());
+      if (t < SOAK) { await page.evaluate(() => window.__arbor.fastForward(10)); await page.waitForTimeout(10000); }
+    }
+    const a = samples[1] ?? samples[0], z = samples[samples.length - 1];
+    const heaps = samples.map((s) => s.heapMB);
+    check(`soak ${SOAK}s: GPU counters flat`, z.geo <= a.geo + 1 && z.tex <= a.tex + 1 && z.prog <= a.prog + 1, `geo ${a.geo}→${z.geo} tex ${a.tex}→${z.tex} prog ${a.prog}→${z.prog}`);
+    check(`soak ${SOAK}s: heap bounded`, Math.max(...heaps) < Math.max(80, heaps[1] * 3), `heap MB ${heaps.join(',')} nodes ${samples.map((s) => s.nodes).join(',')}`);
+    check('soak: no frame errors', errors.length === 0 && (await page.evaluate(() => window.__arbor.frameErrors())) === 0, errors.slice(0, 3).join(' | '));
+  }
 } finally {
   await browser.close();
   vite?.kill();

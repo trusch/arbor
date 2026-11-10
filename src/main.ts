@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { defaultParams, applyQueryOverrides } from './params';
 import { TreeSim } from './sim/tree';
-import { Stage } from './render/stage';
+import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves } from './render/leaves';
 import { makeBarkTextures, makeLeafTexture } from './render/textures';
@@ -14,17 +14,33 @@ const query = new URLSearchParams(location.search);
 const params = defaultParams();
 const automation = new Automation(params);
 let presetName = query.get('preset') ?? 'Oak meadow';
+/** Node cap for low-end devices; re-applied after every preset load. */
+let nodeBudget = Infinity;
 /** Copy a preset into the live params object in place (GUI controllers stay bound) and load its journey. */
 function loadPreset(name: string) {
   presetName = name;
   const src = presetParams(name) as unknown as Record<string, Record<string, unknown>>;
   const dst = params as unknown as Record<string, Record<string, unknown>>;
   for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time') Object.assign(dst[g], src[g]);
+  params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
   automation.drift = {};
   automation.journey = (PRESETS[name]?.journey ?? []).map((k) => ({ t: k.t, values: { ...k.values } }));
 }
 loadPreset(presetName);
 applyQueryOverrides(params, location.search);
+// Phones / weak GPUs default to Low (no post RTs, DPR 1, 1024 shadow map); ?quality=High overrides.
+const lowEnd = lowEndDevice();
+if (!query.has('quality') && !query.has('sky.quality') && lowEnd) params.sky.quality = 'Low';
+// Phones also get a smaller growth budget (fewer segments → fewer tube vertices and leaves); ?maxNodes= overrides.
+if (lowEnd && !query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.min(params.growth.maxNodes, (nodeBudget = 7000));
+function lowEndDevice() {
+  const uad = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (uad?.mobile) return true;
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) return true;
+  if (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 900) return true; // iPadOS reports as Mac
+  if ((navigator as Navigator & { deviceMemory?: number }).deviceMemory !== undefined && (navigator as Navigator & { deviceMemory?: number }).deviceMemory! < 4) return true;
+  return false;
+}
 
 const stage = new Stage(document.body);
 const sim = new TreeSim(params);
@@ -112,7 +128,18 @@ const hud = document.getElementById('hud')!;
 let last = performance.now();
 let elapsed = 0;
 let frames = 0, fpsT = 0, fps = 0;
+let frameErrors = 0;
 function loop(now: number) {
+  requestAnimationFrame(loop);
+  try {
+    frame(now);
+  } catch (e) {
+    // Never let one bad frame stop the loop forever; report the first few.
+    if (frameErrors++ < 3) console.error('arbor frame error', e);
+    if (frameErrors === 1) showNotice(`Render error: ${(e as Error)?.message ?? e} (still running)`);
+  }
+}
+function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   elapsed += dt;
@@ -137,7 +164,6 @@ function loop(now: number) {
     overlay.textContent = `${presetName} · age ${sim.time.toFixed(0)} s · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     hud.textContent = `t ${sim.time.toFixed(1)}s  nodes ${sim.nodes.length}  leaves ${leaves.mesh.count}  free attractors ${sim.attractorCount}  ${fps.toFixed(0)} fps`;
   }
-  requestAnimationFrame(loop);
 }
 
 regrow();
@@ -154,6 +180,7 @@ requestAnimationFrame(loop);
   loadPreset: (n: string) => { loadPreset(n); regrow(); },
   sim,
   stage,
+  frameErrors: () => frameErrors,
   fastForward(seconds: number) {
     advance(seconds);
     sim.updateStructure(0);

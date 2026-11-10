@@ -185,7 +185,10 @@ export function applyQueryOverrides(p: ArborParams, search: string): void {
       const grp = groups[gn];
       if (f in grp) {
         const cur = grp[f];
-        grp[f] = typeof cur === 'boolean' ? value === 'true' || value === '1' : typeof cur === 'number' ? Number(value) : value;
+        if (typeof cur === 'number') {
+          const n = Number(value);
+          if (Number.isFinite(n)) grp[f] = n; // ignore junk like ?t=abc instead of feeding NaN into the sim
+        } else grp[f] = typeof cur === 'boolean' ? value === 'true' || value === '1' : value;
         return;
       }
     }

@@ -209,7 +209,10 @@ export class Atmosphere {
 
     // Environment map: regenerate on significant sun change or every few seconds.
     this.envAge += dt;
-    if (this.lastEnvDir.distanceTo(this.sunDir) > 0.03 || (this.envAge > 4 && this.lastEnvDir.distanceTo(this.sunDir) > 0.002)) {
+    // Low quality (phones): at most one PMREM bake every 3 s, so a fast day cycle doesn't churn GPU memory.
+    const minAge = k.quality === 'Low' ? 3 : 0;
+    const moved = this.lastEnvDir.distanceTo(this.sunDir);
+    if (this.envAge >= minAge && (moved > 0.03 || (this.envAge > 4 && moved > 0.002))) {
       this.regenEnv();
     }
   }

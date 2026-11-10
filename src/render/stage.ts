@@ -15,7 +15,19 @@ export class Stage {
   sun: THREE.DirectionalLight;
   hemi: THREE.HemisphereLight;
   atmo: Atmosphere;
-  post: Post;
+  /** Created on first High-quality frame, so Low (mobile) never allocates the post render targets. */
+  private _post: Post | null = null;
+  get post(): Post {
+    if (!this._post) {
+      this._post = new Post(this.renderer, this.scene, this.camera);
+      this._post.setSize(window.innerWidth, window.innerHeight);
+    }
+    return this._post;
+  }
+  /** Quality the renderer is currently configured for (pixel ratio + shadow map size). */
+  private quality = '';
+  /** True between webglcontextlost and the reload on webglcontextrestored. */
+  contextLost = false;
   private fog: THREE.FogExp2;
   private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) }, tint: { value: new THREE.Vector4(0, 0, 0, 0) } };
   /** Companion-star fill light (no shadows). */
@@ -30,8 +42,8 @@ export class Stage {
   private sunUv = new THREE.Vector3();
 
   constructor(container: HTMLElement) {
-    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }));
-    r.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' }));
+    r.setPixelRatio(1);
     r.setSize(window.innerWidth, window.innerHeight);
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.outputColorSpace = THREE.SRGBColorSpace;
@@ -65,14 +77,40 @@ export class Stage {
     this.controls.addEventListener('start', () => (this.idle = 0));
 
     this.scene.add(this.makeGround(), this.makeHills());
-    this.post = new Post(r, this.scene, this.camera);
 
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       r.setSize(window.innerWidth, window.innerHeight);
-      this.post.setSize(window.innerWidth, window.innerHeight);
+      this._post?.setSize(window.innerWidth, window.innerHeight);
     });
+
+    // GPU reset / mobile tab eviction: keep the page alive, tell the user, reload once the context returns.
+    r.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      showNotice('Graphics context lost (GPU reset or memory pressure). Reloading when it comes back…');
+    });
+    r.domElement.addEventListener('webglcontextrestored', () => location.reload());
+  }
+
+  /** Pixel ratio and shadow map size per quality: High caps DPR at 1.5 and uses a 2048 shadow map, Low uses DPR 1 and 1024. */
+  private applyQuality(q: string) {
+    if (q === this.quality) return;
+    this.quality = q;
+    const high = q === 'High';
+    this.renderer.setPixelRatio(Math.min(high ? 1.5 : 1, window.devicePixelRatio || 1));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this._post) {
+      this._post.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this._post.setSize(window.innerWidth, window.innerHeight);
+    }
+    const ms = high ? 2048 : 1024;
+    if (this.sun.shadow.mapSize.x !== ms) {
+      this.sun.shadow.mapSize.set(ms, ms);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
   }
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
@@ -180,17 +218,20 @@ export class Stage {
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
 
     // Post: god rays from the sun screen position at low sun, grade warmth by time of day.
-    const P = this.post;
-    const sp = this.sunUv.copy(this.camera.position).addScaledVector(A.sunDir, 1000).project(this.camera);
-    const facing = A.sunDir.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-    const low = 1 - Math.min(1, Math.max(0, (A.sunH - 0.05) / 0.4));
-    P.rays.uniforms.sunUv.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
-    P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 0.5;
-    P.rays.uniforms.tint.value.copy(A.keyColor);
-    P.grade.uniforms.time.value = performance.now() / 1000;
-    P.grade.uniforms.vignette.value = 0.38;
-    P.grade.uniforms.grain.value = 0.03;
-    P.grade.uniforms.saturation.value = 1.04 + 0.1 * day;
+    // Only touch post uniforms on High: the getter would otherwise allocate the post RTs on Low.
+    const P = k.quality === 'High' ? this.post : null;
+    if (P) {
+      const sp = this.sunUv.copy(this.camera.position).addScaledVector(A.sunDir, 1000).project(this.camera);
+      const facing = A.sunDir.dot(this.camera.getWorldDirection(new THREE.Vector3()));
+      const low = 1 - Math.min(1, Math.max(0, (A.sunH - 0.05) / 0.4));
+      P.rays.uniforms.sunUv.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
+      P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 0.5;
+      P.rays.uniforms.tint.value.copy(A.keyColor);
+      P.grade.uniforms.time.value = performance.now() / 1000;
+      P.grade.uniforms.vignette.value = 0.38;
+      P.grade.uniforms.grain.value = 0.03;
+      P.grade.uniforms.saturation.value = 1.04 + 0.1 * day;
+    }
 
     this.idle += dt;
     const cine = p.camera.cinema && this.idle > 10;
@@ -240,10 +281,24 @@ export class Stage {
   }
 
   render(p: ArborParams) {
+    if (this.contextLost) return;
+    this.applyQuality(p.sky.quality);
     if (p.sky.quality === 'High') {
       this.post.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
     }
   }
+}
+
+/** Fixed banner for fatal/runtime problems (context loss, frame errors). */
+export function showNotice(text: string) {
+  let el = document.getElementById('notice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'notice';
+    el.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);max-width:80vw;padding:8px 14px;border-radius:6px;background:#000b;color:#fff;font:13px/1.4 ui-sans-serif,system-ui,sans-serif;z-index:10;pointer-events:none';
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
 }
