@@ -131,7 +131,7 @@ export function defaultParams(): ArborParams {
       maxNodes: 14000,
     },
     crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, attractors: 4000 },
-    thickness: { exponent: 2.05, twigRadius: 0.0065, thickeningRate: 0.6, rootFlare: 1 },
+    thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
     leaves: { size: 0.26, density: 2.6, hue: 0.29, saturation: 0.42, maxBranchRadius: 0.03 },
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },

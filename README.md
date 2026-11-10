@@ -33,7 +33,11 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 - Bud-based growth: each chain has one apical tip that elongates continuously (`len` grows toward `targetLen`), so nothing pops in. On segment completion the next direction is a blend of straightness, attractor pull, phototropism (sun direction), gravitropism × gravity and random wander.
 - Each finished node gets one lateral bud: branch angle off the axis, rotated by the phyllotaxis angle (default 137.5°). Bud break is stochastic and suppressed within `apicalDominance × 10` nodes of a live tip on the same chain; buds with no free space in their cone stay dormant.
 - Tips starve and die without attractors in the perception cone. Vigor decays per branch order.
-- Radii: pipe model `r^n = Σ child r^n`, eased toward the target over time (thickening).
+- Direction: each new segment is clamped to `maxTurn` degrees from the previous one (slerp), and wander is a per-chain bias vector that drifts slowly, so branches bend smoothly and never curl back.
+- Trunk buds break at `scaffoldBranching` × the normal rate, which gives a few large scaffold limbs instead of a broom.
+- Light: every 0.5 s leafy nodes are binned into a voxel grid (4 × segment length). Each node's `light` is the mean transmittance up (weight 2) and along ±X/±Z. Side chains of order ≥ 2 whose best light stays below `selfPrune` for 4 evaluations are pruned. Pruned chains and their descendants are not drawn and add nothing to the pipe model. Leaf colour uses `light` as ambient occlusion.
+- Radii: pipe model `r^n = Σ child r^n` (default n = 1.9), eased toward the target and never shrinking (secondary growth keeps the girth of pruned wood). The renderer adds a root flare with buttress lobes (`rootFlare`).
+- Leaves: clusters of 4 per node, spiralled at golden-angle steps near the node end, with a petiole gap. Deep green, darker inside the crown, lighter and yellower when young. A translucency term in the fragment shader makes backlit leaves glow in the sun colour.
 - Sag: per-node bend toward −Y ∝ gravity × sag × subtree length × segment length × horizontality / r², accumulated down the hierarchy. Growth decisions use the unsagged rest geometry.
 - Low gravity stretches the crown envelope upward and weakens gravitropism and sag.
 
@@ -44,7 +48,8 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 - Stars are point sprites; the moon is an unlit sphere with no phases.
 - Ground/hills colours and the noon sky are still somewhat desaturated and flat.
 
-- Branch mesh and leaf matrices are rebuilt every frame on the CPU. Headless SwiftShader runs at ~12 fps with 7k nodes and 14k leaves; GPU frame rate is not measured yet.
-- No self-pruning or light-exposure model yet. Interior shading only comes from bud dormancy and leaf drop on thick wood.
+- The branch mesh and leaf matrices are rebuilt on the CPU at about 8 Hz while growing (4 Hz when paused), not every frame. Leaf sway runs in the shader. Headless SwiftShader at t=90 (about 5k nodes, 10k drawn leaves) runs at 26 fps; it ran at 12–17 fps before the throttle. Incremental (dirty-subtree) rebuilds are not done yet.
+- Pruned twigs disappear at once instead of withering. The light grid ignores the actual sun direction.
+- The bark texture is unchanged: no deep fissures, no moss. Branches do not sway. The sun disc is still hidden (no sun sprite yet).
 - Low gravity alone gives a taller, stiffer tree rather than a strongly alien one. Alien looks need presets that combine gravity, wander, gravitropism and crown shape.
 - Branches have no wind sway, only leaves do. Sag does not resolve collisions.
