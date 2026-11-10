@@ -28,7 +28,7 @@ export class Stage {
   private quality = '';
   /** True between webglcontextlost and the reload on webglcontextrestored. */
   contextLost = false;
-  private fog: THREE.FogExp2;
+  fog: THREE.FogExp2;
   private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) }, tint: { value: new THREE.Vector4(0, 0, 0, 0) } };
   /** Companion-star fill light (no shadows). */
   sun2: THREE.DirectionalLight;
@@ -41,13 +41,13 @@ export class Stage {
   private dist = 6;
   private sunUv = new THREE.Vector3();
 
-  constructor(container: HTMLElement) {
-    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' }));
+  constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean } = {}) {
+    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? true, powerPreference: 'high-performance' }));
     r.setPixelRatio(1);
     r.setSize(window.innerWidth, window.innerHeight);
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.outputColorSpace = THREE.SRGBColorSpace;
-    r.shadowMap.enabled = true;
+    r.shadowMap.enabled = opts.shadows ?? true;
     r.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(r.domElement);
 
@@ -66,7 +66,7 @@ export class Stage {
     this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a5236, 0.5);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
-    this.sun.castShadow = true;
+    this.sun.castShadow = opts.shadows ?? true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.bias = -0.0003;
     this.sun.shadow.normalBias = 0.025;

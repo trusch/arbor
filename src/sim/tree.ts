@@ -2,6 +2,7 @@ import type { ArborParams } from '../params';
 import { Rng } from './rng';
 import { PointGrid } from './grid';
 import { sampleAttractors, envelopeDims } from './envelope';
+import { tel } from '../tel';
 
 /**
  * A node is a point on the tree; its segment runs from its parent to it.
@@ -222,7 +223,9 @@ export class TreeSim {
     this.lightTimer -= dt;
     if (this.lightTimer <= 0) {
       this.lightTimer = 0.5;
+      tel.phase('light grid');
       this.updateLight();
+      tel.phase('sim step', true);
     }
 
     this.updateStructure(dt);

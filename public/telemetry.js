@@ -11,6 +11,7 @@
   var sid = Math.random().toString(36).slice(2, 10) + t0.toString(36);
   var seq = 0, curPhase = 'boot', phaseAt = 0, lastPersist = 0, statsFn = null, ended = false;
   var trail = []; // last phase transitions [ms, name]
+  var prevRec = null;
   var page = location.pathname.split('/').pop() || 'index.html';
   var ms = function () { return Math.round(performance.now()); };
 
@@ -43,7 +44,7 @@
     if (!raw) { try { raw = localStorage.getItem(KEY); src = 'local'; } catch (e) {} }
     if (!raw) return;
     try {
-      var prev = JSON.parse(raw);
+      var prev = (prevRec = JSON.parse(raw));
       send(prev.clean ? 'prev_clean' : 'prev_unclean', { prev: prev, prevSrc: src, agoMs: Date.now() - (prev.wall || 0) });
     } catch (e) {}
   })();
@@ -93,6 +94,7 @@
 
   var api = {
     sid: sid,
+    prev: function () { return prevRec; },
     log: send,
     /** Enter a phase. Risky phases persist immediately so a hard kill reports where it died. */
     phase: function (name, frequent) {

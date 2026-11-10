@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { tel } from '../tel';
 import type { ArborParams } from '../params';
 
 const smooth = (a: number, b: number, x: number) => {
@@ -78,6 +79,8 @@ export class Atmosphere {
   private envRT: THREE.WebGLRenderTarget | null = null;
   private lastEnvDir = new THREE.Vector3(9, 9, 9);
   private envAge = 1e9;
+  /** ?sky=basic (diagnostics): no Preetham sky, no PMREM bakes; scene background is the fog colour. */
+  basic = false;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene) {
     this.sky.scale.setScalar(4500);
@@ -212,7 +215,7 @@ export class Atmosphere {
     // Low quality (phones): at most one PMREM bake every 3 s, so a fast day cycle doesn't churn GPU memory.
     const minAge = k.quality === 'Low' ? 3 : 0;
     const moved = this.lastEnvDir.distanceTo(this.sunDir);
-    if (this.envAge >= minAge && (moved > 0.03 || (this.envAge > 4 && moved > 0.002))) {
+    if (!this.basic && this.envAge >= minAge && (moved > 0.03 || (this.envAge > 4 && moved > 0.002))) {
       this.regenEnv();
     }
   }
@@ -226,7 +229,9 @@ export class Atmosphere {
     this.envScene.background = n > 0.02 ? this.envStarsCol.setRGB(0.012 * n, 0.018 * n, 0.04 * n) : null;
     this.envSky.visible = this.sunH > -0.2;
     // Alien skies: tint the env-map background via the patched shader uniforms (shared).
+    tel.phase('pmrem bake');
     const rt = this.pmrem.fromScene(this.envScene, 0, 1, 2000);
+    tel.phase('pmrem done');
     this.envRT?.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;

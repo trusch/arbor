@@ -9,6 +9,7 @@ import { buildGui } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
 import { envelopeDims } from './sim/envelope';
+import { tel, diagSwitches } from './tel';
 
 const query = new URLSearchParams(location.search);
 const params = defaultParams();
@@ -33,6 +34,10 @@ const lowEnd = lowEndDevice();
 if (!query.has('quality') && !query.has('sky.quality') && lowEnd) params.sky.quality = 'Low';
 // Phones also get a smaller growth budget (fewer segments → fewer tube vertices and leaves); ?maxNodes= overrides.
 if (lowEnd && !query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.min(params.growth.maxNodes, (nodeBudget = 7000));
+// Diagnostics bisect switches (?safe=1, ?shadows=0, ?leaves=0, ?sky=basic, ?grow=0, ?antialias=0, ?rebuildHz=N); see diag.html.
+const diag = diagSwitches(query);
+if (diag.safe && !query.has('quality')) params.sky.quality = 'Low';
+if (!diag.grow) params.time.paused = true; // combine with ?t=N for a static grown tree
 function lowEndDevice() {
   const uad = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
   if (uad?.mobile) return true;
@@ -42,11 +47,20 @@ function lowEndDevice() {
   return false;
 }
 
-const stage = new Stage(document.body);
+tel.phase('init stage');
+const stage = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows });
+if (diag.skyBasic) {
+  stage.atmo.basic = true;
+  stage.atmo.sky.visible = false;
+  stage.scene.background = stage.fog.color;
+}
+tel.phase('init sim');
 const sim = new TreeSim(params);
+tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leaves = new Leaves(makeLeafTexture());
-stage.scene.add(branches.mesh, leaves.mesh);
+stage.scene.add(branches.mesh);
+if (diag.leaves) stage.scene.add(leaves.mesh);
 
 const MAX_STEP = 1 / 20;
 /** Crown envelope the attractors were sampled for; automation re-samples when it drifts (e.g. gravity journey). */
@@ -72,20 +86,27 @@ function regrow() {
 let meshAge = Infinity;
 let leavesDirty = true;
 let lastTopo = -1;
+let rebuilds = 0;
 /** Branch tubes are rebuilt on the CPU; throttle to ~8 Hz (immediately on topology change when paused-ish). */
 function redraw(time: number, dt: number) {
   meshAge += dt;
   const growing = !params.time.paused && params.time.speed > 0;
-  if (meshAge >= (growing ? 0.12 : 0.25) || (!growing && sim.topology !== lastTopo)) {
+  const period = diag.rebuildHz > 0 ? 1 / diag.rebuildHz : growing ? 0.12 : 0.25;
+  if (meshAge >= period || (!growing && sim.topology !== lastTopo)) {
+    tel.phase('geometry rebuild');
     branches.update(sim, params.thickness.rootFlare);
+    rebuilds++;
     leavesDirty = true;
     meshAge = 0;
     lastTopo = sim.topology;
   }
+  if (!diag.leaves) return;
   if (!leavesDirty) { leaves.tick(time); return; }
   leavesDirty = false;
+  tel.phase('leaves rebuild');
   const repl = leaves.update(sim, params, time);
   if (repl) {
+    tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });
     stage.scene.children.filter((o) => o instanceof THREE.InstancedMesh).forEach((o) => stage.scene.remove(o));
     stage.scene.add(repl);
   }
@@ -129,13 +150,14 @@ let last = performance.now();
 let elapsed = 0;
 let frames = 0, fpsT = 0, fps = 0;
 let frameErrors = 0;
+let frameCount = 0;
 function loop(now: number) {
   requestAnimationFrame(loop);
   try {
     frame(now);
   } catch (e) {
     // Never let one bad frame stop the loop forever; report the first few.
-    if (frameErrors++ < 3) console.error('arbor frame error', e);
+    if (frameErrors++ < 3) console.error('arbor frame error', e); // telemetry.js forwards console.error
     if (frameErrors === 1) showNotice(`Render error: ${(e as Error)?.message ?? e} (still running)`);
   }
 }
@@ -143,8 +165,11 @@ function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   elapsed += dt;
+  frameCount++;
+  tel.phase('sim step', true);
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else sim.updateStructure(0);
+  tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
   redraw(elapsed, dt);
   activity += dt;
@@ -153,7 +178,9 @@ function frame(now: number) {
   glow.setHSL(lp.glowHue, 0.9, 0.55).multiplyScalar(lp.glow * (0.12 + 0.88 * stage.atmo.night));
   leaves.setGlow(glow);
   leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
+  tel.phase('render', true);
   stage.render(params);
+  tel.phase('idle', true);
   frames++;
   fpsT += dt;
   if (fpsT > 0.5) {
@@ -166,11 +193,29 @@ function frame(now: number) {
   }
 }
 
+tel.phase('init regrow');
 regrow();
 const ff = Number(query.get('t') ?? 0);
-if (ff > 0) advance(ff);
+if (ff > 0) { tel.phase('init fast-forward'); advance(ff); }
 sim.updateStructure(0);
+tel.phase('init first frame');
 stage.frame(sim, params, 0, true);
+tel.setStats(() => {
+  const r = stage.renderer;
+  return {
+    frames: frameCount, fps: +fps.toFixed(1), simT: +sim.time.toFixed(2), nodes: sim.nodes.length, leaves: sim.leaves.length,
+    leafInst: leaves.mesh.count, rebuilds, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
+    gpuMem: { ...r.info.memory }, calls: r.info.render.calls, tris: r.info.render.triangles, programs: r.info.programs?.length,
+    drawBuf: [r.domElement.width, r.domElement.height],
+  };
+});
+{
+  const r = stage.renderer;
+  tel.info({
+    gl: tel.glInfo(r.getContext()), quality: params.sky.quality, lowEnd, maxNodes: params.growth.maxNodes, preset: presetName,
+    pixelRatio: r.getPixelRatio(), shadowMap: stage.sun.shadow.mapSize.x, diag,
+  });
+}
 requestAnimationFrame(loop);
 
 /** Automation / test hook. */
