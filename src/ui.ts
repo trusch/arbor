@@ -20,6 +20,9 @@ export function buildGui(p: ArborParams, a: UiActions): GUI {
   g.add(p.growth, 'attraction', 0, 3, 0.01);
   g.add(p.growth, 'straightness', 0, 5, 0.01);
   g.add(p.growth, 'wander', 0, 2, 0.01);
+  g.add(p.growth, 'maxTurn', 2, 90, 0.5);
+  g.add(p.growth, 'scaffoldBranching', 0, 1.5, 0.01);
+  g.add(p.growth, 'selfPrune', 0, 0.8, 0.01);
   g.add(p.growth, 'branchAngle', 5, 110, 0.5);
   g.add(p.growth, 'phyllotaxis', 0, 360, 0.5);
   g.add(p.growth, 'apicalDominance', 0, 1, 0.01);
@@ -42,6 +45,7 @@ export function buildGui(p: ArborParams, a: UiActions): GUI {
   th.add(p.thickness, 'exponent', 1.5, 3.5, 0.01);
   th.add(p.thickness, 'twigRadius', 0.003, 0.04, 0.001);
   th.add(p.thickness, 'thickeningRate', 0.05, 5, 0.01);
+  th.add(p.thickness, 'rootFlare', 0, 3, 0.01);
 
   const l = gui.addFolder('Leaves');
   l.add(p.leaves, 'size', 0, 0.6, 0.005);

@@ -19,8 +19,14 @@ export interface ArborParams {
     attraction: number;
     /** Tendency to keep the current direction. */
     straightness: number;
-    /** Random wander per segment. */
+    /** Correlated low-frequency wander (slowly drifting per-branch bias). */
     wander: number;
+    /** Max direction change per segment, degrees (kills curling). */
+    maxTurn: number;
+    /** Bud break multiplier for buds on the trunk (fewer, bigger scaffold limbs). */
+    scaffoldBranching: number;
+    /** Light level (0..1) below which shaded side twigs self-prune; 0 disables. */
+    selfPrune: number;
     /** Lateral bud angle from the parent axis, degrees. */
     branchAngle: number;
     /** Phyllotaxis rotation between successive buds, degrees. */
@@ -55,6 +61,8 @@ export interface ArborParams {
     twigRadius: number;
     /** Approach rate of radii toward the pipe-model target (1/s). */
     thickeningRate: number;
+    /** Root flare / buttress strength at the trunk base. */
+    rootFlare: number;
   };
   leaves: {
     size: number;
@@ -107,7 +115,10 @@ export function defaultParams(): ArborParams {
       gravitropism: 0.35,
       attraction: 1.0,
       straightness: 1.6,
-      wander: 0.25,
+      wander: 0.3,
+      maxTurn: 13,
+      scaffoldBranching: 0.4,
+      selfPrune: 0.22,
       branchAngle: 42,
       phyllotaxis: 137.5,
       apicalDominance: 0.5,
@@ -120,8 +131,8 @@ export function defaultParams(): ArborParams {
       maxNodes: 14000,
     },
     crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, attractors: 4000 },
-    thickness: { exponent: 2.3, twigRadius: 0.012, thickeningRate: 0.6 },
-    leaves: { size: 0.16, density: 2, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.035 },
+    thickness: { exponent: 2.05, twigRadius: 0.0065, thickeningRate: 0.6, rootFlare: 1 },
+    leaves: { size: 0.26, density: 2.6, hue: 0.29, saturation: 0.42, maxBranchRadius: 0.03 },
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },
     camera: { autoFrame: true, autoRotate: true },

@@ -5,7 +5,7 @@ import type { ArborParams } from '../params';
 /** Slightly cupped, bent leaf blade: base at origin, tip along +Y, face toward +Z. */
 function leafGeometry(): THREE.BufferGeometry {
   const g = new THREE.PlaneGeometry(0.6, 1, 2, 4);
-  g.translate(0, 0.5, 0);
+  g.translate(0, 0.62, 0); // blade starts past a short petiole gap
   const p = g.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i);
@@ -21,7 +21,12 @@ const GROW_TIME = 3; // seconds for a leaf to unfold
 export class Leaves {
   mesh!: THREE.InstancedMesh;
   private material: THREE.MeshStandardMaterial;
-  private uniforms = { uTime: { value: 0 }, uWind: { value: 1 } };
+  private uniforms = {
+    uTime: { value: 0 },
+    uWind: { value: 1 },
+    uSunDirV: { value: new THREE.Vector3(0, 1, 0) },
+    uSunCol: { value: new THREE.Color(1, 1, 1) },
+  };
   private capacity = 0;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -38,13 +43,29 @@ export class Leaves {
       map,
       alphaTest: 0.5,
       side: THREE.DoubleSide,
-      roughness: 0.7,
+      roughness: 0.48,
       metalness: 0,
     });
     const u = this.uniforms;
     this.material.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = u.uTime;
       sh.uniforms.uWind = u.uWind;
+      sh.uniforms.uSunDirV = u.uSunDirV;
+      sh.uniforms.uSunCol = u.uSunCol;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;')
+        .replace(
+          '#include <lights_fragment_end>',
+          `#include <lights_fragment_end>
+          {
+            // Leaf translucency: light through the blade from behind, strongest looking into the sun.
+            vec3 Vd = normalize(vViewPosition);
+            float back = max(0.0, -dot(normal, uSunDirV));
+            float into = pow(max(0.0, dot(-Vd, uSunDirV)), 5.0);
+            vec3 tcol = diffuseColor.rgb * vec3(1.15, 1.2, 0.55);
+            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.45 * back + 1.6 * into);
+          }`,
+        );
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;')
         .replace(
@@ -73,6 +94,16 @@ export class Leaves {
     return m;
   }
 
+  tick(time: number) {
+    this.uniforms.uTime.value = time;
+  }
+
+  /** dir points toward the light in world space. */
+  setSun(dir: THREE.Vector3, col: THREE.Color, intensity: number, view: THREE.Matrix4) {
+    this.uniforms.uSunDirV.value.copy(dir).transformDirection(view);
+    this.uniforms.uSunCol.value.copy(col).multiplyScalar(intensity * 0.35);
+  }
+
   /** Returns a replacement mesh when capacity grew (caller swaps it in the scene). */
   update(sim: TreeSim, p: ArborParams, time: number): THREE.InstancedMesh | null {
     this.uniforms.uTime.value = time;
@@ -91,6 +122,7 @@ export class Leaves {
     for (const lf of sim.leaves) {
       if (lf.rank * 4 >= lp.density) continue;
       const nd = nodes[lf.node];
+      if (sim.chains[nd.chain].pruned) continue;
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
       const grow = smooth(0, GROW_TIME, sim.time - lf.born);
       const s = lp.size * lf.size * grow * fade;
@@ -124,7 +156,15 @@ export class Leaves {
       this.scl.set(s, s, s);
       this.m.compose(this.pos, this.q, this.scl);
       this.m.toArray(arr, n * 16);
-      this.col.setHSL(lp.hue + (lf.tint - 0.5) * 0.05, lp.saturation, 0.38 + lf.tint * 0.14, THREE.SRGBColorSpace);
+      // Deep green, darker inside the crown (light grid), young leaves lighter and yellower.
+      const young = 1 - smooth(2, 14, sim.time - lf.born);
+      const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
+      this.col.setHSL(
+        lp.hue + (lf.tint - 0.5) * 0.045 - young * 0.05,
+        lp.saturation * (0.85 + lf.tint * 0.3) + young * 0.12,
+        (0.2 + lf.tint * 0.09 + young * 0.1) * ao,
+        THREE.SRGBColorSpace,
+      );
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
     }

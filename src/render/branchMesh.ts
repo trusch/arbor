@@ -53,7 +53,7 @@ export class BranchMesh {
     return 5;
   }
 
-  update(sim: TreeSim) {
+  update(sim: TreeSim, flare = 1) {
     const nodes = sim.nodes;
     const chains = sim.chains;
     // Count.
@@ -62,7 +62,7 @@ export class BranchMesh {
     for (let c = 0; c < chains.length; c++) {
       const ch = chains[c];
       const m = ch.nodes.length;
-      if (m < 2) { radials[c] = 0; continue; }
+      if (m < 2 || ch.pruned) { radials[c] = 0; continue; }
       const R = BranchMesh.radial(ch.order, nodes[ch.nodes[1]].radius);
       radials[c] = R;
       sig = (sig * 31 + R * m) | 0;
@@ -119,6 +119,13 @@ export class BranchMesh {
         let tl = Math.hypot(tx, ty, tz);
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
         tx /= tl; ty /= tl; tz /= tl;
+        // Root flare: trunk widens toward the ground with buttress lobes.
+        let lobe = 0;
+        if (c === 0 && flare > 0) {
+          const f = flare * Math.exp(-Math.max(0, cy) / Math.max(0.15, r * 3));
+          r *= 1 + 0.9 * f;
+          lobe = 0.22 * f;
+        }
         if (k === m) {
           cx += tx * r * 1.5; cy += ty * r * 1.5; cz += tz * r * 1.5;
           r = 0;
@@ -141,7 +148,8 @@ export class BranchMesh {
         for (let j = 0; j <= R; j++) {
           const ox = cs[j] * nx + sn[j] * bx, oy = cs[j] * ny + sn[j] * by, oz = cs[j] * nz + sn[j] * bz;
           const o3 = v * 3;
-          P[o3] = cx + ox * r; P[o3 + 1] = cy + oy * r; P[o3 + 2] = cz + oz * r;
+          const rr = lobe > 0 ? r * (1 + lobe * Math.cos(j / R * Math.PI * 10)) : r;
+          P[o3] = cx + ox * rr; P[o3 + 1] = cy + oy * rr; P[o3 + 2] = cz + oz * rr;
           Nn[o3] = ox; Nn[o3 + 1] = oy; Nn[o3 + 2] = oz;
           UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vv;
           v++;

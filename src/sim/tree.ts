@@ -28,6 +28,8 @@ export interface TreeNode {
   subLen: number;
   pipe: number;
   leafy: boolean;
+  /** Estimated sky light 0..1 from the coarse foliage grid. */
+  light: number;
 }
 
 export interface Chain {
@@ -36,6 +38,12 @@ export interface Chain {
   order: number;
   alive: boolean;
   starve: number;
+  /** Self-pruned (shaded out): not drawn, no pipe contribution. */
+  pruned: boolean;
+  /** Consecutive light evaluations below the prune threshold. */
+  shade: number;
+  /** Correlated wander direction (slowly drifting). */
+  wx: number; wy: number; wz: number;
 }
 
 export interface Bud {
@@ -80,6 +88,7 @@ export class TreeSim {
   private grid!: PointGrid;
   private gridCell = 1;
   private tmp: [number, number, number] = [0, 0, 0];
+  private lightTimer = 0;
 
   constructor(public params: ArborParams) {
     this.rng = new Rng(params.seed.seed);
@@ -98,7 +107,8 @@ export class TreeSim {
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
-    this.chains.push({ nodes: [root], order: 0, alive: true, starve: 0 });
+    this.chains.push(this.newChain(root, 0));
+    this.lightTimer = 0;
     this.nodes[root].len = 0;
     this.nodes[root].targetLen = 0;
     const jitter = this.rng.unit(this.tmp);
@@ -114,6 +124,11 @@ export class TreeSim {
     this.grid = new PointGrid(this.gridCell, this.attr, this.attrAlive);
     const kill = this.killRadius();
     for (const n of this.nodes) this.grid.query(n.rx, n.ry, n.rz, kill, (i) => (this.attrAlive[i] = 0));
+  }
+
+  private newChain(node: number, order: number): Chain {
+    const w = this.rng.unit([0, 0, 0]);
+    return { nodes: [node], order, alive: true, starve: 0, pruned: false, shade: 0, wx: w[0], wy: w[1], wz: w[2] };
   }
 
   get attractorCount() {
@@ -139,7 +154,7 @@ export class TreeSim {
       phyllo: pn ? pn.phyllo + this.params.growth.phyllotaxis * (Math.PI / 180) : this.rng.range(0, Math.PI * 2),
       born: this.time,
       wx: 0, wy: 0, wz: 0, wdx: dx, wdy: dy, wdz: dz, sag: 0, subLen: 0, pipe: 0,
-      leafy: false,
+      leafy: false, light: 1,
     };
     this.nodes.push(n);
     this.topology++;
@@ -204,6 +219,12 @@ export class TreeSim {
     // 2. Lateral bud break (apical dominance + light/space availability).
     if (!full) this.budBreak(dt);
 
+    this.lightTimer -= dt;
+    if (this.lightTimer <= 0) {
+      this.lightTimer = 0.5;
+      this.updateLight();
+    }
+
     this.updateStructure(dt);
   }
 
@@ -239,9 +260,11 @@ export class TreeSim {
     // Leaves on young wood.
     if (ch.order >= 1 || n.ry > env.base * 0.8) {
       n.leafy = true;
+      // A cluster at the node: leaves spiral around the twig at golden-angle steps.
+      const a0 = n.phyllo + this.rng.range(0, 1);
       for (let k = 0; k < 4; k++) {
         this.leaves.push({
-          node: id, t: this.rng.range(0.2, 1), around: this.rng.range(0, Math.PI * 2),
+          node: id, t: this.rng.range(0.6, 1), around: a0 + k * 2.4 + this.rng.range(-0.3, 0.3),
           tilt: this.rng.range(0.3, 0.9), roll: this.rng.range(-0.6, 0.6), size: this.rng.range(0.7, 1.25),
           rank: (k + this.rng.next()) / 4, born: this.time, tint: this.rng.next(),
         });
@@ -260,13 +283,29 @@ export class TreeSim {
     }
     const sun = this.sunDir();
     const grav = g.gravitropism * Math.min(2, g.gravity);
-    const w = this.rng.unit([0, 0, 0]);
+    // Correlated wander: the chain's bias direction drifts slowly instead of re-rolling every segment.
+    const r = this.rng.unit([0, 0, 0]);
+    let wx = ch.wx * 0.8 + r[0] * 0.35, wy = ch.wy * 0.8 + r[1] * 0.35, wz = ch.wz * 0.8 + r[2] * 0.35;
+    const wl = Math.hypot(wx, wy, wz) || 1;
+    ch.wx = wx /= wl; ch.wy = wy /= wl; ch.wz = wz /= wl;
     const att = cnt > 0 ? g.attraction : 0;
     // Trunk below the crown: strong upward drive.
     const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
-    const dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + w[0] * g.wander;
-    const dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead) * UP[1] + w[1] * g.wander;
-    const dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + w[2] * g.wander;
+    let dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + wx * g.wander;
+    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead) * UP[1] + wy * g.wander;
+    let dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + wz * g.wander;
+    // Limit the per-segment turn so branches bend smoothly and never loop back.
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l; dy /= l; dz /= l;
+    const maxT = (g.maxTurn * Math.PI) / 180;
+    const cosA = Math.max(-1, Math.min(1, dx * n.dx + dy * n.dy + dz * n.dz));
+    const ang = Math.acos(cosA);
+    if (ang > maxT && ang > 1e-5) {
+      // Slerp from current direction toward desired by maxT.
+      const so = Math.sin(ang);
+      const a = Math.sin(ang - maxT) / so, b = Math.sin(maxT) / so;
+      dx = n.dx * a + dx * b; dy = n.dy * a + dy * b; dz = n.dz * a + dz * b;
+    }
     this.extend(c, dx, dy, dz);
   }
 
@@ -288,7 +327,7 @@ export class TreeSim {
         const d = ch.nodes.length - 1 - b.indexInChain;
         release = smoothstep(range, range + 4, d);
       }
-      const vigor = Math.pow(g.vigorDecay, ch.order + 1);
+      const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
       const n = this.nodes[b.node];
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
@@ -296,8 +335,67 @@ export class TreeSim {
       this.buds.pop();
       if (cnt < 4) continue; // shaded / no space: bud stays dormant forever
       const c = this.chains.length;
-      this.chains.push({ nodes: [b.node], order: ch.order + 1, alive: true, starve: 0 });
+      this.chains.push(this.newChain(b.node, ch.order + 1));
       this.extend(c, b.dx * 2 + tmp[0] * 0.5, b.dy * 2 + tmp[1] * 0.5, b.dz * 2 + tmp[2] * 0.5);
+    }
+  }
+
+  /**
+   * Coarse light model: leafy nodes are binned into a voxel grid; each voxel's
+   * light is the mean transmittance toward the sky (up) and four horizontal
+   * directions. Shaded side twigs are self-pruned.
+   */
+  private updateLight() {
+    const nodes = this.nodes, N = nodes.length;
+    if (N < 50) return;
+    const cell = this.params.growth.segmentLength * 4;
+    const mn = this.bboxMin, mx = this.bboxMax;
+    const ox = mn[0] - cell, oy = Math.min(0, mn[1]) - cell, oz = mn[2] - cell;
+    const nx = Math.ceil((mx[0] - ox) / cell) + 2, ny = Math.ceil((mx[1] - oy) / cell) + 2, nz = Math.ceil((mx[2] - oz) / cell) + 2;
+    if (!isFinite(nx * ny * nz) || nx * ny * nz > 400000) return;
+    const idx = (x: number, y: number, z: number) => (y * nz + z) * nx + x;
+    const dens = new Float32Array(nx * ny * nz);
+    const cellOf = new Int32Array(N);
+    for (let i = 0; i < N; i++) {
+      const nd = nodes[i];
+      const x = Math.floor((nd.wx - ox) / cell), y = Math.floor((nd.wy - oy) / cell), z = Math.floor((nd.wz - oz) / cell);
+      const c = x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz ? idx(x, y, z) : -1;
+      cellOf[i] = c;
+      if (c >= 0 && nd.leafy && !this.chains[nd.chain].pruned) dens[c] += 1;
+    }
+    const k = 0.05;
+    const up = new Float32Array(dens.length), sx0 = new Float32Array(dens.length), sx1 = new Float32Array(dens.length);
+    const sz0 = new Float32Array(dens.length), sz1 = new Float32Array(dens.length);
+    for (let x = 0; x < nx; x++) for (let z = 0; z < nz; z++) {
+      let acc = 0;
+      for (let y = ny - 1; y >= 0; y--) { const c = idx(x, y, z); up[c] = acc + dens[c] * 0.5; acc += dens[c]; }
+    }
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) {
+      let a = 0, b = 0;
+      for (let x = 0; x < nx; x++) { const c = idx(x, y, z); sx0[c] = a + dens[c] * 0.5; a += dens[c]; }
+      for (let x = nx - 1; x >= 0; x--) { const c = idx(x, y, z); sx1[c] = b + dens[c] * 0.5; b += dens[c]; }
+    }
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let a = 0, b = 0;
+      for (let z = 0; z < nz; z++) { const c = idx(x, y, z); sz0[c] = a + dens[c] * 0.5; a += dens[c]; }
+      for (let z = nz - 1; z >= 0; z--) { const c = idx(x, y, z); sz1[c] = b + dens[c] * 0.5; b += dens[c]; }
+    }
+    for (let i = 0; i < N; i++) {
+      const c = cellOf[i];
+      if (c < 0) { nodes[i].light = 1; continue; }
+      const L = (2 * Math.exp(-k * up[c]) + Math.exp(-k * sx0[c]) + Math.exp(-k * sx1[c]) + Math.exp(-k * sz0[c]) + Math.exp(-k * sz1[c])) / 6;
+      nodes[i].light = L;
+    }
+    const thr = this.params.growth.selfPrune;
+    for (const ch of this.chains) {
+      if (ch.pruned) continue;
+      const parentChain = this.chains[nodes[ch.nodes[0]].chain];
+      if (parentChain !== ch && parentChain.pruned) { ch.pruned = true; ch.alive = false; continue; }
+      if (thr <= 0 || ch.order < 2 || ch.nodes.length < 2) { ch.shade = 0; continue; }
+      let L = 0;
+      for (let j = 1; j < ch.nodes.length; j++) L = Math.max(L, nodes[ch.nodes[j]].light);
+      if (L < thr) ch.shade++; else ch.shade = 0;
+      if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; }
     }
   }
 
@@ -323,8 +421,10 @@ export class TreeSim {
       } else {
         target = Math.max(r0, Math.pow(nd.pipe, 1 / n));
       }
-      nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
+      // Secondary growth only ever adds wood: radii never shrink (pruned twigs leave their girth behind).
+      if (target > nd.radius) nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
       if (dt <= 0) nd.radius = Math.max(nd.radius, target * 0.999);
+      if (this.chains[nd.chain].pruned) continue;
       nd.subLen += nd.len;
       if (nd.parent >= 0) {
         const pn = nodes[nd.parent];

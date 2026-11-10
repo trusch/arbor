@@ -27,8 +27,21 @@ function advance(simSeconds: number) {
   }
 }
 
-function redraw(time: number) {
-  branches.update(sim);
+let meshAge = Infinity;
+let leavesDirty = true;
+let lastTopo = -1;
+/** Branch tubes are rebuilt on the CPU; throttle to ~8 Hz (immediately on topology change when paused-ish). */
+function redraw(time: number, dt: number) {
+  meshAge += dt;
+  const growing = !params.time.paused && params.time.speed > 0;
+  if (meshAge >= (growing ? 0.12 : 0.25) || (!growing && sim.topology !== lastTopo)) {
+    branches.update(sim, params.thickness.rootFlare);
+    leavesDirty = true;
+    meshAge = 0;
+    lastTopo = sim.topology;
+  }
+  if (!leavesDirty) { leaves.tick(time); return; }
+  leavesDirty = false;
   const repl = leaves.update(sim, params, time);
   if (repl) {
     stage.scene.children.filter((o) => o instanceof THREE.InstancedMesh).forEach((o) => stage.scene.remove(o));
@@ -59,7 +72,8 @@ function loop(now: number) {
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else sim.updateStructure(0);
   stage.frame(sim, params, dt);
-  redraw(elapsed);
+  redraw(elapsed, dt);
+  leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
   stage.render(params);
   frames++;
   fpsT += dt;
@@ -87,7 +101,8 @@ requestAnimationFrame(loop);
     advance(seconds);
     sim.updateStructure(0);
     stage.frame(sim, params, 0, true);
-    redraw(elapsed);
+    meshAge = Infinity;
+    redraw(elapsed, 0);
     stage.render(params);
     return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time };
   },
