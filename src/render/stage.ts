@@ -67,7 +67,7 @@ export class Stage {
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
   private makeGround() {
-    const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.96, color: 0xc4c8a8 });
+    const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.96, color: 0xdcdcb4 });
     const gu = this.groundU;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTrunk = gu.trunk;
@@ -161,12 +161,12 @@ export class Stage {
     const facing = A.sunDir.dot(this.camera.getWorldDirection(new THREE.Vector3()));
     const low = 1 - Math.min(1, Math.max(0, (A.sunH - 0.05) / 0.4));
     P.rays.uniforms.sunUv.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
-    P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 1.4;
+    P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 0.5;
     P.rays.uniforms.tint.value.copy(A.keyColor);
     P.grade.uniforms.time.value = performance.now() / 1000;
     P.grade.uniforms.vignette.value = 0.38;
     P.grade.uniforms.grain.value = 0.03;
-    P.grade.uniforms.saturation.value = 1.0 + 0.08 * day;
+    P.grade.uniforms.saturation.value = 1.04 + 0.1 * day;
 
     this.controls.autoRotate = p.camera.autoRotate;
     if (p.camera.autoFrame) {

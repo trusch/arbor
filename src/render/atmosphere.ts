@@ -31,7 +31,7 @@ function patchSky(sky: Sky, u: Record<string, THREE.IUniform>) {
     .replace('void main() {', 'uniform vec3 fogCol; uniform float skyGain; uniform float horizonK;\nvoid main() {')
     .replace(
       'gl_FragColor = vec4( texColor, 1.0 );',
-      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tgl_FragColor = vec4( mix(texColor * skyGain, fogCol, hb), 1.0 );',
+      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tgl_FragColor = vec4( min(mix(texColor * skyGain, fogCol, hb), vec3(4.0)), 1.0 );',
     );
 }
 
@@ -97,7 +97,7 @@ export class Atmosphere {
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.stars = new THREE.Points(
       g,
-      new THREE.PointsMaterial({ size: 2.2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }),
+      new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }),
     );
     this.stars.frustumCulled = false;
     this.stars.renderOrder = -1;
@@ -155,16 +155,16 @@ export class Atmosphere {
     }
 
     // Fog/aerial-perspective colour = sky near the horizon, toward the view.
-    const dayFog = new THREE.Color(0.66, 0.74, 0.84);
+    const dayFog = new THREE.Color(0.7, 0.79, 0.9);
     const duskFog = new THREE.Color(0.93, 0.62, 0.42);
-    const blueHour = new THREE.Color(0.2, 0.25, 0.42);
+    const blueHour = new THREE.Color(0.12, 0.15, 0.29);
     const nightFog = new THREE.Color(0.018, 0.026, 0.05);
     if (h > 0.02) this.fogColor.copy(lerpC(duskFog, dayFog, smooth(0.02, 0.35, h)));
     else this.fogColor.copy(h > -0.1 ? lerpC(blueHour, duskFog, smooth(-0.1, 0.02, h)) : lerpC(nightFog, blueHour, smooth(-0.22, -0.1, h)));
 
     this.skyUniforms.fogCol.value.copy(this.fogColor);
     // Preetham radiance grows strongly with sun height; normalise so noon doesn't blow out.
-    this.skyUniforms.skyGain.value = k.skyGain * (0.22 + 0.78 * (1 - smooth(0.03, 0.55, h)));
+    this.skyUniforms.skyGain.value = k.skyGain * (0.3 + 0.15 * (1 - smooth(0.03, 0.55, h)));
 
     // Environment map: regenerate on significant sun change or every few seconds.
     this.envAge += dt;

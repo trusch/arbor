@@ -30,9 +30,9 @@ const GodRaysShader = {
       float acc = 0.0, w = 1.0;
       float jit = fract(sin(dot(vUv, vec2(12.9898,78.233))) * 43758.5453);
       uv += stepv * jit;
-      for (int i = 0; i < 40; i++) { acc += bright(uv) * w; w *= 0.965; uv += stepv; }
+      for (int i = 0; i < 40; i++) { float sd = length((uv - sunUv) * vec2(aspect, 1.0)); acc += bright(uv) * exp(-sd * 9.0) * w; w *= 0.965; uv += stepv; }
       acc /= 40.0;
-      float fall = exp(-dist * 1.6);
+      float fall = exp(-dist * 2.2);
       gl_FragColor = vec4(base.rgb + tint * acc * strength * fall, base.a);
     }`,
 };
@@ -84,7 +84,7 @@ export class Post {
     c.addPass(this.gtao);
     this.rays = new ShaderPass(GodRaysShader);
     c.addPass(this.rays);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.6, 1.4);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.5, 2.2);
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);

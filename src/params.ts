@@ -123,7 +123,7 @@ export function defaultParams(): ArborParams {
     thickness: { exponent: 2.3, twigRadius: 0.012, thickeningRate: 0.6 },
     leaves: { size: 0.16, density: 2, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.035 },
     light: { azimuth: 35, elevation: 50 },
-    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 200, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },
+    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },
     camera: { autoFrame: true, autoRotate: true },
     seed: { seed: 1 },
   };
