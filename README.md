@@ -19,6 +19,39 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 - Keys: **H** hide/show all UI (watch mode, also `?hideui=1`), **C** toggle cinema. A small overlay (preset · age · clock) fades out after 4 s without mouse movement.
 - Alien params: `growth.weeping` (twig downward tropism ∝ gravity), `growth.torsion` (spiral twist per segment), `crown.bole` (clear trunk height), `leaves.shape` (fan ↔ narrow), `leaves.lightness`, `leaves.glow`/`glowHue` (bioluminescence, strongest at night), `sky.skyHue`/`skyTint` (sky+fog tint), `sky.sunHue`/`sunTint`, `sky.sun2`/`sun2Hue`/`sun2Yaw` (companion star: fill light + disc), `sky.sunSize`, `sky.groundHue`/`groundTint`.
 
+## Telemetry and diagnostics
+
+The `arbor` unit runs `server/serve.mjs` (Node, no deps; unit copy in `deploy/arbor.service`). It serves `dist/` and accepts `POST /log`: JSON records are appended to `logs/client.jsonl` (gitignored) with `srv_ts`, `ua` and `ip`.
+
+`public/telemetry.js` is a classic script loaded synchronously from `<head>`, so it runs even when the bundle fails. Per page load (`sid`) it sends:
+
+| type | content |
+|---|---|
+| `start` | device (UA, deviceMemory, cores, screen, inner size, DPR), GL probe (unmasked renderer, limits, highp, float/half/uint extensions), query |
+| `info` | from the bundle: real renderer GL info, quality, lowEnd, maxNodes, pixel ratio, shadow map size, diag switches |
+| `hb` | every 1 s for 30 s, then every 5 s: frames, fps, sim time, nodes, leaves, leaf capacity, rebuilds, PMREM bakes, `renderer.info` memory/calls/triangles/programs, JS heap, current phase, `gap` since the previous beat |
+| `error`, `unhandledrejection`, `console_error`, `console_warn`, `resource_error` | message + stack + last phase transitions |
+| `webglcontextlost/restored/creationerror`, `visibility`, `pagehide`, `freeze`, `longtask` (>= 200 ms) | lifecycle |
+| `branch_realloc`, `leaves_realloc` | GPU buffer growth |
+| `prev_unclean` / `prev_clean` | the previous load in this tab/origin: last phase, trail of phase transitions; `prev_unclean` means no `pagehide` was seen (tab crash, OOM kill, GPU-process kill) |
+
+Phases (`tel.phase` in `src/tel.ts`): `init stage/sim/textures/regrow/fast-forward/first frame`, `sim step`, `light grid`, `stage frame`, `pmrem bake`, `geometry rebuild`, `leaves rebuild`, `render`, `idle`. Non-frame phases are written to session+localStorage on entry; frame phases at most every 200 ms. `?tel=0` disables telemetry.
+
+Reading the log: `jq -c 'select(.sid=="…")' logs/client.jsonl`, or `grep prev_unclean logs/client.jsonl`. `node scripts/telcheck.mjs [url] [seconds]` runs a phone-emulated headless load and prints that session's records.
+
+Bisect switches (also as tap-through links on `/diag.html`, which shows device/GPU info and the previous run's verdict):
+
+| query | effect |
+|---|---|
+| `?safe=1` | all of the below off, quality Low |
+| `?shadows=0` | no shadow map |
+| `?leaves=0` | no instanced leaves |
+| `?sky=basic` | no Preetham sky, no PMREM bakes |
+| `?grow=0` | sim paused (combine with `?t=40` for a static grown tree) |
+| `?antialias=0` | no MSAA |
+| `?maxNodes=N` | growth cap |
+| `?rebuildHz=N` | branch-mesh rebuild rate (default ~8 Hz while growing) |
+
 ## Layout
 
 | Path | Role |

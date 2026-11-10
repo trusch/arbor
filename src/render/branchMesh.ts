@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { TreeSim } from '../sim/tree';
 import type { BarkTextures } from './textures';
+import { tel } from '../tel';
 
 const BARK_V_SCALE = 0.35; // metres of length per texture repeat (scaled by radius)
 
@@ -83,6 +84,7 @@ export class BranchMesh {
       realloc = true;
     }
     if (realloc) {
+      tel.log('branch_realloc', { verts: vCount, idx: iCount, vCap: this.pos.length / 3, iCap: this.idx.length });
       this.geo.dispose();
       this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
       this.geo.setAttribute('normal', new THREE.BufferAttribute(this.nrm, 3).setUsage(THREE.DynamicDrawUsage));
@@ -171,6 +173,8 @@ export class BranchMesh {
     (g.attributes.normal as THREE.BufferAttribute).needsUpdate = true;
     (g.attributes.uv as THREE.BufferAttribute).needsUpdate = true;
     if (writeIndex) {
+      g.index!.clearUpdateRanges();
+      g.index!.addUpdateRange(0, ii);
       g.index!.needsUpdate = true;
       this.lastTopology = sig;
     }

@@ -81,6 +81,8 @@ export class Atmosphere {
   private envAge = 1e9;
   /** ?sky=basic (diagnostics): no Preetham sky, no PMREM bakes; scene background is the fog colour. */
   basic = false;
+  /** PMREM bakes so far (telemetry). */
+  bakes = 0;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene) {
     this.sky.scale.setScalar(4500);
@@ -232,6 +234,7 @@ export class Atmosphere {
     tel.phase('pmrem bake');
     const rt = this.pmrem.fromScene(this.envScene, 0, 1, 2000);
     tel.phase('pmrem done');
+    this.bakes++;
     this.envRT?.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;

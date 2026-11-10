@@ -204,7 +204,7 @@ tel.setStats(() => {
   const r = stage.renderer;
   return {
     frames: frameCount, fps: +fps.toFixed(1), simT: +sim.time.toFixed(2), nodes: sim.nodes.length, leaves: sim.leaves.length,
-    leafInst: leaves.mesh.count, rebuilds, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
+    leafInst: leaves.mesh.count, leafCap: leaves.mesh.instanceMatrix.count, rebuilds, bakes: stage.atmo.bakes, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
     gpuMem: { ...r.info.memory }, calls: r.info.render.calls, tris: r.info.render.triangles, programs: r.info.programs?.length,
     drawBuf: [r.domElement.width, r.domElement.height],
   };

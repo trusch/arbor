@@ -14,8 +14,10 @@
 - Automation (`src/automation.ts`) writes into the live params object before every sim step; presets are copied into params in place (`loadPreset` in `main.ts`) so GUI controllers stay bound. Use `?preset=Name`.
 - Sun discs are drawn in the patched sky shader (`disc1*/disc2*` uniforms); do not use sprites (GTAO override material renders them as solid quads). The env-map sky has `discOn = 0`.
 - Screenshot script disables cinema (`cinema=false`) and accepts `PORT` env so several runs can go in parallel (more than ~4 in parallel times out).
-- Deploy: `npm run deploy` (build + `systemctl --user restart arbor`). Unit `~/.config/systemd/user/arbor.service` serves `dist/` with python http.server on 10.77.0.2:8050 (VPN). Vite `base: './'`. Ports 8010–8040 belong to other apps.
+- Deploy: `npm run deploy` (build + `systemctl --user restart arbor`). Unit `~/.config/systemd/user/arbor.service` (copy in `deploy/`) runs `server/serve.mjs` on 10.77.0.2:8050 (VPN): static `dist/` + `POST /log` → `logs/client.jsonl`. HTML is served `no-store`. Vite `base: './'`. Ports 8010–8040 belong to other apps.
 - `npm run smoke` (scripts/smoke.mjs) drives the app in headless chromium; run it after interaction changes.
 - Mobile/low-end (UA mobile, touch + small screen, deviceMemory < 4) defaults to `quality=Low` and `maxNodes ≤ 7000` (`lowEndDevice` in `main.ts`); `?quality=High` overrides. Pixel ratio is per quality (High ≤ 1.5, Low 1) with a 1024 shadow map on Low (`Stage.applyQuality`). `Stage.post` is lazy: never touch it on Low or it allocates the GTAO/bloom render targets.
 - Context loss shows a notice and reloads on restore; the rAF loop wraps each frame in try/catch (`__arbor.frameErrors()`), so one throw doesn't freeze the app.
 - `npm run smoke` also covers reload, junk query values, Android phone emulation and a memory soak (`SOAK_S`, default 120; `SOAK_S=0` skips it).
+- Telemetry: `public/telemetry.js` (classic, loads before the bundle) + `src/tel.ts` wrapper (`tel.phase`, `tel.log`, `tel.setStats`). Wrap new risky steps in `tel.phase('name')`; per-frame phases pass `frequent=true`. See README "Telemetry and diagnostics".
+- Diagnostics switches live in `diagSwitches` (`src/tel.ts`); keep `public/diag.html` links in sync.
