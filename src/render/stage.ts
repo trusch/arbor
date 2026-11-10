@@ -17,7 +17,14 @@ export class Stage {
   atmo: Atmosphere;
   post: Post;
   private fog: THREE.FogExp2;
-  private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) } };
+  private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) }, tint: { value: new THREE.Vector4(0, 0, 0, 0) } };
+  /** Companion-star fill light (no shadows). */
+  sun2: THREE.DirectionalLight;
+  /** Seconds since the last user camera interaction (cinema resumes after IDLE). */
+  idle = 1e9;
+  private cineT = 0;
+  private cineYaw = 0;
+  private cineOn = false;
   private center = new THREE.Vector3(0, 1, 0);
   private dist = 6;
   private sunUv = new THREE.Vector3();
@@ -53,6 +60,9 @@ export class Stage {
     this.sun.shadow.normalBias = 0.025;
     this.sun.shadow.radius = 5;
     this.scene.add(this.sun, this.sun.target);
+    this.sun2 = new THREE.DirectionalLight(0xffffff, 0);
+    this.scene.add(this.sun2, this.sun2.target);
+    this.controls.addEventListener('start', () => (this.idle = 0));
 
     this.scene.add(this.makeGround(), this.makeHills());
     this.post = new Post(r, this.scene, this.camera);
@@ -71,11 +81,12 @@ export class Stage {
     const gu = this.groundU;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTrunk = gu.trunk;
+      sh.uniforms.uTint = gu.tint;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vGW;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGW = (modelMatrix * vec4(transformed, 1.0)).xz;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying vec2 vGW;\nuniform vec3 uTrunk;')
+        .replace('#include <common>', '#include <common>\nvarying vec2 vGW;\nuniform vec3 uTrunk;\nuniform vec4 uTint;')
         .replace(
           '#include <map_fragment>',
           `{
@@ -91,6 +102,7 @@ export class Stage {
             vec3 dry = vec3(0.62, 0.58, 0.38) * lum * 2.2;
             g = mix(g, dry, 0.35 * macro);
             g *= 0.85 + 0.3 * m2;
+            g = mix(g, uTint.rgb * dot(g, vec3(0.3, 0.59, 0.11)) * 2.4, uTint.a);
             float rt = length(p - uTrunk.xy);
             g *= mix(0.35, 1.0, smoothstep(uTrunk.z * 0.6, uTrunk.z * 7.0, rt));
             diffuseColor.rgb *= g;
@@ -140,6 +152,14 @@ export class Stage {
     this.sun.shadow.radius = night > 0.5 ? 9 : 4 + 4 * (1 - Math.min(1, A.sunH * 2));
     this.sun.position.copy(c).addScaledVector(dir, ext * 4);
     this.sun.target.position.copy(c);
+    this.sun2.color.copy(A.sun2Color);
+    this.sun2.intensity = A.sun2Intensity;
+    this.sun2.position.copy(c).addScaledVector(A.sun2Dir, ext * 4);
+    this.sun2.target.position.copy(c);
+    if (k.groundTint > 0) {
+      const gc = new THREE.Color().setHSL(k.groundHue, 0.55, 0.4);
+      this.groundU.tint.value.set(gc.r, gc.g, gc.b, Math.min(1, k.groundTint));
+    } else this.groundU.tint.value.w = 0;
     const cam = this.sun.shadow.camera;
     // Snap the fitted frustum size to 0.5m steps so it doesn't breathe (shimmer) while the tree grows.
     const e = Math.ceil(ext * 1.35 * 2) / 2;
@@ -168,8 +188,38 @@ export class Stage {
     P.grade.uniforms.grain.value = 0.03;
     P.grade.uniforms.saturation.value = 1.04 + 0.1 * day;
 
-    this.controls.autoRotate = p.camera.autoRotate;
-    if (p.camera.autoFrame) {
+    this.idle += dt;
+    const cine = p.camera.cinema && this.idle > 10;
+    if (cine && !this.cineOn) {
+      // Resume from the current view: no jump.
+      const off = this.camera.position.clone().sub(this.controls.target);
+      this.cineYaw = Math.atan2(off.x, off.z);
+      p.camera.autoFrame = true;
+    }
+    this.cineOn = cine;
+    this.controls.autoRotate = p.camera.autoRotate && !cine;
+    if (cine) {
+      // Cinematic dolly: slow orbit, breathing height, occasional slow push-ins; always frames the tree.
+      this.cineT += dt;
+      const t = this.cineT;
+      this.cineYaw += dt * (0.045 + 0.02 * Math.sin(t * 0.031));
+      const fov = (this.camera.fov * Math.PI) / 180;
+      const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.8);
+      const push = Math.pow(0.5 + 0.5 * Math.sin(t * 0.021 - 1.2), 3); // rare, slow
+      const dist = want * (1.05 - 0.38 * push + 0.06 * Math.sin(t * 0.07));
+      const elev = 0.06 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.043 + 0.7)) + 0.08 * push;
+      const kk = snap ? 1 : 1 - Math.exp(-dt * 0.8);
+      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * (0.86 + 0.12 * push)), c.z);
+      this.center.lerp(target, kk);
+      this.dist += (dist - this.dist) * kk;
+      const ce = Math.cos(elev);
+      this.controls.target.copy(this.center);
+      this.camera.position.set(
+        this.center.x + Math.sin(this.cineYaw) * ce * this.dist,
+        Math.max(0.35, this.center.y + Math.sin(elev) * this.dist - this.center.y * 0.35),
+        this.center.z + Math.cos(this.cineYaw) * ce * this.dist,
+      );
+    } else if (p.camera.autoFrame) {
       const kk = snap ? 1 : 1 - Math.exp(-dt * 1.2);
       const fov = (this.camera.fov * Math.PI) / 180;
       const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.78);

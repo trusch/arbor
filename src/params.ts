@@ -42,6 +42,10 @@ export interface ArborParams {
     /** Vigor multiplier per branch order. */
     vigorDecay: number;
     maxOrder: number;
+    /** Twig (order >= 2) downward tropism ∝ gravity: weeping/pendulous habit. */
+    weeping: number;
+    /** Spiral twist of the growth direction about vertical per segment, degrees (alternates sign per order). */
+    torsion: number;
     /** Branch sag stiffness multiplier. */
     sag: number;
     maxNodes: number;
@@ -53,6 +57,8 @@ export interface ArborParams {
     height: number;
     /** Height of crown base above ground. */
     base: number;
+    /** Clear bole: no trunk buds break below this height (m). */
+    bole: number;
     attractors: number;
   };
   thickness: {
@@ -72,6 +78,14 @@ export interface ArborParams {
     saturation: number;
     /** Leaves drop from branches thicker than this (m). */
     maxBranchRadius: number;
+    /** Blade shape: 0 round/broad, 1 long narrow (willow/needle), <0 fan/wide. */
+    shape: number;
+    /** Lightness multiplier. */
+    lightness: number;
+    /** Emissive glow strength (bioluminescence), scaled up at night. */
+    glow: number;
+    /** Glow hue 0..1. */
+    glowHue: number;
   };
   light: {
     azimuth: number;
@@ -95,11 +109,29 @@ export interface ArborParams {
     fog: number;
     stars: number;
     godRays: number;
+    /** Sky hue rotation 0..1 (alien skies). */
+    skyHue: number;
+    /** Sky/fog saturation multiplier. */
+    skySat: number;
+    /** Key light hue tint 0..1 and amount 0..1 (alien star colour). */
+    sunHue: number;
+    sunTint: number;
+    /** Second (companion) star: fill light intensity, hue, and yaw offset in degrees. */
+    sun2: number;
+    sun2Hue: number;
+    sun2Yaw: number;
+    /** Sun disc sprite size multiplier. */
+    sunSize: number;
+    /** Ground grass tint hue 0..1 and amount. */
+    groundHue: number;
+    groundTint: number;
     quality: 'High' | 'Low';
   };
   camera: {
     autoFrame: boolean;
     autoRotate: boolean;
+    /** Cinematic orbit/dolly; pauses on user input, resumes after idle. */
+    cinema: boolean;
   };
   seed: {
     seed: number;
@@ -127,15 +159,17 @@ export function defaultParams(): ArborParams {
       growthRate: 1.6,
       vigorDecay: 0.82,
       maxOrder: 6,
+      weeping: 0,
+      torsion: 0,
       sag: 1,
       maxNodes: 14000,
     },
-    crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, attractors: 4000 },
+    crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, bole: 1.7, attractors: 4000 },
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
-    leaves: { size: 0.26, density: 2.6, hue: 0.29, saturation: 0.42, maxBranchRadius: 0.03 },
+    leaves: { size: 0.26, density: 2.6, hue: 0.29, saturation: 0.42, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
     light: { azimuth: 35, elevation: 50 },
-    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, quality: 'High' },
-    camera: { autoFrame: true, autoRotate: true },
+    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, skyHue: 0, skySat: 1, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },
   };
 }

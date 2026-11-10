@@ -26,6 +26,7 @@ export class Leaves {
     uWind: { value: 1 },
     uSunDirV: { value: new THREE.Vector3(0, 1, 0) },
     uSunCol: { value: new THREE.Color(1, 1, 1) },
+    uGlow: { value: new THREE.Color(0, 0, 0) },
   };
   private capacity = 0;
   private m = new THREE.Matrix4();
@@ -43,8 +44,10 @@ export class Leaves {
       map,
       alphaTest: 0.5,
       side: THREE.DoubleSide,
-      roughness: 0.48,
+      roughness: 0.62,
       metalness: 0,
+      // Sky reflections at noon turned the foliage blue-grey; keep env specular low.
+      envMapIntensity: 0.3,
     });
     const u = this.uniforms;
     this.material.onBeforeCompile = (sh) => {
@@ -52,8 +55,19 @@ export class Leaves {
       sh.uniforms.uWind = u.uWind;
       sh.uniforms.uSunDirV = u.uSunDirV;
       sh.uniforms.uSunCol = u.uSunCol;
+      sh.uniforms.uGlow = u.uGlow;
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;')
+        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;\nuniform vec3 uGlow;')
+        .replace(
+          '#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+          {
+            // Bioluminescence: glowing veins along the midrib and brighter rims toward the tip.
+            float mid = 1.0 - smoothstep(0.0, 0.16, abs(vMapUv.x - 0.5));
+            float tip = smoothstep(0.35, 1.0, vMapUv.y);
+            totalEmissiveRadiance += uGlow * (0.25 + 0.9 * mid + 0.6 * tip);
+          }`,
+        )
         .replace(
           '#include <lights_fragment_end>',
           `#include <lights_fragment_end>
@@ -102,6 +116,11 @@ export class Leaves {
   setSun(dir: THREE.Vector3, col: THREE.Color, intensity: number, view: THREE.Matrix4) {
     this.uniforms.uSunDirV.value.copy(dir).transformDirection(view);
     this.uniforms.uSunCol.value.copy(col).multiplyScalar(intensity * 0.35);
+  }
+
+  /** Emissive glow colour (already scaled by strength and night factor). */
+  setGlow(c: THREE.Color) {
+    this.uniforms.uGlow.value.copy(c);
   }
 
   /** Returns a replacement mesh when capacity grew (caller swaps it in the scene). */
@@ -153,7 +172,9 @@ export class Leaves {
       this.basis.makeBasis(this.ax, this.ay, this.az);
       this.q.setFromRotationMatrix(this.basis);
       this.q.multiply(new THREE.Quaternion().setFromAxisAngle(this.ay.set(0, 1, 0), lf.roll));
-      this.scl.set(s, s, s);
+      // Blade shape: >0 long and narrow, <0 broad fan.
+      const sh = lp.shape;
+      this.scl.set(s * (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh), s * (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh), s);
       this.m.compose(this.pos, this.q, this.scl);
       this.m.toArray(arr, n * 16);
       // Deep green, darker inside the crown (light grid), young leaves lighter and yellower.
@@ -162,7 +183,7 @@ export class Leaves {
       this.col.setHSL(
         lp.hue + (lf.tint - 0.5) * 0.045 - young * 0.05,
         lp.saturation * (0.85 + lf.tint * 0.3) + young * 0.12,
-        (0.2 + lf.tint * 0.09 + young * 0.1) * ao,
+        Math.min(0.9, (0.2 + lf.tint * 0.09 + young * 0.1) * ao * lp.lightness),
         THREE.SRGBColorSpace,
       );
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;

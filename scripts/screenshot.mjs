@@ -9,7 +9,7 @@ const stages = (process.argv[2] ?? '8,30,90').split(',').map(Number);
 const extra = process.argv[3] ?? '';
 const prefix = process.argv[4] ?? 'earth';
 const names = ['sapling', 'young', 'mature', 'old', 'ancient'];
-const PORT = 5199;
+const PORT = Number(process.env.PORT ?? 5199);
 const timesArg = process.argv[5] ?? '7.5:morning,13:noon,18.6:golden,20.0:bluehour,23.5:night';
 const times = timesArg === 'none' ? [] : timesArg.split(',').map((t) => { const [h, n] = t.split(':'); return { h: Number(h), n: n ?? `h${h}` }; });
 const W = Number(process.env.SHOT_W ?? 1024), H = Number(process.env.SHOT_H ?? 640);
@@ -26,7 +26,7 @@ try {
   const page = await browser.newPage({ viewport: { width: W, height: H } });
   page.on('console', (m) => m.type() === 'error' && console.error('[page]', m.text()));
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&speed=0&autoRotate=false&${extra}`);
+  await page.goto(`http://localhost:${PORT}/?nogui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   let done = 0;
   for (let i = 0; i < stages.length; i++) {

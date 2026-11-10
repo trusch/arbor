@@ -291,9 +291,18 @@ export class TreeSim {
     const att = cnt > 0 ? g.attraction : 0;
     // Trunk below the crown: strong upward drive.
     const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
+    // Weeping: twigs of order >= 2 bend down (positive gravitropism) ∝ gravity.
+    const weep = ch.order >= 2 ? g.weeping * Math.min(3, g.gravity) * Math.min(1, (ch.order - 1) * 0.6) : 0;
     let dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + wx * g.wander;
-    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead) * UP[1] + wy * g.wander;
+    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead - weep) * UP[1] + wy * g.wander;
     let dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + wz * g.wander;
+    // Torsion: twist the direction about the vertical axis each segment (spiralling growth).
+    if (g.torsion !== 0) {
+      const ta = ((g.torsion * Math.PI) / 180) * (ch.order % 2 ? -1 : 1);
+      const ct = Math.cos(ta), st = Math.sin(ta);
+      const ndx = dx * ct - dz * st;
+      dz = dx * st + dz * ct; dx = ndx;
+    }
     // Limit the per-segment turn so branches bend smoothly and never loop back.
     const l = Math.hypot(dx, dy, dz) || 1;
     dx /= l; dy /= l; dz /= l;
@@ -330,6 +339,8 @@ export class TreeSim {
       const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
       const n = this.nodes[b.node];
+      // Clear bole: trunk buds below `crown.bole` metres stay dormant.
+      if (ch.order === 0 && n.ry < this.params.crown.bole) continue;
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
       this.buds.pop();
