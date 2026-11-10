@@ -67,3 +67,5 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 - Noon foliage is green now (leaf envMapIntensity 0.3, more saturation) but still reads dark from below.
 - Journey/drift changes to crown params only take effect via attractor re-sampling; cinema camera is not tested headless (shots disable it). Journey end shot (m3-journey-day-16.8-end) crops the crown top: framing lags the late upward growth after attractor re-sampling. Heavy world reads squat and buttressed but the crown is a dense flat mat.
 - Branches have no wind sway, only leaves do. Sag does not resolve collisions.
+- Low-gravity alien is tall (~24 m, 2.7× the oak) with sparse huge leaves, but its trunk still reads hair-thin at full-frame distance and the spiral arcs are only faintly visible; the crown is more columnar than arched.
+- Cinema push-ins may crop crown edges briefly; the resting orbit and auto-frame fit the full bounding sphere.
