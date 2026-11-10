@@ -109,10 +109,10 @@ export interface ArborParams {
     fog: number;
     stars: number;
     godRays: number;
-    /** Sky hue rotation 0..1 (alien skies). */
+    /** Sky/fog tint hue 0..1 (alien skies). */
     skyHue: number;
-    /** Sky/fog saturation multiplier. */
-    skySat: number;
+    /** Sky/fog tint amount 0..1. */
+    skyTint: number;
     /** Key light hue tint 0..1 and amount 0..1 (alien star colour). */
     sunHue: number;
     sunTint: number;
@@ -166,9 +166,9 @@ export function defaultParams(): ArborParams {
     },
     crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, bole: 1.7, attractors: 4000 },
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
-    leaves: { size: 0.26, density: 2.6, hue: 0.29, saturation: 0.42, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
+    leaves: { size: 0.26, density: 2.6, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
     light: { azimuth: 35, elevation: 50 },
-    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, skyHue: 0, skySat: 1, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },
   };

@@ -121,8 +121,8 @@ export function buildGui(p: ArborParams, auto: Automation, a: UiActions): GUI {
   sk.add(p.sky, 'fog', 0, 5, 0.01);
   sk.add(p.sky, 'stars', 0, 2, 0.01);
   sk.add(p.sky, 'godRays', 0, 3, 0.01);
-  sk.add(p.sky, 'skyHue', 0, 1, 0.005).name('sky hue shift');
-  sk.add(p.sky, 'skySat', 0, 2, 0.01).name('sky saturation');
+  sk.add(p.sky, 'skyHue', 0, 1, 0.005).name('sky tint hue').listen();
+  sk.add(p.sky, 'skyTint', 0, 1, 0.01).name('sky tint').listen();
   sk.add(p.sky, 'sunHue', 0, 1, 0.005);
   sk.add(p.sky, 'sunTint', 0, 1, 0.01);
   sk.add(p.sky, 'sun2', 0, 2, 0.01).name('2nd star');

@@ -30,20 +30,24 @@ function patchSky(sky: Sky, u: Record<string, THREE.IUniform>) {
   m.fragmentShader = m.fragmentShader
     .replace(
       'void main() {',
-      `uniform vec3 fogCol; uniform float skyGain; uniform float horizonK; uniform float skyHue; uniform float skySat;
-vec3 hueRot(vec3 c, float h) {
-  // Rotate hue about the grey axis (Rodrigues); skySat scales chroma.
-  float a = h * 6.2831853;
-  vec3 k = vec3(0.57735);
-  vec3 r = c * cos(a) + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cos(a));
-  vec3 grey = k * dot(k, r);
-  return max(vec3(0.0), grey + (r - grey) * skySat);
+      `uniform vec3 fogCol; uniform float skyGain; uniform float horizonK; uniform vec3 skyTintCol; uniform float skyTint;
+uniform vec3 disc1Dir; uniform vec3 disc1Col; uniform vec3 disc2Dir; uniform vec3 disc2Col; uniform float discSize; uniform float discOn;
+vec3 tintSky(vec3 c) {
+  float L = dot(c, vec3(0.3, 0.59, 0.11));
+  return mix(c, skyTintCol * L * 2.2, skyTint);
+}
+vec3 disc(vec3 d, vec3 dir, vec3 col) {
+  float c = dot(d, dir);
+  float r = discSize * 0.012;
+  float core = smoothstep(cos(r), cos(r * 0.8), c);
+  float halo = pow(max(c, 0.0), 900.0 / discSize) * 0.35;
+  return col * (core * 6.0 + halo);
 }
 void main() {`,
     )
     .replace(
       'gl_FragColor = vec4( texColor, 1.0 );',
-      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tgl_FragColor = vec4( min(mix(hueRot(texColor * skyGain, skyHue), fogCol, hb), vec3(1.8)), 1.0 );',
+      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tvec3 sc = min(mix(tintSky(texColor * skyGain), fogCol, hb), vec3(1.8));\n\t\t\tsc += discOn * (disc(direction, disc1Dir, disc1Col) + disc(direction, disc2Dir, disc2Col));\n\t\t\tgl_FragColor = vec4( sc, 1.0 );',
     );
 }
 
@@ -63,10 +67,7 @@ export class Atmosphere {
   keyColor = new THREE.Color();
   keyIntensity = 1;
   /** Shared horizon-blend uniforms: the sky melts into the fog colour at the horizon (no band). */
-  skyUniforms = { fogCol: { value: new THREE.Color() }, skyGain: { value: 1 }, horizonK: { value: 9 }, skyHue: { value: 0 }, skySat: { value: 1 } };
-  /** Visible sun discs (HDR sprites, bloom picks them up): primary + companion star. */
-  sunSprite: THREE.Sprite;
-  sun2Sprite: THREE.Sprite;
+  skyUniforms = { fogCol: { value: new THREE.Color() }, skyGain: { value: 1 }, horizonK: { value: 9 }, skyTintCol: { value: new THREE.Color() }, skyTint: { value: 0 }, disc1Dir: { value: new THREE.Vector3() }, disc1Col: { value: new THREE.Color() }, disc2Dir: { value: new THREE.Vector3() }, disc2Col: { value: new THREE.Color() }, discSize: { value: 1 }, discOn: { value: 1 } };
   sun2Dir = new THREE.Vector3();
   sun2Color = new THREE.Color();
   sun2Intensity = 0;
@@ -81,7 +82,7 @@ export class Atmosphere {
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene) {
     this.sky.scale.setScalar(4500);
     patchSky(this.sky, this.skyUniforms);
-    patchSky(this.envSky, this.skyUniforms);
+    patchSky(this.envSky, { ...this.skyUniforms, discOn: { value: 0 } });
     this.sky.material.uniforms.cloudCoverage.value = 0.35;
     this.sky.material.uniforms.cloudDensity.value = 0.35;
     scene.add(this.sky);
@@ -127,15 +128,6 @@ export class Atmosphere {
     );
     scene.add(this.moon);
 
-    const tex = sunTexture();
-    const mk = () => {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true, toneMapped: true }));
-      sp.renderOrder = 1;
-      scene.add(sp);
-      return sp;
-    };
-    this.sunSprite = mk();
-    this.sun2Sprite = mk();
   }
 
   update(p: ArborParams, dt: number, camPos: THREE.Vector3) {
@@ -191,36 +183,27 @@ export class Atmosphere {
     if (h > 0.02) this.fogColor.copy(lerpC(duskFog, dayFog, smooth(0.02, 0.35, h)));
     else this.fogColor.copy(h > -0.1 ? lerpC(blueHour, duskFog, smooth(-0.1, 0.02, h)) : lerpC(nightFog, blueHour, smooth(-0.22, -0.1, h)));
 
-    if (k.skyHue !== 0 || k.skySat !== 1) {
-      const hsl = { h: 0, s: 0, l: 0 };
-      this.fogColor.getHSL(hsl);
-      this.fogColor.setHSL((hsl.h + k.skyHue) % 1, Math.min(1, hsl.s * k.skySat), hsl.l);
+    const tint = new THREE.Color().setHSL(k.skyHue, 0.6, 0.5);
+    if (k.skyTint > 0) {
+      const L = this.fogColor.r * 0.3 + this.fogColor.g * 0.59 + this.fogColor.b * 0.11;
+      this.fogColor.lerp(tint.clone().multiplyScalar(L * 2.2), Math.min(1, k.skyTint));
     }
     this.skyUniforms.fogCol.value.copy(this.fogColor);
-    this.skyUniforms.skyHue.value = k.skyHue;
-    this.skyUniforms.skySat.value = k.skySat;
+    this.skyUniforms.skyTintCol.value.copy(tint);
+    this.skyUniforms.skyTint.value = k.skyTint;
 
-    // Sun discs. Kept small and moderately HDR so bloom gives a soft halo without flooding.
-    const D = 3200;
+    // Sun discs drawn in the sky shader (HDR core; bloom gives the halo). Companion star sits off in yaw, a bit lower.
     const sunVis = smooth(-0.06, 0.02, h);
-    this.sunSprite.position.copy(camPos).addScaledVector(this.sunDir, D);
-    this.sunSprite.scale.setScalar(D * 0.09 * k.sunSize);
-    const sm = this.sunSprite.material as THREE.SpriteMaterial;
-    sm.color.copy(sunCol).multiplyScalar(1.6 + 1.4 * smooth(0.0, 0.5, h));
-    sm.opacity = sunVis;
-    this.sunSprite.visible = sunVis > 0.01;
-    // Companion star: fixed offset in yaw on the same arc, a bit lower.
+    this.skyUniforms.disc1Dir.value.copy(this.sunDir);
+    this.skyUniforms.disc1Col.value.copy(sunCol).multiplyScalar(sunVis * (0.6 + 0.6 * smooth(0.0, 0.5, h)));
+    this.skyUniforms.discSize.value = k.sunSize;
     sunDirection(k.timeOfDay - 1.2, k.latitude + 8, k.sunYaw + k.sun2Yaw, this.sun2Dir);
     const h2 = this.sun2Dir.y;
     this.sun2Color.setHSL(k.sun2Hue, 0.8, 0.62);
     const vis2 = smooth(-0.04, 0.06, h2) * Math.min(1, k.sun2 * 2);
     this.sun2Intensity = k.sun2 * 1.8 * vis2;
-    this.sun2Sprite.position.copy(camPos).addScaledVector(this.sun2Dir, D);
-    this.sun2Sprite.scale.setScalar(D * 0.06 * k.sunSize);
-    const sm2 = this.sun2Sprite.material as THREE.SpriteMaterial;
-    sm2.color.copy(this.sun2Color).multiplyScalar(2.2);
-    sm2.opacity = vis2;
-    this.sun2Sprite.visible = vis2 > 0.01;
+    this.skyUniforms.disc2Dir.value.copy(this.sun2Dir);
+    this.skyUniforms.disc2Col.value.copy(this.sun2Color).multiplyScalar(vis2 * 0.8);
     // Preetham radiance grows strongly with sun height; normalise so noon doesn't blow out.
     this.skyUniforms.skyGain.value = k.skyGain * (0.3 + 0.15 * (1 - smooth(0.03, 0.55, h)));
 
@@ -249,20 +232,3 @@ export class Atmosphere {
   }
 }
 
-/** Radial sun disc: hard bright core with a soft limb and short corona. */
-function sunTexture(): THREE.Texture {
-  const N = 128, c = document.createElement('canvas');
-  c.width = c.height = N;
-  const g = c.getContext('2d')!;
-  const gr = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-  gr.addColorStop(0, 'rgba(255,255,255,1)');
-  gr.addColorStop(0.16, 'rgba(255,255,255,1)');
-  gr.addColorStop(0.2, 'rgba(255,255,255,0.55)');
-  gr.addColorStop(0.35, 'rgba(255,255,255,0.12)');
-  gr.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = gr;
-  g.fillRect(0, 0, N, N);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
