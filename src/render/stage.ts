@@ -141,6 +141,10 @@ export class Stage {
     const mn = sim.bboxMin, mx = sim.bboxMax;
     const c = new THREE.Vector3((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
     const ext = Math.max(1.6, Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2);
+    // Bounding-sphere fit: distance at which a sphere of radius ext fills the narrower FOV, with margin.
+    const vf = (this.camera.fov * Math.PI) / 360;
+    const half = Math.min(vf, Math.atan(Math.tan(vf) * this.camera.aspect));
+    const fit = (ext / Math.sin(half)) * 1.06;
     const trunkR = sim.nodes.length ? Math.max(0.03, sim.nodes[0].radius ?? 0.05) : 0.05;
     this.groundU.trunk.value.set(sim.nodes[0]?.wx ?? 0, sim.nodes[0]?.wz ?? 0, trunkR);
 
@@ -203,13 +207,13 @@ export class Stage {
       this.cineT += dt;
       const t = this.cineT;
       this.cineYaw += dt * (0.045 + 0.02 * Math.sin(t * 0.031));
-      const fov = (this.camera.fov * Math.PI) / 180;
-      const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.8);
+      const want = Math.max(2.5, fit);
       const push = Math.pow(0.5 + 0.5 * Math.sin(t * 0.021 - 1.2), 3); // rare, slow
-      const dist = want * (1.05 - 0.38 * push + 0.06 * Math.sin(t * 0.07));
+      // Push-ins may crop the crown edges a little (detail shots); the resting orbit always keeps it whole.
+      const dist = want * (1.04 - 0.3 * push + 0.04 * Math.sin(t * 0.07));
       const elev = 0.06 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.043 + 0.7)) + 0.08 * push;
-      const kk = snap ? 1 : 1 - Math.exp(-dt * 0.8);
-      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * (0.86 + 0.12 * push)), c.z);
+      const kk = snap ? 1 : 1 - Math.exp(-dt * (dist > this.dist ? 2.5 : 0.8));
+      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * (0.97 + 0.06 * push)), c.z);
       this.center.lerp(target, kk);
       this.dist += (dist - this.dist) * kk;
       const ce = Math.cos(elev);
@@ -220,10 +224,10 @@ export class Stage {
         this.center.z + Math.cos(this.cineYaw) * ce * this.dist,
       );
     } else if (p.camera.autoFrame) {
-      const kk = snap ? 1 : 1 - Math.exp(-dt * 1.2);
-      const fov = (this.camera.fov * Math.PI) / 180;
-      const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.78);
-      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * 0.86), c.z);
+      const want = Math.max(2.5, fit);
+      // Pull back faster than we push in so a growing crown never outruns the frame.
+      const kk = snap ? 1 : 1 - Math.exp(-dt * (want > this.dist ? 2.5 : 1.0));
+      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y), c.z);
       this.center.lerp(target, kk);
       this.dist += (want - this.dist) * kk;
       const off = this.camera.position.clone().sub(this.controls.target);

@@ -31,10 +31,12 @@ export const PRESETS: Record<string, Preset> = {
   },
   'Low-gravity alien': {
     params: {
-      growth: { gravity: 0.2, torsion: 11, gravitropism: 0.6, wander: 0.9, maxTurn: 22, growthRate: 2.4, straightness: 1.2, branchAngle: 64, vigorDecay: 0.9, segmentLength: 0.3, sag: 0.4, scaffoldBranching: 0.7, selfPrune: 0.12 },
-      crown: { shape: 2, radius: 5.5, height: 11, base: 3.5, bole: 2.5, attractors: 3000 },
-      thickness: { exponent: 2.6, twigRadius: 0.006, rootFlare: 2.4 },
-      leaves: { size: 0.75, density: 1.0, hue: 0.47, saturation: 0.55, shape: -0.6, lightness: 1.2, glow: 0.15, glowHue: 0.48 },
+      // Tall, sparse, spiralling: almost no gravitropism, upward light drive, strong torsion, long internodes, few buds.
+      growth: { gravity: 0.2, torsion: 14, gravitropism: 0.05, phototropism: 1.1, attraction: 0.8, wander: 0.4, maxTurn: 12, growthRate: 2.6, straightness: 2.4, branchAngle: 48, vigorDecay: 0.9, segmentLength: 0.42, sag: 0.3, scaffoldBranching: 0.5, branchingProbability: 0.09, apicalDominance: 0.85, selfPrune: 0.1, maxOrder: 4 },
+      crown: { shape: 1.8, radius: 4.2, height: 12, base: 3.5, bole: 4, attractors: 1500 },
+      thickness: { exponent: 2.6, twigRadius: 0.006, rootFlare: 2.0 },
+      leaves: { size: 1.9, density: 0.35, hue: 0.47, saturation: 0.55, shape: -0.6, lightness: 1.2, glow: 0.15, glowHue: 0.48 },
+      light: { azimuth: 35, elevation: 82 },
       sky: { timeOfDay: 16.5, skyHue: 0.78, skyTint: 0.6, sunHue: 0.6, sunTint: 0.45, sun2: 0.5, sun2Hue: 0.95, sun2Yaw: 110, sunSize: 1.8, groundHue: 0.75, groundTint: 0.55 },
     },
   },

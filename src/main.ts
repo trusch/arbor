@@ -97,10 +97,14 @@ let uiHidden = query.get('hideui') === '1';
 let activity = 0;
 const applyUi = () => document.body.classList.toggle('watch', uiHidden);
 applyUi();
+// Capture phase: lil-gui stops keydown propagation on its controllers, so H/C would die after any GUI click.
 addEventListener('keydown', (e) => {
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'h' || e.key === 'H') { uiHidden = !uiHidden; applyUi(); activity = 0; }
   if (e.key === 'c' || e.key === 'C') { params.camera.cinema = !params.camera.cinema; stage.idle = 1e9; }
-});
+}, true);
 addEventListener('pointermove', () => (activity = 0));
 const glow = new THREE.Color();
 
@@ -157,6 +161,6 @@ requestAnimationFrame(loop);
     meshAge = Infinity;
     redraw(elapsed, 0);
     stage.render(params);
-    return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time };
+    return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time, height: +sim.bboxMax[1].toFixed(2), width: +Math.max(sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]).toFixed(2) };
   },
 };
