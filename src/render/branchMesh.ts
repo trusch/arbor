@@ -1,0 +1,177 @@
+import * as THREE from 'three';
+import type { TreeSim } from '../sim/tree';
+import type { BarkTextures } from './textures';
+
+const BARK_V_SCALE = 0.35; // metres of length per texture repeat (scaled by radius)
+
+/**
+ * Tapered generalized-cylinder mesh for all chains. Each chain is one tube
+ * with parallel-transported frames; buffers are reused and grown by doubling.
+ */
+export class BranchMesh {
+  mesh: THREE.Mesh;
+  private geo = new THREE.BufferGeometry();
+  private pos = new Float32Array(0);
+  private nrm = new Float32Array(0);
+  private uv = new Float32Array(0);
+  private idx = new Uint32Array(0);
+  private lastTopology = -1;
+  private ringCache = new Map<number, { c: Float32Array; s: Float32Array }>();
+
+  constructor(bark: BarkTextures) {
+    const mat = new THREE.MeshStandardMaterial({
+      map: bark.map,
+      normalMap: bark.normalMap,
+      normalScale: new THREE.Vector2(1.4, 1.4),
+      roughnessMap: bark.roughnessMap,
+      roughness: 1,
+      metalness: 0,
+    });
+    this.mesh = new THREE.Mesh(this.geo, mat);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    this.mesh.frustumCulled = false;
+  }
+
+  private ring(R: number) {
+    let r = this.ringCache.get(R);
+    if (!r) {
+      const c = new Float32Array(R + 1), s = new Float32Array(R + 1);
+      for (let j = 0; j <= R; j++) {
+        c[j] = Math.cos((j / R) * Math.PI * 2);
+        s[j] = Math.sin((j / R) * Math.PI * 2);
+      }
+      this.ringCache.set(R, (r = { c, s }));
+    }
+    return r;
+  }
+
+  private static radial(order: number, r: number) {
+    if (r > 0.08) return 16;
+    if (r > 0.03) return 10;
+    if (order <= 2 || r > 0.012) return 7;
+    return 5;
+  }
+
+  update(sim: TreeSim) {
+    const nodes = sim.nodes;
+    const chains = sim.chains;
+    // Count.
+    let vCount = 0, iCount = 0, sig = chains.length;
+    const radials: number[] = new Array(chains.length);
+    for (let c = 0; c < chains.length; c++) {
+      const ch = chains[c];
+      const m = ch.nodes.length;
+      if (m < 2) { radials[c] = 0; continue; }
+      const R = BranchMesh.radial(ch.order, nodes[ch.nodes[1]].radius);
+      radials[c] = R;
+      sig = (sig * 31 + R * m) | 0;
+      const rings = m + 1; // +1 tip cap ring
+      vCount += rings * (R + 1);
+      iCount += (rings - 1) * R * 6;
+    }
+    let realloc = false;
+    if (vCount * 3 > this.pos.length) {
+      const cap = Math.max(1024, vCount * 2);
+      this.pos = new Float32Array(cap * 3);
+      this.nrm = new Float32Array(cap * 3);
+      this.uv = new Float32Array(cap * 2);
+      realloc = true;
+    }
+    if (iCount > this.idx.length) {
+      this.idx = new Uint32Array(Math.max(4096, iCount * 2));
+      realloc = true;
+    }
+    if (realloc) {
+      this.geo.dispose();
+      this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+      this.geo.setAttribute('normal', new THREE.BufferAttribute(this.nrm, 3).setUsage(THREE.DynamicDrawUsage));
+      this.geo.setAttribute('uv', new THREE.BufferAttribute(this.uv, 2).setUsage(THREE.DynamicDrawUsage));
+      this.geo.setIndex(new THREE.BufferAttribute(this.idx, 1).setUsage(THREE.DynamicDrawUsage));
+      this.lastTopology = -1;
+    }
+    const writeIndex = sig !== this.lastTopology;
+
+    const P = this.pos, Nn = this.nrm, UV = this.uv, I = this.idx;
+    let v = 0, ii = 0;
+    let nx = 0, ny = 0, nz = 0; // transported normal
+    for (let c = 0; c < chains.length; c++) {
+      const R = radials[c];
+      if (!R) continue;
+      const ids = chains[c].nodes;
+      const m = ids.length;
+      const { c: cs, s: sn } = this.ring(R);
+      const baseR = nodes[ids[1]].radius;
+      const uRep = Math.max(1, Math.round((Math.PI * 2 * baseR) / 0.12));
+      const vScale = 1 / (BARK_V_SCALE * Math.max(0.3, Math.min(2, baseR / 0.05 + 0.3)));
+      let along = 0;
+      const vStart = v;
+      let px = 0, py = 0, pz = 0;
+      for (let k = 0; k <= m; k++) {
+        // Ring centre/radius; k === m is the closing tip cap.
+        const kk = Math.min(k, m - 1);
+        const nd = nodes[ids[kk]];
+        let cx = nd.wx, cy = nd.wy, cz = nd.wz;
+        let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
+        // Tangent: central difference, one-sided at ends.
+        const a = nodes[ids[Math.max(0, kk - 1)]], b = nodes[ids[Math.min(m - 1, kk + 1)]];
+        let tx = b.wx - a.wx, ty = b.wy - a.wy, tz = b.wz - a.wz;
+        let tl = Math.hypot(tx, ty, tz);
+        if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
+        tx /= tl; ty /= tl; tz /= tl;
+        if (k === m) {
+          cx += tx * r * 1.5; cy += ty * r * 1.5; cz += tz * r * 1.5;
+          r = 0;
+        }
+        if (k === 0) {
+          // Initial frame normal: any perpendicular.
+          if (Math.abs(ty) < 0.9) { nx = -tz; ny = 0; nz = tx; } else { nx = 1; ny = 0; nz = 0; }
+        } else {
+          along += Math.hypot(cx - px, cy - py, cz - pz);
+        }
+        // Parallel transport: project previous normal onto the plane of t.
+        const d = nx * tx + ny * ty + nz * tz;
+        nx -= tx * d; ny -= ty * d; nz -= tz * d;
+        let nl = Math.hypot(nx, ny, nz);
+        if (nl < 1e-6) { if (Math.abs(ty) < 0.9) { nx = -tz; ny = 0; nz = tx; } else { nx = 1; ny = 0; nz = 0; } nl = Math.hypot(nx, ny, nz); }
+        nx /= nl; ny /= nl; nz /= nl;
+        const bx = ty * nz - tz * ny, by = tz * nx - tx * nz, bz = tx * ny - ty * nx;
+        px = cx; py = cy; pz = cz;
+        const vv = along * vScale;
+        for (let j = 0; j <= R; j++) {
+          const ox = cs[j] * nx + sn[j] * bx, oy = cs[j] * ny + sn[j] * by, oz = cs[j] * nz + sn[j] * bz;
+          const o3 = v * 3;
+          P[o3] = cx + ox * r; P[o3 + 1] = cy + oy * r; P[o3 + 2] = cz + oz * r;
+          Nn[o3] = ox; Nn[o3 + 1] = oy; Nn[o3 + 2] = oz;
+          UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vv;
+          v++;
+        }
+      }
+      if (writeIndex) {
+        const rings = m + 1;
+        for (let k = 0; k < rings - 1; k++) {
+          const r0 = vStart + k * (R + 1), r1 = r0 + R + 1;
+          for (let j = 0; j < R; j++) {
+            I[ii++] = r0 + j; I[ii++] = r1 + j; I[ii++] = r0 + j + 1;
+            I[ii++] = r0 + j + 1; I[ii++] = r1 + j; I[ii++] = r1 + j + 1;
+          }
+        }
+      }
+    }
+    const g = this.geo;
+    (g.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (g.attributes.normal as THREE.BufferAttribute).needsUpdate = true;
+    (g.attributes.uv as THREE.BufferAttribute).needsUpdate = true;
+    if (writeIndex) {
+      g.index!.needsUpdate = true;
+      this.lastTopology = sig;
+    }
+    (g.attributes.position as THREE.BufferAttribute).clearUpdateRanges();
+    (g.attributes.position as THREE.BufferAttribute).addUpdateRange(0, v * 3);
+    (g.attributes.normal as THREE.BufferAttribute).clearUpdateRanges();
+    (g.attributes.normal as THREE.BufferAttribute).addUpdateRange(0, v * 3);
+    (g.attributes.uv as THREE.BufferAttribute).clearUpdateRanges();
+    (g.attributes.uv as THREE.BufferAttribute).addUpdateRange(0, v * 2);
+    g.setDrawRange(0, iCount);
+  }
+}
