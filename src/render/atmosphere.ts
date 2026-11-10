@@ -31,7 +31,7 @@ function patchSky(sky: Sky, u: Record<string, THREE.IUniform>) {
     .replace('void main() {', 'uniform vec3 fogCol; uniform float skyGain; uniform float horizonK;\nvoid main() {')
     .replace(
       'gl_FragColor = vec4( texColor, 1.0 );',
-      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tgl_FragColor = vec4( min(mix(texColor * skyGain, fogCol, hb), vec3(4.0)), 1.0 );',
+      'float hb = exp(-max(direction.y, 0.0) * horizonK);\n\t\t\tgl_FragColor = vec4( min(mix(texColor * skyGain, fogCol, hb), vec3(1.8)), 1.0 );',
     );
 }
 

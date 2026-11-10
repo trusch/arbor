@@ -84,7 +84,7 @@ export class Post {
     c.addPass(this.gtao);
     this.rays = new ShaderPass(GodRaysShader);
     c.addPass(this.rays);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.5, 2.2);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.2, 0.4, 2.5);
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);

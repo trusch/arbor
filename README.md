@@ -5,7 +5,7 @@ Real-time tree growth simulation rendered with three.js. Vite + TypeScript + lil
 ```
 npm install
 npm run dev            # http://localhost:5173  (?t=60 fast-forwards, ?gravity=0.2 etc. override params)
-npm run shots          # headless chromium proof shots -> shots/
+npm run shots          # headless chromium proof shots -> shots/ (growth stages + morning/noon/golden/bluehour/night)
 node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 ```
 
@@ -21,7 +21,9 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 | `src/render/branchMesh.ts` | Generalized-cylinder tubes per chain, parallel-transport frames, reusable growing buffers. |
 | `src/render/leaves.ts` | InstancedMesh leaves, unfold/drop scaling, wind sway via `onBeforeCompile`. |
 | `src/render/textures.ts` | Procedural bark (color/normal/roughness), leaf alpha, grass textures. |
-| `src/render/stage.ts` | Renderer (ACES, sRGB, PCF shadows), sky, ground, sun shadow frustum + camera auto-framing. |
+| `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
+| `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
+| `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
 | `src/ui.ts` | lil-gui panel. |
 | `scripts/screenshot.mjs` | Playwright-core + system chromium (SwiftShader) shots; uses `window.__arbor.fastForward(s)`. |
 
@@ -36,6 +38,11 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 - Low gravity stretches the crown envelope upward and weakens gravitropism and sag.
 
 ## Known weaknesses
+
+- Sky radiance is clamped at 1.8 (HDR) so bloom does not flood the frame at low sun; the sun disc is therefore not visible. A dedicated sun sprite would bring it back.
+- God rays are screen-space and only appear with the sun on screen. They are not tuned yet (default strength is low).
+- Stars are point sprites; the moon is an unlit sphere with no phases.
+- Ground/hills colours and the noon sky are still somewhat desaturated and flat.
 
 - Branch mesh and leaf matrices are rebuilt every frame on the CPU. Headless SwiftShader runs at ~12 fps with 7k nodes and 14k leaves; GPU frame rate is not measured yet.
 - No self-pruning or light-exposure model yet. Interior shading only comes from bud dormancy and leaf drop on thick wood.

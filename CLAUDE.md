@@ -6,3 +6,6 @@
 - Children always have larger node ids than parents; `updateStructure` relies on this for its bottom-up and top-down passes.
 - three r187 removed PCFSoftShadowMap; use PCFShadowMap + `shadow.radius`.
 - Verify visually: `npm run shots`, then look at the PNGs in `shots/`.
+- Look/lighting is driven by `params.sky` (timeOfDay, cycle, dayLength, latitude, sunYaw, exposure, fog, godRays, quality). `params.light` is only the phototropism direction for the sim.
+- Preetham sky values blow up bloom at low sun: keep the sky clamp in `atmosphere.ts` (`patchSky`) unless you also retune bloom.
+- `npm run shots` 4th/5th args: prefix, `hour:name,...` list (or `none`). SHOT_W/SHOT_H env set the resolution. Each run takes about 70s on SwiftShader.
