@@ -25,6 +25,13 @@
 <pre id="prev">…</pre>
 <script>
   var L = [
+    ['./?ladder=1', 'Test leaf variants (leave the phone for 2 min)', 'tries leaf variants V4 to V0, 20 s each, reloads itself after a GPU crash; results go to telemetry'],
+    ['./?leafvariant=0', 'Leaf variant V0', 'known-good: card + leaf map + alphaTest (PowerVR default)'],
+    ['./?leafvariant=1', 'Leaf variant V1', 'V0 + emissive'],
+    ['./?leafvariant=2', 'Leaf variant V2', 'V0 + vertexColors'],
+    ['./?leafvariant=3', 'Leaf variant V3', 'leaf polygon + uv + 1x1 white map + alphaTest'],
+    ['./?leafvariant=4', 'Leaf variant V4', 'leaf polygon, vertexColors, emissive, no map (crashed PowerVR in 0d41a74)'],
+    ['./?leafmap=raw', 'Raw leaf map', 'old canvas leaf map with GPU mips (ghost-card comparison)'],
     ['./', 'Normal app', 'baseline: does it still crash?'],
     ['./?safe=1', 'Safe mode', 'no shadows, no leaves, basic sky, no growth, no antialias'],
     ['./?safe=1&grow=1', 'Safe + growth', 'only the growing branch mesh + light grid'],

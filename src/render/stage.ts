@@ -42,7 +42,7 @@ export class Stage {
   private sunUv = new THREE.Vector3();
 
   constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean; onContextLost?: () => boolean } = {}) {
-    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? true, powerPreference: 'high-performance' }));
+    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? true, powerPreference: 'high-performance', alpha: false }));
     r.setPixelRatio(1);
     r.setSize(window.innerWidth, window.innerHeight);
     r.toneMapping = THREE.ACESFilmicToneMapping;

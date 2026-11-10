@@ -42,6 +42,54 @@ function doubledLeafGeometry(vertexColors = false): THREE.BufferGeometry {
 }
 
 /**
+ * Alpha-tested leaf map without ghost cards. The canvas source is premultiplied, so every transparent texel reads back as
+ * RGB 0 and box-filtered mips darken the rim; low mips also average the alpha to ~0.5 over the whole card, which then
+ * passes alphaTest 0.5 as a dark rectangle. Here: alpha is exactly 0 outside the leaf, RGB is dilated with the leaf
+ * colour into the transparent area, and every mip level is built by hand with its alpha re-thresholded at 0.5, so a
+ * texel is either leaf (alpha 1) or nothing (alpha 0) at every distance. Same shader features as the canvas map.
+ */
+export function cleanLeafTexture(src: THREE.Texture): THREE.Texture {
+  const img = src.image as HTMLCanvasElement;
+  const S = img.width;
+  const d = img.getContext('2d')!.getImageData(0, 0, S, S).data;
+  // Mean leaf colour (unpremultiplied by getImageData) for the dilation fill.
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3] >= 128) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+  const fill = [r / n, g / n, b / n];
+  let lvl = new Float32Array(S * S * 4);
+  for (let i = 0; i < S * S; i++) {
+    const a = d[i * 4 + 3] / 255;
+    for (let c = 0; c < 3; c++) lvl[i * 4 + c] = a >= 0.5 ? d[i * 4 + c] : fill[c];
+    lvl[i * 4 + 3] = a >= 0.5 ? 1 : 0;
+  }
+  const toBytes = (f: Float32Array) => {
+    const u = new Uint8Array(f.length);
+    for (let i = 0; i < f.length; i += 4) { u[i] = f[i]; u[i + 1] = f[i + 1]; u[i + 2] = f[i + 2]; u[i + 3] = f[i + 3] >= 0.5 ? 255 : 0; }
+    return u;
+  };
+  const mipmaps: { data: Uint8Array; width: number; height: number }[] = [{ data: toBytes(lvl), width: S, height: S }];
+  for (let w = S >> 1; w >= 1; w >>= 1) {
+    const prev = lvl, pw = w * 2;
+    lvl = new Float32Array(w * w * 4);
+    for (let y = 0; y < w; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 4; c++) {
+      const at = (xx: number, yy: number) => prev[(yy * pw + xx) * 4 + c];
+      lvl[(y * w + x) * 4 + c] = (at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1)) / 4;
+    }
+    mipmaps.push({ data: toBytes(lvl), width: w, height: w });
+  }
+  const t = new THREE.DataTexture(mipmaps[0].data, S, S, THREE.RGBAFormat);
+  t.mipmaps = mipmaps as unknown as THREE.DataTexture['mipmaps'];
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.flipY = src.flipY;
+  t.colorSpace = src.colorSpace;
+  t.anisotropy = 1;
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
  * Leaf-shaped polygon for the safe/basic path: no texture, no alpha test, crisp silhouette.
  * Midrib along +Y (base at origin after the petiole gap), 5 stations per side, halves folded up along the midrib
  * so they shade differently. Front and reversed-winding back copy (FrontSide renders both faces, no gl_FrontFacing).
@@ -110,6 +158,9 @@ export const LEAF_VARIANTS: readonly LeafVariant[] = [
   { name: 'V4 poly+vertexColors+emissive, no map', geo: 'poly', map: null, vertexColors: true, emissive: true },
 ];
 
+/** ?leafmap=raw: the old canvas map with GPU mips (ghost-card repro). */
+const diagRawLeafMap = typeof location !== 'undefined' && new URLSearchParams(location.search).get('leafmap') === 'raw';
+
 const GROW_TIME = 3; // seconds for a leaf to unfold
 
 /** Instanced leaves attached to young segments, with vertex-shader wind sway. */
@@ -143,10 +194,8 @@ export class Leaves {
       const v = this.variant = LEAF_VARIANTS[mode.variant ?? 0] ?? LEAF_VARIANTS[0];
       let tex: THREE.Texture | null = null;
       if (v.map === 'leaf') {
-        map.anisotropy = 1;
-        map.generateMipmaps = true;
-        map.minFilter = THREE.LinearMipmapLinearFilter;
-        tex = map;
+        tex = diagRawLeafMap ? map : cleanLeafTexture(map);
+        if (diagRawLeafMap) { map.anisotropy = 1; map.generateMipmaps = true; map.minFilter = THREE.LinearMipmapLinearFilter; }
       } else if (v.map === 'white') {
         tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
         tex.needsUpdate = true;
