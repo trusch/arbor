@@ -28,6 +28,12 @@ export function diagSwitches(q: URLSearchParams) {
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),
+    /** Safe leaf path: true/false when forced by ?leafsafe=1/0, null = auto (PowerVR, mobile Low, previous context loss). */
+    leafSafe: safe || q.get('leafsafe') === '1' ? true : q.get('leafsafe') === '0' ? false : null,
+    /** ?leafshadow=0: leaves neither cast nor receive shadows (any shader). null = mode default. */
+    leafShadow: q.get('leafshadow') === '0' ? false : q.get('leafshadow') === '1' ? true : null,
+    /** ?leafshader=basic|safe|full forces the leaf shader. */
+    leafShader: (['basic', 'safe', 'full'] as const).find((k) => q.get('leafshader') === k) ?? null,
     /** Branch-mesh rebuild rate while growing (default ~8 Hz). */
     rebuildHz: Number.isFinite(hz) && hz > 0 ? hz : 0,
   };

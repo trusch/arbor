@@ -3,7 +3,7 @@ import { defaultParams, applyQueryOverrides } from './params';
 import { TreeSim } from './sim/tree';
 import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
-import { Leaves } from './render/leaves';
+import { Leaves, type LeafMode } from './render/leaves';
 import { makeBarkTextures, makeLeafTexture } from './render/textures';
 import { buildGui } from './ui';
 import { Automation } from './automation';
@@ -36,6 +36,10 @@ if (!query.has('quality') && !query.has('sky.quality') && lowEnd) params.sky.qua
 if (lowEnd && !query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.min(params.growth.maxNodes, (nodeBudget = 7000));
 // Diagnostics bisect switches (?safe=1, ?shadows=0, ?leaves=0, ?sky=basic, ?grow=0, ?antialias=0, ?rebuildHz=N); see diag.html.
 const diag = diagSwitches(query);
+// Crash-loop guard: count context losses in this tab. After one, the next load uses safe leaves and no shadows.
+const CTX_KEY = 'arbor.ctxLost';
+const ctxLosses = (() => { try { return Number(sessionStorage.getItem(CTX_KEY)) || 0; } catch { return 0; } })();
+if (ctxLosses > 0 && !query.has('shadows')) diag.shadows = false;
 if (diag.safe && !query.has('quality')) params.sky.quality = 'Low';
 if (!diag.grow) params.time.paused = true; // combine with ?t=N for a static grown tree
 function lowEndDevice() {
@@ -48,7 +52,31 @@ function lowEndDevice() {
 }
 
 tel.phase('init stage');
-const stage = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows });
+const stage = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows, onContextLost: contextLost });
+/** Record the loss; reload into safe mode on restore the first time, stop reloading and show safe-mode links on the second. */
+function contextLost(): boolean {
+  let n = ctxLosses + 1;
+  try { n = (Number(sessionStorage.getItem(CTX_KEY)) || 0) + 1; sessionStorage.setItem(CTX_KEY, String(n)); } catch { /* private mode */ }
+  tel.log('ctx_loss_count', { n });
+  if (n < 2) return true;
+  showLossPage();
+  return false;
+}
+function showLossPage() {
+  const el = document.createElement('div');
+  el.id = 'ctxlost';
+  el.style.cssText = 'position:fixed;inset:0;z-index:20;background:#1c2126;color:#e8ecef;padding:20px;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;overflow:auto';
+  const link = (q: string, t: string) => `<a href="./${q}" style="display:block;margin:8px 0;padding:12px;border-radius:7px;background:#2c343b;color:#fff;text-decoration:none">${t}</a>`;
+  el.innerHTML = '<h2 style="margin:0 0 8px;font-size:19px">The graphics driver crashed twice</h2>'
+    + '<p>This page stopped reloading itself so it does not loop. Try one of these:</p>'
+    + link('?leafsafe=1&shadows=0', 'Safe leaves, no shadows')
+    + link('?leafshader=basic&shadows=0', 'Unlit leaves, no shadows')
+    + link('?leaves=0', 'No leaves')
+    + link('?safe=1', 'Full safe mode')
+    + link('diag.html', 'Diagnostics page')
+    + '<p style="color:#a9b3bb;font-size:13px">Closing this tab resets the crash counter.</p>';
+  document.body.appendChild(el);
+}
 if (diag.skyBasic) {
   stage.atmo.basic = true;
   stage.atmo.sky.visible = false;
@@ -58,7 +86,27 @@ tel.phase('init sim');
 const sim = new TreeSim(params);
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
-const leaves = new Leaves(makeLeafTexture());
+const leafMode = pickLeafMode();
+const leaves = new Leaves(makeLeafTexture(), leafMode);
+/** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
+function pickLeafMode(): LeafMode {
+  const gpu = gpuRenderer(stage.renderer.getContext());
+  const reason = diag.leafSafe !== null ? (diag.leafSafe ? 'forced' : '')
+    : /PowerVR|Imagination/i.test(gpu) ? 'powervr'
+    : lowEnd && params.sky.quality === 'Low' ? 'mobile-low'
+    : ctxLosses > 0 ? 'context-lost-before' : '';
+  const shader = diag.leafShader ?? (reason ? 'safe' : 'full');
+  const shadow = diag.leafShadow ?? (shader === 'full' && diag.shadows);
+  const mode = { shader, shadow };
+  tel.log('leaf_mode', { ...mode, reason, gpu, ctxLosses });
+  return mode;
+}
+function gpuRenderer(gl: WebGLRenderingContext | WebGL2RenderingContext) {
+  try {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch { return ''; }
+}
 stage.scene.add(branches.mesh);
 if (diag.leaves) stage.scene.add(leaves.mesh);
 
@@ -224,6 +272,7 @@ requestAnimationFrame(loop);
   automation,
   loadPreset: (n: string) => { loadPreset(n); regrow(); },
   sim,
+  leaves,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {

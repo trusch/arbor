@@ -143,6 +143,32 @@ try {
   await mp.waitForTimeout(6000);
   const mob = await mp.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, dpr: r.getPixelRatio(), post: !!A.stage._post, shadow: A.stage.sun.shadow.mapSize.x, maxNodes: A.params.growth.maxNodes, fe: A.frameErrors() }; });
   check('phone: auto Low, DPR 1, no post RTs, small shadow map', mob.q === 'Low' && mob.dpr === 1 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, JSON.stringify(mob));
+  // Leaf modes: phone defaults to the safe leaf path; ?leafsafe=1/0 and ?leafshader=basic force it; leaves render, no errors.
+  const leafState = () => mp.evaluate(() => { const A = window.__arbor; A.fastForward(15); const m = A.leaves.mesh; return { type: m.material.type, cast: m.castShadow, n: m.count, fe: A.frameErrors() }; });
+  const lm = await leafState();
+  check('phone: safe leaves by default (Lambert, no shadow), leaves drawn', lm.type === 'MeshLambertMaterial' && !lm.cast && lm.n > 0 && lm.fe === 0, JSON.stringify(lm));
+  for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
+    const before = merr.length;
+    await mp.goto(url + q, { waitUntil: 'domcontentloaded' });
+    await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await mp.waitForTimeout(4000);
+    const st = await leafState();
+    check(`phone ${q}: ${want}`, st.type === want && st.n > 0 && st.fe === 0 && merr.length === before, JSON.stringify(st));
+  }
+  // Context-loss guard: first loss reloads into safe mode (no shadows), second loss stops reloading and shows links.
+  await mp.goto(url + '?leafshader=basic', { waitUntil: 'domcontentloaded' });
+  await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+  await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
+  await mp.waitForTimeout(3000);
+  await mp.waitForFunction(() => window.__arbor !== undefined && performance.getEntriesByType('navigation')[0]?.type === 'reload', null, { timeout: 60000, polling: 500 })
+    .catch(async () => console.log('ctx reload wait failed', await mp.evaluate(() => [performance.getEntriesByType('navigation')[0]?.type, !!window.__arbor, sessionStorage.getItem('arbor.ctxLost'), document.getElementById('notice')?.textContent]).catch((e) => String(e))));
+  await mp.waitForTimeout(1000);
+  const after1 = await mp.evaluate(() => ({ shadows: window.__arbor.stage.renderer.shadowMap.enabled, n: sessionStorage.getItem('arbor.ctxLost') }));
+  check('context loss 1: reloads with shadows off', !after1.shadows && after1.n === '1', JSON.stringify(after1));
+  await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
+  await mp.waitForTimeout(2500);
+  const after2 = await mp.evaluate(() => ({ page: !!document.getElementById('ctxlost'), nav: performance.getEntriesByType('navigation')[0]?.type, n: sessionStorage.getItem('arbor.ctxLost') }));
+  check('context loss 2: no reload, safe-mode links shown', after2.page && after2.n === '2', JSON.stringify(after2));
   await mctx.close();
 
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.

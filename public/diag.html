@@ -16,7 +16,7 @@
 </head>
 <body>
 <h1>Arbor diagnostics</h1>
-<div class="sid">Every page load is logged to the server. Tap one link, wait until it crashes (or ~60 s), come back here, try the next.</div>
+<div class="sid">Every page load is logged to the server. Opening this page resets the crash counter (the app turns safe mode on by itself after a GPU crash). Tap one link, wait until it crashes (or ~60 s), come back here, try the next.</div>
 <h2>Bisect runs</h2>
 <div id="links"></div>
 <h2>This device</h2>
@@ -29,6 +29,11 @@
     ['./?safe=1', 'Safe mode', 'no shadows, no leaves, basic sky, no growth, no antialias'],
     ['./?safe=1&grow=1', 'Safe + growth', 'only the growing branch mesh + light grid'],
     ['./?grow=0&t=40', 'Static grown tree', 'fast-forward 40 s then freeze: all rendering, no rebuilds'],
+    ['./?leafsafe=1', 'Safe leaves', 'Lambert leaves, no shader patch, no leaf shadows, no wind (auto on PowerVR / mobile)'],
+    ['./?leafsafe=0', 'Full leaves (force)', 'original leaf shader even on PowerVR: expect the crash'],
+    ['./?leafsafe=0&leafshadow=0', 'Full leaves, no leaf shadows', 'isolates the leaf shadow/depth pass'],
+    ['./?leafshader=basic', 'Unlit leaves', 'MeshBasicMaterial leaves (if safe leaves still crash)'],
+    ['./?leafshader=basic&shadows=0', 'Unlit leaves, no shadows', 'smallest leaf shader, no shadow map'],
     ['./?shadows=0', 'No shadows', 'shadow map off'],
     ['./?leaves=0', 'No leaves', 'no instanced leaves'],
     ['./?sky=basic', 'Basic sky', 'no Preetham sky, no PMREM environment bakes'],
@@ -39,8 +44,12 @@
     ['./?quality=High', 'Desktop quality', 'post-processing, DPR 1.5, 2048 shadows'],
   ];
   document.getElementById('links').innerHTML = L.map(function (l) { return '<a href="' + l[0] + '">' + l[1] + '<small>' + l[0].slice(2 + 0) + ' — ' + l[2] + '</small></a>'; }).join('');
-  var T = window.__tel;
-  var d = T.device(), g = T.probeGl();
+  try { sessionStorage.removeItem('arbor.ctxLost'); } catch (e) {}
+  var T = window.__tel || { device: function () { return { err: 'telemetry.js not loaded' }; }, probeGl: function () { return {}; }, sid: '?' };
+  var d = {}, g = {};
+  try { d = T.device(); } catch (e) { d = { err: String(e) }; }
+  // The GL probe opens a WebGL context; skip it unless asked, so a wedged GPU cannot break this page.
+  try { g = /probe=1/.test(location.search) ? T.probeGl() : { skipped: 'add ?probe=1 to probe WebGL' }; } catch (e) { g = { err: String(e) }; }
   function render() {
     d.inner = [innerWidth, innerHeight];
     var pm = performance.memory;

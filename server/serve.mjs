@@ -53,6 +53,9 @@ function handleLog(req, res) {
 function serveStatic(req, res) {
   let p;
   try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400).end(); return; }
+  // /diag serves diag.html directly (its ./ links resolve to the app); /diag/ would break them, so redirect.
+  if (p === '/diag/') { res.writeHead(302, { location: '/diag.html' }).end(); return; }
+  if (p === '/diag') p = '/diag.html';
   if (p.endsWith('/')) p += 'index.html';
   const file = path.join(dist, path.normalize(p));
   if (!file.startsWith(dist + path.sep)) { res.writeHead(403).end(); return; }

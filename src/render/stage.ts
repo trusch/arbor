@@ -41,7 +41,7 @@ export class Stage {
   private dist = 6;
   private sunUv = new THREE.Vector3();
 
-  constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean } = {}) {
+  constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean; onContextLost?: () => boolean } = {}) {
     const r = (this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? true, powerPreference: 'high-performance' }));
     r.setPixelRatio(1);
     r.setSize(window.innerWidth, window.innerHeight);
@@ -85,13 +85,15 @@ export class Stage {
       this._post?.setSize(window.innerWidth, window.innerHeight);
     });
 
+    let reload = true;
     // GPU reset / mobile tab eviction: keep the page alive, tell the user, reload once the context returns.
     r.domElement.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.contextLost = true;
-      showNotice('Graphics context lost (GPU reset or memory pressure). Reloading when it comes back…');
+      reload = opts.onContextLost?.() ?? true;
+      if (reload) showNotice('Graphics context lost (GPU reset or memory pressure). Reloading in safe mode when it comes back…');
     });
-    r.domElement.addEventListener('webglcontextrestored', () => location.reload());
+    r.domElement.addEventListener('webglcontextrestored', () => { if (reload) location.reload(); });
   }
 
   /** Pixel ratio and shadow map size per quality: High caps DPR at 1.5 and uses a 2048 shadow map, Low uses DPR 1 and 1024. */

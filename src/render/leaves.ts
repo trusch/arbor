@@ -15,12 +15,40 @@ function leafGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+/** Same blade with a reversed-winding back copy (flipped normals) so FrontSide renders both faces without gl_FrontFacing. */
+function doubledLeafGeometry(): THREE.BufferGeometry {
+  const g = leafGeometry().toNonIndexed();
+  const pos = g.attributes.position.array as Float32Array, nor = g.attributes.normal.array as Float32Array, uv = g.attributes.uv.array as Float32Array;
+  const n = pos.length / 3;
+  const P = new Float32Array(n * 6), N = new Float32Array(n * 6), U = new Float32Array(n * 4);
+  P.set(pos); N.set(nor); U.set(uv);
+  for (let t = 0; t < n; t += 3) for (let k = 0; k < 3; k++) {
+    const src = t + [0, 2, 1][k], dst = n + t + k;
+    for (let c = 0; c < 3; c++) { P[dst * 3 + c] = pos[src * 3 + c]; N[dst * 3 + c] = -nor[src * 3 + c]; }
+    U[dst * 2] = uv[src * 2]; U[dst * 2 + 1] = uv[src * 2 + 1];
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  g.dispose();
+  return out;
+}
+
+/**
+ * Leaf render mode. 'full': MeshStandardMaterial + onBeforeCompile (translucency, glow, GPU wind), DoubleSide, casts shadows.
+ * 'safe': MeshLambertMaterial, no shader patching, FrontSide on doubled geometry, no shadows, no wind (for PowerVR/mobile).
+ * 'basic': MeshBasicMaterial (unlit), otherwise as 'safe'. shadow=false turns leaf shadow cast/receive off on any shader.
+ */
+export interface LeafMode { shader: 'full' | 'safe' | 'basic'; shadow: boolean }
+
 const GROW_TIME = 3; // seconds for a leaf to unfold
 
 /** Instanced leaves attached to young segments, with vertex-shader wind sway. */
 export class Leaves {
   mesh!: THREE.InstancedMesh;
-  private material: THREE.MeshStandardMaterial;
+  private material: THREE.Material;
+  readonly mode: LeafMode;
   private uniforms = {
     uTime: { value: 0 },
     uWind: { value: 1 },
@@ -39,8 +67,18 @@ export class Leaves {
   private scl = new THREE.Vector3();
   private pos = new THREE.Vector3();
 
-  constructor(map: THREE.Texture) {
-    this.material = new THREE.MeshStandardMaterial({
+  constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }) {
+    this.mode = mode;
+    if (mode.shader !== 'full') {
+      map.anisotropy = 1;
+      map.generateMipmaps = true;
+      map.minFilter = THREE.LinearMipmapLinearFilter;
+      const o = { map, alphaTest: 0.5, side: THREE.FrontSide };
+      this.material = mode.shader === 'basic' ? new THREE.MeshBasicMaterial(o) : new THREE.MeshLambertMaterial(o);
+      this.mesh = this.makeMesh(1024);
+      return;
+    }
+    const mat = new THREE.MeshStandardMaterial({
       map,
       alphaTest: 0.5,
       side: THREE.DoubleSide,
@@ -49,8 +87,9 @@ export class Leaves {
       // Sky reflections at noon turned the foliage blue-grey; keep env specular low.
       envMapIntensity: 0.3,
     });
+    this.material = mat;
     const u = this.uniforms;
-    this.material.onBeforeCompile = (sh) => {
+    mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = u.uTime;
       sh.uniforms.uWind = u.uWind;
       sh.uniforms.uSunDirV = u.uSunDirV;
@@ -96,12 +135,12 @@ export class Leaves {
   }
 
   private makeMesh(cap: number) {
-    const geo = this.mesh ? this.mesh.geometry : leafGeometry();
+    const geo = this.mesh ? this.mesh.geometry : this.mode.shader === 'full' ? leafGeometry() : doubledLeafGeometry();
     const m = new THREE.InstancedMesh(geo, this.material, cap);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);
-    m.castShadow = true;
-    m.receiveShadow = true;
+    m.castShadow = this.mode.shadow;
+    m.receiveShadow = this.mode.shadow;
     m.frustumCulled = false;
     m.count = 0;
     this.capacity = cap;
