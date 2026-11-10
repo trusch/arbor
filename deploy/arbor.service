@@ -1,0 +1,13 @@
+[Unit]
+Description=Arbor tree-growth webapp (static dist/ + POST /log telemetry on VPN 10.77.0.2:8050)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /home/trusch/projects/arbor/server/serve.mjs
+WorkingDirectory=/home/trusch/projects/arbor
+Environment=HOST=10.77.0.2 PORT=8050
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
