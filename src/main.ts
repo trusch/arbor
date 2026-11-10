@@ -174,7 +174,19 @@ if (query.get('nogui') !== '1') {
     simTime: () => sim.time,
   });
 }
-stage.controls.addEventListener('start', () => (params.camera.autoFrame = false));
+// Only a real orbit/zoom stops auto-framing: a tap (e.g. to collapse the GUI) used to freeze the camera at the
+// sapling distance, and the crown then grew around it.
+{
+  const el = stage.renderer.domElement;
+  let down: { x: number; y: number } | null = null;
+  el.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
+  el.addEventListener('pointerup', () => (down = null));
+  el.addEventListener('pointercancel', () => (down = null));
+  el.addEventListener('pointermove', (e) => {
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) params.camera.autoFrame = false;
+  });
+  el.addEventListener('wheel', () => (params.camera.autoFrame = false), { passive: true });
+}
 
 // Watch mode: H hides all UI; a small age/time overlay fades in on activity and out when idle.
 const overlay = document.getElementById('overlay')!;
@@ -191,6 +203,14 @@ addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') { params.camera.cinema = !params.camera.cinema; stage.idle = 1e9; }
 }, true);
 addEventListener('pointermove', () => (activity = 0));
+// Debug HUD line: hidden by default, ?hud=1 or D shows it.
+let hudOn = query.get('hud') === '1';
+const applyHud = () => document.body.classList.toggle('hud', hudOn);
+applyHud();
+addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+  if (e.key === 'd' || e.key === 'D') { hudOn = !hudOn; applyHud(); }
+}, true);
 const glow = new THREE.Color();
 
 const hud = document.getElementById('hud')!;
@@ -224,8 +244,10 @@ function frame(now: number) {
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
   glow.setHSL(lp.glowHue, 0.9, 0.55).multiplyScalar(lp.glow * (0.12 + 0.88 * stage.atmo.night));
-  leaves.setGlow(glow);
+  leaves.setGlow(glow, 1 - stage.atmo.night);
   leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
+  // Without the High grade/bloom the bark reads pale grey: warm it on Low.
+  (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
   tel.phase('render', true);
   stage.render(params);
   tel.phase('idle', true);

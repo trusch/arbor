@@ -181,10 +181,17 @@ export class Stage {
     const mn = sim.bboxMin, mx = sim.bboxMax;
     const c = new THREE.Vector3((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
     const ext = Math.max(1.6, Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2);
-    // Bounding-sphere fit: distance at which a sphere of radius ext fills the narrower FOV, with margin.
+    // Fit: the crown's horizontal circle (radius rxz, any orbit yaw) to the horizontal FOV, its half-height to the
+    // vertical FOV (from the near side of the circle). In portrait (aspect < 1) the horizontal FOV is the narrow one,
+    // so this keeps the whole crown in view on phones; the sphere fit (ext) is a lower bound so the camera is never
+    // inside the crown. +0.35 m covers leaves that stick out past the node bbox.
     const vf = (this.camera.fov * Math.PI) / 360;
-    const half = Math.min(vf, Math.atan(Math.tan(vf) * this.camera.aspect));
-    const fit = (ext / Math.sin(half)) * 1.06;
+    const hf = Math.atan(Math.tan(vf) * this.camera.aspect);
+    const rxz = Math.hypot(mx[0] - mn[0], mx[2] - mn[2]) / 2 + 0.35;
+    const hh = (mx[1] - mn[1]) / 2 + 0.35;
+    const fit = this.camera.aspect < 1
+      ? Math.max(rxz / Math.sin(hf), hh / Math.tan(vf) + rxz, ext * 1.25) * 1.1
+      : (ext / Math.sin(Math.min(vf, hf))) * 1.06; // landscape: bounding sphere to the narrower FOV
     const trunkR = sim.nodes.length ? Math.max(0.03, sim.nodes[0].radius ?? 0.05) : 0.05;
     this.groundU.trunk.value.set(sim.nodes[0]?.wx ?? 0, sim.nodes[0]?.wz ?? 0, trunkR);
 
@@ -205,11 +212,27 @@ export class Stage {
       this.groundU.tint.value.set(gc.r, gc.g, gc.b, Math.min(1, k.groundTint));
     } else this.groundU.tint.value.w = 0;
     const cam = this.sun.shadow.camera;
-    // Snap the fitted frustum size to 0.5m steps so it doesn't breathe (shimmer) while the tree grows.
-    const e = Math.ceil(ext * 1.35 * 2) / 2;
-    cam.left = -e; cam.right = e; cam.top = e; cam.bottom = -e;
+    // Tight fit: the tree bbox (+ leaf margin) projected into light space, so the 1024 Low map spends its texels on
+    // the tree (a loose square made branch shadows staircase across the trunk on phones). Snapped to 0.25 m steps so
+    // it doesn't breathe (shimmer) while the tree grows.
+    const lz = dir.clone(), lx = new THREE.Vector3(0, 1, 0).cross(lz);
+    if (lx.lengthSq() < 1e-6) lx.set(1, 0, 0);
+    lx.normalize();
+    const ly = lz.clone().cross(lx);
+    let ex = 0, ey = 0;
+    for (let i = 0; i < 8; i++) {
+      const d = new THREE.Vector3(i & 1 ? mx[0] : mn[0], i & 2 ? mx[1] : Math.min(0, mn[1]), i & 4 ? mx[2] : mn[2]).sub(c);
+      ex = Math.max(ex, Math.abs(d.dot(lx))); ey = Math.max(ey, Math.abs(d.dot(ly)));
+    }
+    const low = k.quality !== 'High';
+    const e = Math.ceil(ext * 1.35 * 2) / 2; // High keeps the loose square fit
+    const sx = low ? Math.ceil((ex + 0.6) * 4) / 4 : e, sy = low ? Math.ceil((ey + 0.6) * 4) / 4 : e;
+    cam.left = -sx; cam.right = sx; cam.top = sy; cam.bottom = -sy;
     cam.near = 0.1; cam.far = ext * 8;
     cam.updateProjectionMatrix();
+    // Low (1024 map) needs more bias against acne on the thin branches; High keeps its values.
+    this.sun.shadow.normalBias = low ? 0.045 : 0.025;
+    this.sun.shadow.bias = low ? -0.0006 : -0.0003;
 
     // Ambient: hemisphere tinted from the sky, plus PMREM env (scene.environment) scaled by time of day.
     const day = 1 - night;
@@ -252,8 +275,10 @@ export class Stage {
       this.cineYaw += dt * (0.045 + 0.02 * Math.sin(t * 0.031));
       const want = Math.max(2.5, fit);
       const push = Math.pow(0.5 + 0.5 * Math.sin(t * 0.021 - 1.2), 3); // rare, slow
-      // Push-ins may crop the crown edges a little (detail shots); the resting orbit always keeps it whole.
-      const dist = want * (1.04 - 0.3 * push + 0.04 * Math.sin(t * 0.07));
+      // Push-ins may crop the crown edges a little on landscape (detail shots), never into the crown: in portrait
+      // they stay shallow and the distance never drops below the crown sphere plus a margin.
+      const depth = this.camera.aspect < 1 ? 0.1 : 0.3;
+      const dist = Math.max(ext * 1.35, want * (1.02 - depth * push + 0.03 * Math.sin(t * 0.07)));
       const elev = 0.06 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.043 + 0.7)) + 0.08 * push;
       const kk = snap ? 1 : 1 - Math.exp(-dt * (dist > this.dist ? 2.5 : 0.8));
       const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * (0.97 + 0.06 * push)), c.z);
