@@ -5,6 +5,8 @@ Real-time tree growth simulation rendered with three.js. Vite + TypeScript + lil
 ```
 npm install
 npm run dev            # http://localhost:5173  (?t=60 fast-forwards, ?gravity=0.2 etc. override params)
+npm run deploy         # build + restart the `arbor` systemd user unit -> http://10.77.0.2:8050/ (VPN)
+npm run smoke          # headless chromium interaction smoke test (presets, drift, journey, H/C, cinema)
 npm run shots          # headless chromium proof shots -> shots/ (growth stages + morning/noon/golden/bluehour/night)
 node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 ```

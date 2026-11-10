@@ -14,3 +14,5 @@
 - Automation (`src/automation.ts`) writes into the live params object before every sim step; presets are copied into params in place (`loadPreset` in `main.ts`) so GUI controllers stay bound. Use `?preset=Name`.
 - Sun discs are drawn in the patched sky shader (`disc1*/disc2*` uniforms); do not use sprites (GTAO override material renders them as solid quads). The env-map sky has `discOn = 0`.
 - Screenshot script disables cinema (`cinema=false`) and accepts `PORT` env so several runs can go in parallel (more than ~4 in parallel times out).
+- Deploy: `npm run deploy` (build + `systemctl --user restart arbor`). Unit `~/.config/systemd/user/arbor.service` serves `dist/` with python http.server on 10.77.0.2:8050 (VPN). Vite `base: './'`. Ports 8010–8040 belong to other apps.
+- `npm run smoke` (scripts/smoke.mjs) drives the app in headless chromium; run it after interaction changes.
