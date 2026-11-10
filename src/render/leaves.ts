@@ -15,13 +15,39 @@ function leafGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+/** Same blade with a reversed-winding back copy (flipped normals) so FrontSide renders both faces without gl_FrontFacing. */
+function doubledLeafGeometry(vertexColors = false): THREE.BufferGeometry {
+  const g = leafGeometry().toNonIndexed();
+  const pos = g.attributes.position.array as Float32Array, nor = g.attributes.normal.array as Float32Array, uv = g.attributes.uv.array as Float32Array;
+  const n = pos.length / 3;
+  const P = new Float32Array(n * 6), N = new Float32Array(n * 6), U = new Float32Array(n * 4);
+  P.set(pos); N.set(nor); U.set(uv);
+  for (let t = 0; t < n; t += 3) for (let k = 0; k < 3; k++) {
+    const src = t + [0, 2, 1][k], dst = n + t + k;
+    for (let c = 0; c < 3; c++) { P[dst * 3 + c] = pos[src * 3 + c]; N[dst * 3 + c] = -nor[src * 3 + c]; }
+    U[dst * 2] = uv[src * 2]; U[dst * 2 + 1] = uv[src * 2 + 1];
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  if (vertexColors) {
+    // Lighter toward the tip, back face darker (only for the vertexColors ladder variant).
+    const C = new Float32Array(n * 6);
+    for (let i = 0; i < 2 * n; i++) { const k = (0.85 + 0.25 * U[i * 2 + 1]) * (i < n ? 1 : 0.85); C[i * 3] = k; C[i * 3 + 1] = k; C[i * 3 + 2] = k * 0.96; }
+    out.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  }
+  g.dispose();
+  return out;
+}
+
 /**
  * Leaf-shaped polygon for the safe/basic path: no texture, no alpha test, crisp silhouette.
  * Midrib along +Y (base at origin after the petiole gap), 5 stations per side, halves folded up along the midrib
  * so they shade differently. Front and reversed-winding back copy (FrontSide renders both faces, no gl_FrontFacing).
  * Vertex colours: lighter midrib, darker base, so the instance colour reads as a leaf rather than a flat chip.
  */
-function polyLeafGeometry(): THREE.BufferGeometry {
+function polyLeafGeometry(withUv: boolean, vertexColors: boolean): THREE.BufferGeometry {
   const ys = [0, 0.2, 0.45, 0.72, 1];
   const ws = [0, 0.27, 0.3, 0.2, 0]; // half-width: broadest a bit below the middle, pointed tip
   const fold = 0.38, bend = 0.18, y0 = 0.12;
@@ -44,16 +70,19 @@ function polyLeafGeometry(): THREE.BufferGeometry {
   g.computeVertexNormals(); // non-indexed → flat per-triangle normals: the fold shades each half differently
   const pos = g.attributes.position.array as Float32Array, nor = g.attributes.normal.array as Float32Array;
   const n = pos.length / 3;
-  const P2 = new Float32Array(n * 6), N2 = new Float32Array(n * 6), C2 = new Float32Array(n * 6);
+  const P2 = new Float32Array(n * 6), N2 = new Float32Array(n * 6), C2 = new Float32Array(n * 6), U2 = new Float32Array(n * 4);
   P2.set(pos); N2.set(nor); C2.set(C);
+  for (let i = 0; i < n; i++) { U2[i * 2] = pos[i * 3] + 0.5; U2[i * 2 + 1] = pos[i * 3 + 1] - y0; }
   for (let t = 0; t < n; t += 3) for (let k = 0; k < 3; k++) {
     const src = t + [0, 2, 1][k], dst = n + t + k;
     for (let c = 0; c < 3; c++) { P2[dst * 3 + c] = pos[src * 3 + c]; N2[dst * 3 + c] = -nor[src * 3 + c]; C2[dst * 3 + c] = C[src * 3 + c] * 0.85; }
+    U2[dst * 2] = U2[src * 2]; U2[dst * 2 + 1] = U2[src * 2 + 1];
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(P2, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(N2, 3));
-  out.setAttribute('color', new THREE.BufferAttribute(C2, 3));
+  if (vertexColors) out.setAttribute('color', new THREE.BufferAttribute(C2, 3));
+  if (withUv) out.setAttribute('uv', new THREE.BufferAttribute(U2, 2));
   g.dispose();
   return out;
 }
@@ -64,7 +93,22 @@ function polyLeafGeometry(): THREE.BufferGeometry {
  *   sky fill, FrontSide on doubled geometry, no shadows, no wind, no shader patching (for PowerVR/mobile).
  * 'basic': MeshBasicMaterial (unlit), otherwise as 'safe'. shadow=false turns leaf shadow cast/receive off on any shader.
  */
-export interface LeafMode { shader: 'full' | 'safe' | 'basic'; shadow: boolean }
+export interface LeafMode { shader: 'full' | 'safe' | 'basic'; shadow: boolean; variant?: number }
+
+/**
+ * Safe/basic leaf variants, ordered as a ladder from the known-good PowerVR path (V0) toward the richer polygon leaf (V4).
+ * Each step adds one shader/attribute feature so a context loss pins the feature that kills a driver.
+ *   geo 'quad' = alpha-tested card (doubled, uv); 'poly' = leaf-shaped polygon (doubled).
+ *   map 'leaf' = leaf canvas texture + alphaTest 0.5; 'white' = 1x1 white texture + alphaTest 0.5; null = no map, no uv.
+ */
+export interface LeafVariant { name: string; geo: 'quad' | 'poly'; map: 'leaf' | 'white' | null; vertexColors: boolean; emissive: boolean }
+export const LEAF_VARIANTS: readonly LeafVariant[] = [
+  { name: 'V0 quad+leafmap+alphaTest', geo: 'quad', map: 'leaf', vertexColors: false, emissive: false },
+  { name: 'V1 V0+emissive', geo: 'quad', map: 'leaf', vertexColors: false, emissive: true },
+  { name: 'V2 V0+vertexColors', geo: 'quad', map: 'leaf', vertexColors: true, emissive: false },
+  { name: 'V3 poly+uv+whitemap+alphaTest', geo: 'poly', map: 'white', vertexColors: false, emissive: false },
+  { name: 'V4 poly+vertexColors+emissive, no map', geo: 'poly', map: null, vertexColors: true, emissive: true },
+];
 
 const GROW_TIME = 3; // seconds for a leaf to unfold
 
@@ -73,6 +117,8 @@ export class Leaves {
   mesh!: THREE.InstancedMesh;
   private material: THREE.Material;
   readonly mode: LeafMode;
+  /** Active safe/basic ladder variant (null on the full path). */
+  variant: LeafVariant | null = null;
   private uniforms = {
     uTime: { value: 0 },
     uWind: { value: 1 },
@@ -94,10 +140,22 @@ export class Leaves {
   constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }) {
     this.mode = mode;
     if (mode.shader !== 'full') {
-      // No map/alpha: the polygon is the silhouette (alpha-tested cards showed grey ghost quads on PowerVR).
-      const o = { vertexColors: true, side: THREE.FrontSide };
-      this.material = mode.shader === 'basic' ? new THREE.MeshBasicMaterial(o)
-        : new THREE.MeshLambertMaterial({ ...o, emissive: new THREE.Color(0.05, 0.075, 0.025) });
+      const v = this.variant = LEAF_VARIANTS[mode.variant ?? 0] ?? LEAF_VARIANTS[0];
+      let tex: THREE.Texture | null = null;
+      if (v.map === 'leaf') {
+        map.anisotropy = 1;
+        map.generateMipmaps = true;
+        map.minFilter = THREE.LinearMipmapLinearFilter;
+        tex = map;
+      } else if (v.map === 'white') {
+        tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+        tex.needsUpdate = true;
+      }
+      const o: THREE.MeshLambertMaterialParameters = { side: THREE.FrontSide };
+      if (tex) { o.map = tex; o.alphaTest = 0.5; }
+      if (v.vertexColors) o.vertexColors = true;
+      this.material = mode.shader === 'basic' ? new THREE.MeshBasicMaterial(o as THREE.MeshBasicMaterialParameters)
+        : new THREE.MeshLambertMaterial(v.emissive ? { ...o, emissive: new THREE.Color(0.05, 0.075, 0.025) } : o);
       this.mesh = this.makeMesh(1024);
       return;
     }
@@ -158,7 +216,9 @@ export class Leaves {
   }
 
   private makeMesh(cap: number) {
-    const geo = this.mesh ? this.mesh.geometry : this.mode.shader === 'full' ? leafGeometry() : polyLeafGeometry();
+    const v = this.variant;
+    const geo = this.mesh ? this.mesh.geometry : !v ? leafGeometry()
+      : v.geo === 'quad' ? doubledLeafGeometry(v.vertexColors) : polyLeafGeometry(v.map !== null, v.vertexColors);
     const m = new THREE.InstancedMesh(geo, this.material, cap);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);
@@ -185,7 +245,7 @@ export class Leaves {
     this.uniforms.uGlow.value.copy(c);
     // Safe path: emissive = faint daylight sky fill through the blades (fake translucency) + bioluminescence.
     const m = this.material as THREE.MeshLambertMaterial;
-    if (m.isMeshLambertMaterial) m.emissive.setRGB(0.05 * day, 0.075 * day, 0.022 * day).add(c);
+    if (m.isMeshLambertMaterial && this.variant?.emissive) m.emissive.setRGB(0.05 * day, 0.075 * day, 0.022 * day).add(c);
   }
 
   /** Returns a replacement mesh when capacity grew (caller swaps it in the scene). */
@@ -202,7 +262,8 @@ export class Leaves {
     const nodes = sim.nodes;
     const arr = this.mesh.instanceMatrix.array as Float32Array;
     const carr = this.mesh.instanceColor!.array as Float32Array;
-    const safe = this.mode.shader !== 'full';
+    // Brighter safe colours only without the leaf texture (the map already carries shading).
+    const safe = !!this.variant && this.variant.map !== 'leaf';
     let n = 0;
     for (const lf of sim.leaves) {
       if (lf.rank * 4 >= lp.density) continue;
