@@ -1,7 +1,7 @@
 import type { ArborParams } from '../params';
 import { Rng } from './rng';
 import { PointGrid } from './grid';
-import { sampleAttractors } from './envelope';
+import { sampleAttractors, envelopeDims } from './envelope';
 
 /**
  * A node is a point on the tree; its segment runs from its parent to it.
@@ -123,10 +123,10 @@ export class TreeSim {
   }
 
   private perception() {
-    return this.params.growth.segmentLength * 9;
+    return this.params.growth.segmentLength * 7;
   }
   private killRadius() {
-    return this.params.growth.segmentLength * 2.2;
+    return this.params.growth.segmentLength * 3;
   }
 
   private addNode(parent: number, chain: number, order: number, dx: number, dy: number, dz: number, targetLen: number): number {
@@ -220,6 +220,7 @@ export class TreeSim {
     const g = p.growth;
     const ch = this.chains[c];
     const n = this.nodes[id];
+    const env = envelopeDims(p);
     // Occupy space.
     this.grid.query(n.rx, n.ry, n.rz, this.killRadius(), (i) => (this.attrAlive[i] = 0));
 
@@ -236,7 +237,7 @@ export class TreeSim {
     }
 
     // Leaves on young wood.
-    if (ch.order >= 1 || n.ry > p.crown.base * 0.8) {
+    if (ch.order >= 1 || n.ry > env.base * 0.8) {
       n.leafy = true;
       for (let k = 0; k < 4; k++) {
         this.leaves.push({
@@ -250,10 +251,10 @@ export class TreeSim {
     // Choose next direction.
     const pull = this.tmp;
     const cnt = this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception(), pull);
-    const inCrownZone = n.ry > p.crown.base * 0.7 || ch.order > 0;
+    const inCrownZone = n.ry > env.base * 0.95 || ch.order > 0;
     if (cnt === 0 && inCrownZone) ch.starve++;
     else ch.starve = Math.max(0, ch.starve - 1);
-    if (ch.starve > 2 || (ch.order === 0 && cnt === 0 && n.ry > p.crown.base + p.crown.height * 1.6)) {
+    if (ch.starve > 2 || (ch.order === 0 && cnt === 0 && n.ry > env.base + env.height * 1.05)) {
       ch.alive = false;
       return;
     }
@@ -262,7 +263,7 @@ export class TreeSim {
     const w = this.rng.unit([0, 0, 0]);
     const att = cnt > 0 ? g.attraction : 0;
     // Trunk below the crown: strong upward drive.
-    const lead = ch.order === 0 && cnt === 0 ? 1.2 : 0;
+    const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
     const dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + w[0] * g.wander;
     const dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead) * UP[1] + w[1] * g.wander;
     const dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + w[2] * g.wander;
@@ -293,7 +294,7 @@ export class TreeSim {
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
       this.buds.pop();
-      if (cnt < 2) continue; // shaded / no space: bud stays dormant forever
+      if (cnt < 4) continue; // shaded / no space: bud stays dormant forever
       const c = this.chains.length;
       this.chains.push({ nodes: [b.node], order: ch.order + 1, alive: true, starve: 0 });
       this.extend(c, b.dx * 2 + tmp[0] * 0.5, b.dy * 2 + tmp[1] * 0.5, b.dz * 2 + tmp[2] * 0.5);
@@ -332,7 +333,7 @@ export class TreeSim {
       }
     }
     // Forward pass: accumulate sag (bend toward -Y) and world positions.
-    const gk = p.growth.gravity * p.growth.sag * 6e-5;
+    const gk = p.growth.gravity * p.growth.sag * 4e-6;
     const mn = this.bboxMin, mx = this.bboxMax;
     mn[0] = mn[1] = mn[2] = Infinity;
     mx[0] = mx[1] = mx[2] = -Infinity;
@@ -344,8 +345,8 @@ export class TreeSim {
       } else {
         const pn = nodes[nd.parent];
         const h = Math.hypot(nd.dx, nd.dz);
-        const bend = Math.min(0.12, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
-        nd.sag = pn.sag + bend;
+        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+        nd.sag = Math.min(1.3, pn.sag + bend);
         bendDown(nd.dx, nd.dy, nd.dz, nd.sag, this.tmp);
         nd.wdx = this.tmp[0]; nd.wdy = this.tmp[1]; nd.wdz = this.tmp[2];
         nd.wx = pn.wx + nd.wdx * nd.len;

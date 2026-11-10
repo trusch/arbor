@@ -62,7 +62,7 @@ export function makeBarkTextures(): BarkTextures {
       const i = (y * W + x) * 4;
       const v = at(x, y);
       const tone = 0.25 + 0.75 * v;
-      ic.data[i] = 70 * tone + 18; ic.data[i + 1] = 58 * tone + 14; ic.data[i + 2] = 48 * tone + 12; ic.data[i + 3] = 255;
+      ic.data[i] = 120 * tone + 40; ic.data[i + 1] = 104 * tone + 34; ic.data[i + 2] = 88 * tone + 30; ic.data[i + 3] = 255;
       const dx = (at(x + 1, y) - at(x - 1, y)) * 4, dy = (at(x, y + 1) - at(x, y - 1)) * 4;
       const l = Math.hypot(dx, dy, 1);
       inn.data[i] = (-dx / l * 0.5 + 0.5) * 255; inn.data[i + 1] = (dy / l * 0.5 + 0.5) * 255; inn.data[i + 2] = (1 / l * 0.5 + 0.5) * 255; inn.data[i + 3] = 255;

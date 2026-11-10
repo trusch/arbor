@@ -124,7 +124,7 @@ export class Leaves {
       this.scl.set(s, s, s);
       this.m.compose(this.pos, this.q, this.scl);
       this.m.toArray(arr, n * 16);
-      this.col.setHSL(lp.hue + (lf.tint - 0.5) * 0.05, lp.saturation, 0.32 + lf.tint * 0.12, THREE.SRGBColorSpace);
+      this.col.setHSL(lp.hue + (lf.tint - 0.5) * 0.05, lp.saturation, 0.38 + lf.tint * 0.14, THREE.SRGBColorSpace);
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
     }

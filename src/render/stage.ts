@@ -38,7 +38,7 @@ export class Stage {
     this.scene.fog = new THREE.Fog(fogColor, 40, 260);
     this.scene.add(this.makeSky());
 
-    this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a5a32, 0.9);
+    this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x5a6a42, 1.4);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
     this.sun.castShadow = true;
@@ -82,7 +82,7 @@ export class Stage {
   frame(sim: TreeSim, p: ArborParams, dt: number, snap = false) {
     const mn = sim.bboxMin, mx = sim.bboxMax;
     const c = new THREE.Vector3((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
-    const ext = Math.max(1.2, Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2);
+    const ext = Math.max(1.6, Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2);
 
     const az = (p.light.azimuth * Math.PI) / 180, el = (p.light.elevation * Math.PI) / 180;
     const dir = new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
@@ -98,7 +98,7 @@ export class Stage {
     if (p.camera.autoFrame) {
       const k = snap ? 1 : 1 - Math.exp(-dt * 1.2);
       const fov = (this.camera.fov * Math.PI) / 180;
-      const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.95);
+      const want = Math.max(2.5, (ext / Math.sin(fov / 2)) * 0.72);
       const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * 0.92), c.z);
       this.center.lerp(target, k);
       this.dist += (want - this.dist) * k;
