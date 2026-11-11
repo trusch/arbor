@@ -61,7 +61,7 @@ export class CanopyShadow {
     this.lastT = time;
     const S = this.S, tau = this.tau;
     tau.fill(0);
-    const ly = Math.max(0.14, dir.y), px = dir.x / ly, pz = dir.z / ly;
+    const ly = Math.max(0.3, dir.y), px = dir.x / ly, pz = dir.z / ly;
     // Ground footprint: tree bbox projected along the sun.
     const mn = sim.bboxMin, mx = sim.bboxMax;
     let x0 = Math.min(mn[0], mn[0] - px * mx[1]), x1 = Math.max(mx[0], mx[0] - px * mx[1]);
@@ -110,7 +110,7 @@ export class CanopyShadow {
     }
     const px8 = this.img.data;
     for (let i = 0; i < S * S; i++) {
-      const a = (1 - Math.exp(-tau[i] * (0.75 + 0.5 * this.noise[i]))) * strength;
+      const a = (1 - Math.exp(-tau[i] * (0.6 + 0.6 * this.noise[i]))) * strength;
       const e = Math.min(i % S, S - 1 - (i % S), Math.floor(i / S), S - 1 - Math.floor(i / S)); // fade to 0 at the border
       px8[i * 4] = px8[i * 4 + 1] = px8[i * 4 + 2] = 255;
       px8[i * 4 + 3] = Math.round(255 * Math.min(1, a) * Math.min(1, e / 4));

@@ -378,6 +378,8 @@ export class Leaves {
       const grow = smooth(0, GROW_TIME, sim.time - lf.born);
       const s = lp.size * lf.size * grow * fade;
       if (s < 1e-4) continue;
+      // No leaf chains on hanging twigs (steeply down-pointing segments read as strands under the crown).
+      if (nd.wdy < -0.75) continue;
       const pn = nodes[nd.parent];
       // Position along segment, offset to bark surface.
       const t = lf.t;
@@ -419,7 +421,7 @@ export class Leaves {
         THREE.SRGBColorSpace,
       );
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
-      const occ = 0.22 + 0.78 * smooth(0.15, 0.85, nd.light);
+      const occ = 0.42 + 0.78 * smooth(0.15, 0.85, nd.light);
       let kr: number, kg: number, kb: number;
       if (!bakeAll) {
         const k = 0.5 + 0.5 * occ;

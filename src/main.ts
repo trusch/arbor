@@ -197,7 +197,7 @@ function redraw(time: number, dt: number) {
   branches.mesh.castShadow = !decal;
   if (decal) {
     tel.phase('canopy shadow');
-    canopy.update(sim, sunDirTmp, Math.min(1, S.intensity / 1.5) * 0.85, time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
+    canopy.update(sim, sunDirTmp, Math.min(1, S.intensity / 1.5) * (0.35 + 0.35 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.5))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
     tel.phase('leaves rebuild');
   } else canopy.mesh.visible = false;
   const repl = leaves.update(sim, params, time);
