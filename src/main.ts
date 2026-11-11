@@ -5,7 +5,6 @@ import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
 import { makeBarkTextures, makeLeafTexture } from './render/textures';
-import { ladderState, pickVariant, onLeafContextLoss, ladderTick } from './leafladder';
 import { buildGui } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
@@ -13,6 +12,14 @@ import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 
 const query = new URLSearchParams(location.search);
+// Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
+// (a background tab's context loss marked V0 bad) and crashing variants reset the GPU. Drop their keys.
+try {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && (k.startsWith('arbor.leafBad.') || k === 'arbor.ladder')) localStorage.removeItem(k);
+  }
+} catch { /* private mode */ }
 const params = defaultParams();
 const automation = new Automation(params);
 let presetName = query.get('preset') ?? 'Oak meadow';
@@ -53,18 +60,27 @@ function lowEndDevice() {
 }
 
 tel.phase('init stage');
-const stage = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows, onContextLost: contextLost });
+let stageOrNull: Stage | null = null;
+try {
+  stageOrNull = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows, onContextLost: contextLost });
+} catch (e) {
+  // Chrome blocks WebGL for the site after a GPU reset: "Error creating WebGL context."
+  tel.log('webgl_create_failed', { msg: String((e as Error)?.message ?? e) });
+  showNoWebglPage();
+}
+if (!stageOrNull) await new Promise<never>(() => { /* stop here: nothing to render with */ });
+const stage = stageOrNull!;
+function showNoWebglPage() {
+  const el = document.createElement('div');
+  el.id = 'nowebgl';
+  el.style.cssText = 'position:fixed;inset:0;z-index:30;background:#1c2126;color:#e8ecef;padding:24px;font:17px/1.55 ui-sans-serif,system-ui,sans-serif;overflow:auto';
+  el.innerHTML = '<h2 style="margin:0 0 10px;font-size:20px">3D graphics are blocked</h2>'
+    + '<p>Your browser has temporarily blocked 3D graphics for this page after a graphics reset. '
+    + 'Fully close Chrome (swipe it away from recent apps) and open the page again.</p>';
+  document.body.appendChild(el);
+}
 /** Record the loss; reload into safe mode on restore the first time, stop reloading and show safe-mode links on the second. */
 function contextLost(): boolean {
-  let ladderHandled = false;
-  try { // leafMode etc. are not initialised if the loss hits during init (TDZ)
-    if (leafVariantActive) ladderHandled = onLeafContextLoss(leafGpu, leafMode.variant ?? 0, ladder);
-  } catch { /* init-time loss */ }
-  if (ladderHandled) {
-    try { sessionStorage.removeItem(CTX_KEY); } catch { /* private mode */ }
-    showNotice(`Leaf ladder: variant V${leafMode.variant} lost the GPU context, marked BAD. Next variant…`);
-    return false;
-  }
   let n = ctxLosses + 1;
   try { n = (Number(sessionStorage.getItem(CTX_KEY)) || 0) + 1; sessionStorage.setItem(CTX_KEY, String(n)); } catch { /* private mode */ }
   tel.log('ctx_loss_count', { n });
@@ -96,12 +112,7 @@ tel.phase('init sim');
 const sim = new TreeSim(params);
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
-const leafGpu = gpuRenderer(stage.renderer.getContext());
-const ladder = ladderState(query, leafGpu);
-if (ladder) { diag.leafShader = 'safe'; try { sessionStorage.removeItem(CTX_KEY); } catch { /* private mode */ } }
 const leafMode = pickLeafMode();
-/** A safe/basic leaf variant is in use (context loss → that variant is marked BAD for this GPU). */
-const leafVariantActive = leafMode.shader !== 'full' && diag.leaves;
 const leaves = new Leaves(makeLeafTexture(), leafMode);
 /** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
 function pickLeafMode(): LeafMode {
@@ -112,7 +123,10 @@ function pickLeafMode(): LeafMode {
     : ctxLosses > 0 ? 'context-lost-before' : '';
   const shader = diag.leafShader ?? (reason ? 'safe' : 'full');
   const shadow = diag.leafShadow ?? (shader === 'full' && diag.shadows);
-  const { variant, why } = pickVariant(query, gpu, ladder);
+  // V0 is the hard default (known-good on PowerVR). ?leafvariant=N is a manual dev override; V1–V4 may crash the GPU.
+  const q = query.get('leafvariant');
+  const forced = q !== null && /^\d+$/.test(q) && Number(q) < LEAF_VARIANTS.length;
+  const variant = forced ? Number(q) : 0, why = forced ? 'forced' : 'default';
   const mode: LeafMode = { shader, shadow, variant: shader === 'full' ? undefined : variant };
   tel.log('leaf_mode', { ...mode, variantName: shader === 'full' ? null : LEAF_VARIANTS[variant].name, variantWhy: why, reason, gpu, ctxLosses });
   return mode;
@@ -228,17 +242,6 @@ addEventListener('keydown', (e) => {
   if (e.key === 'd' || e.key === 'D') { hudOn = !hudOn; applyHud(); }
 }, true);
 const glow = new THREE.Color();
-let ladderEl: HTMLDivElement | null = null;
-function showLadder(t: string) {
-  if (!ladderEl) {
-    ladderEl = document.createElement('div');
-    ladderEl.id = 'ladder';
-    ladderEl.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:15;background:#1c2126e0;color:#e8ecef;padding:8px 10px;border-radius:7px;font:13px/1.4 ui-monospace,monospace;pointer-events:none';
-    document.body.appendChild(ladderEl);
-  }
-  if (ladderEl.textContent !== t) ladderEl.textContent = t;
-}
-
 const hud = document.getElementById('hud')!;
 let last = performance.now();
 let elapsed = 0;
@@ -276,7 +279,6 @@ function frame(now: number) {
   (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
   tel.phase('render', true);
   stage.render(params);
-  if (ladder) ladderTick(ladder, leafMode.variant ?? 0, dt, leaves.mesh.count > 0, showLadder);
   tel.phase('idle', true);
   frames++;
   fpsT += dt;

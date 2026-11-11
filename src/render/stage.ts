@@ -5,6 +5,7 @@ import type { TreeSim } from '../sim/tree';
 import { makeGrassTexture } from './textures';
 import { Atmosphere } from './atmosphere';
 import { Post } from './post';
+import { tel } from '../tel';
 
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
 export class Stage {
@@ -87,13 +88,24 @@ export class Stage {
 
     let reload = true;
     // GPU reset / mobile tab eviction: keep the page alive, tell the user, reload once the context returns.
+    // A loss while the tab is hidden (background eviction, another tab's GPU reset) is only logged: it does not
+    // count toward the crash guard or change modes; the page reloads as-is once it is visible again.
     r.domElement.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.contextLost = true;
+      if (document.visibilityState === 'hidden') {
+        tel.log('ctx_loss_hidden', {});
+        reload = true;
+        return;
+      }
       reload = opts.onContextLost?.() ?? true;
       if (reload) showNotice('Graphics context lost (GPU reset or memory pressure). Reloading in safe mode when it comes back…');
     });
-    r.domElement.addEventListener('webglcontextrestored', () => { if (reload) location.reload(); });
+    r.domElement.addEventListener('webglcontextrestored', () => {
+      if (!reload) return;
+      if (document.visibilityState !== 'hidden') { location.reload(); return; }
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'hidden') location.reload(); });
+    });
   }
 
   /** Pixel ratio and shadow map size per quality: High caps DPR at 1.5 and uses a 2048 shadow map, Low uses DPR 1 and 1024. */
