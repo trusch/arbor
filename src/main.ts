@@ -169,6 +169,7 @@ function regrow() {
 
 let meshAge = Infinity;
 let leavesDirty = true;
+let leafBakeD = 1, leafBakeT = -1e9;
 let lastTopo = -1;
 let rebuilds = 0;
 /** Branch tubes are rebuilt on the CPU; throttle to ~8 Hz (immediately on topology change when paused-ish). */
@@ -185,14 +186,18 @@ function redraw(time: number, dt: number) {
     lastTopo = sim.topology;
   }
   if (!diag.leaves) return;
+  // Leaf distance LOD + view-dependent bake: rebake when the camera distance to the crown changed by > 25% (≤ 1/s).
+  const camD = stage.camera.position.distanceTo(stage.controls.target);
+  if (!leavesDirty && time - leafBakeT > 1 && Math.abs(camD / leafBakeD - 1) > 0.25) leavesDirty = true;
   if (!leavesDirty) { leaves.tick(time); return; }
   leavesDirty = false;
+  leafBakeD = camD; leafBakeT = time;
   tel.phase('leaves rebuild');
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
   leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
     hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
-  leaves.maxInstances = params.sky.quality === 'Low' ? 25000 : 0;
+  leaves.maxInstances = params.sky.quality === 'Low' ? 32000 : 0;
   const decal = !leaves.mesh.castShadow && S.castShadow;
   branches.mesh.castShadow = !decal;
   if (decal) {

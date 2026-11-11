@@ -349,9 +349,10 @@ export class Leaves {
   update(sim: TreeSim, p: ArborParams, time: number): THREE.InstancedMesh | null {
     this.uniforms.uTime.value = time;
     let replaced: THREE.InstancedMesh | null = null;
-    if (sim.leaves.length > this.capacity) {
+    // Up to 2 instances per sim leaf (outer-shell fill copies).
+    if (sim.leaves.length * 2 > this.capacity) {
       const old = this.mesh;
-      this.mesh = this.makeMesh(Math.max(sim.leaves.length * 2, this.capacity * 2));
+      this.mesh = this.makeMesh(Math.max(sim.leaves.length * 3, this.capacity * 2));
       old.dispose();
       replaced = this.mesh;
     }
@@ -368,28 +369,45 @@ export class Leaves {
     const rs = this.rankScale;
     let n = 0;
     let cand = 0;
-    for (const lf of sim.leaves) {
+    const cap = this.capacity;
+    // Distance LOD: leaves far from the camera (relative to the tree height) grow up to 1.5x so the crown silhouette fills
+    // instead of reading as confetti; close-ups keep true size.
+    const H = Math.max(2, sim.bboxMax[1]);
+    const camX = Lt.cam.x, camY = Lt.cam.y, camZ = Lt.cam.z;
+    for (let li = 0; li < sim.leaves.length; li++) {
+      const lf = sim.leaves[li];
       if (lf.rank * 4 >= lp.density) continue;
-      cand++;
-      if (lf.rank * 4 >= lp.density * rs) continue;
       const nd = nodes[lf.node];
       if (sim.chains[nd.chain].pruned) continue;
-      const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
-      const grow = smooth(0, GROW_TIME, sim.time - lf.born);
-      const s = lp.size * lf.size * grow * fade;
-      if (s < 1e-4) continue;
       // No leaf chains on hanging twigs (steeply down-pointing segments read as strands under the crown).
       if (nd.wdy < -0.75) continue;
+      // Outer-shell fill: sunlit-shell clumps get up to one extra leaf per sim leaf (8 → ~13 per node), the shaded
+      // interior stays sparse. Copies come from a per-leaf hash (render-only; the sim rng and tree shapes are untouched).
+      let h = (li * 2246822519 + lf.node * 3266489917 + 374761393) >>> 0;
+      const hr = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+      const shell = smooth(0.06, 0.4, nd.light); // light is mostly 0..0.4 in a grown crown
+      const copies = hr() < 0.85 * shell ? 2 : 1;
+      for (let cp = 0; cp < copies; cp++) {
+      const rank = cp === 0 ? lf.rank : (lf.rank + hr()) % 1;
+      cand++;
+      if (rank * 4 >= lp.density * rs || n >= cap) continue;
+      const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
+      const grow = smooth(0, GROW_TIME, sim.time - lf.born);
+      let s = lp.size * lf.size * grow * fade * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
+      if (s < 1e-4) continue;
       const pn = nodes[nd.parent];
       // Position along segment, offset to bark surface.
-      const t = lf.t;
+      const t = cp === 0 ? lf.t : 0.45 + 0.55 * hr();
+      const around = cp === 0 ? lf.around : lf.around + 1.9 + 0.8 * hr();
+      const tilt = cp === 0 ? lf.tilt : 0.3 + 0.7 * hr();
+      const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
       const dx = nd.wdx, dy = nd.wdy, dz = nd.wdz;
       // Radial direction around the branch.
       let rx = Math.abs(dy) < 0.9 ? -dz : 1, ry = 0, rz = Math.abs(dy) < 0.9 ? dx : 0;
       const rl = Math.hypot(rx, ry, rz) || 1;
       rx /= rl; rz /= rl;
       const bx = dy * rz - dz * ry, by = dz * rx - dx * rz, bz = dx * ry - dy * rx;
-      const c = Math.cos(lf.around), sn = Math.sin(lf.around);
+      const c = Math.cos(around), sn = Math.sin(around);
       const ox = rx * c + bx * sn, oy = ry * c + by * sn, oz = rz * c + bz * sn;
       this.pos.set(
         pn.wx + (nd.wx - pn.wx) * t + ox * nd.radius,
@@ -397,7 +415,7 @@ export class Leaves {
         pn.wz + (nd.wz - pn.wz) * t + oz * nd.radius,
       );
       // Leaf axis: outward, tilted toward the branch tip, drooping slightly.
-      this.ay.set(ox * Math.cos(lf.tilt) + dx * Math.sin(lf.tilt), oy * Math.cos(lf.tilt) + dy * Math.sin(lf.tilt) - 0.25, oz * Math.cos(lf.tilt) + dz * Math.sin(lf.tilt)).normalize();
+      this.ay.set(ox * Math.cos(tilt) + dx * Math.sin(tilt), oy * Math.cos(tilt) + dy * Math.sin(tilt) - 0.25, oz * Math.cos(tilt) + dz * Math.sin(tilt)).normalize();
       // Face toward the sky as much as possible, with a random roll.
       this.ax.set(0, 1, 0).cross(this.ay);
       if (this.ax.lengthSq() < 1e-6) this.ax.set(1, 0, 0);
@@ -405,7 +423,9 @@ export class Leaves {
       this.az.crossVectors(this.ax, this.ay).normalize();
       this.basis.makeBasis(this.ax, this.ay, this.az);
       this.q.setFromRotationMatrix(this.basis);
-      this.q.multiply(new THREE.Quaternion().setFromAxisAngle(this.ay.set(0, 1, 0), lf.roll));
+      this.q.multiply(new THREE.Quaternion().setFromAxisAngle(this.ay.set(0, 1, 0), roll));
+      const dc = Math.hypot(this.pos.x - camX, this.pos.y - camY, this.pos.z - camZ);
+      s *= 1 + 0.5 * smooth(0.9 * H, 2.6 * H, dc);
       // Blade shape: >0 long and narrow, <0 broad fan.
       const sh = lp.shape;
       this.scl.set(s * (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh), s * (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh), s);
@@ -463,6 +483,7 @@ export class Leaves {
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
+      }
     }
     this.mesh.count = n;
     // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next rebuild draws ≤ maxInstances.
