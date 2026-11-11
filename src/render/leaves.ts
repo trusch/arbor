@@ -167,6 +167,8 @@ const GROW_TIME = 3; // seconds for a leaf to unfold
 export class Leaves {
   mesh!: THREE.InstancedMesh;
   private material: THREE.Material;
+  /** Full path only: GTAO g-buffer material with the leaf alpha cut-out (`userData.gbufferMaterial`, see Post). */
+  private gbufferMaterial: THREE.Material | null = null;
   readonly mode: LeafMode;
   /** Active safe/basic ladder variant (null on the full path). */
   variant: LeafVariant | null = null;
@@ -275,6 +277,19 @@ export class Leaves {
           transformed.x += sin(uTime * 1.7 + ph * 1.3) * 0.06 * sway;`,
         );
     };
+    // GTAO g-buffer material: normals + the same alpha cut-out (see Post), so AO sees the leaf shape, not the quad.
+    const gb = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide, blending: THREE.NoBlending });
+    gb.allowOverride = false;
+    gb.onBeforeCompile = (sh) => {
+      sh.uniforms.leafMap = { value: map };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vLeafUv;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLeafUv = uv;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('void main() {', 'uniform sampler2D leafMap;\nvarying vec2 vLeafUv;\nvoid main() {')
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (texture2D(leafMap, vLeafUv).a < 0.5) discard;');
+    };
+    this.gbufferMaterial = gb;
     this.mesh = this.makeMesh(1024);
   }
 
@@ -288,6 +303,7 @@ export class Leaves {
     m.castShadow = this.mode.shadow;
     m.receiveShadow = this.mode.shadow;
     m.frustumCulled = false;
+    if (this.gbufferMaterial) m.userData.gbufferMaterial = this.gbufferMaterial;
     m.count = 0;
     this.capacity = cap;
     return m;

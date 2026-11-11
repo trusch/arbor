@@ -82,6 +82,19 @@ export class Post {
     this.gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.5, scale: 1, samples: 12 });
     this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
     c.addPass(this.gtao);
+    // scene.overrideMaterial (MeshNormalMaterial) ignores map/alphaTest, so alpha-tested cards (leaves) would write their
+    // whole quad into the AO depth/normal buffer and show as hatched rectangles. Objects can supply their own g-buffer
+    // material in `userData.gbufferMaterial` (allowOverride = false); it is swapped in for the g-buffer render only.
+    const g = this.gtao as unknown as { _renderOverride: (...a: unknown[]) => void };
+    const orig = g._renderOverride.bind(g);
+    g._renderOverride = (...a: unknown[]) => {
+      const swapped: [THREE.Mesh, THREE.Material | THREE.Material[]][] = [];
+      scene.traverseVisible((o) => {
+        const m = o as THREE.Mesh, gm = o.userData.gbufferMaterial as THREE.Material | undefined;
+        if (m.isMesh && gm) { swapped.push([m, m.material]); m.material = gm; }
+      });
+      try { orig(...a); } finally { for (const [m, mat] of swapped) m.material = mat; }
+    };
     this.rays = new ShaderPass(GodRaysShader);
     c.addPass(this.rays);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.2, 0.4, 2.5);
