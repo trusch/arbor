@@ -434,6 +434,22 @@ export class Leaves {
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
       const young = 1 - smooth(2, 14, sim.time - lf.born);
       const fresh = Math.max(young, 1 - smooth(10, 50, sim.time - lf.born)) * 0.6 + young * 0.4;
+      if (!bakeAll) {
+        // Full path: deep natural greens (the shader adds sun, shadows and translucency glow on top). Effective albedo =
+        // instance colour × map; normalise by the map mean to the pale reference map the albedo was tuned against, so
+        // the painted texture adds detail without brightening. Dark interior via the light grid.
+        const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
+        this.col.setHSL(
+          lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05,
+          Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12),
+          Math.min(0.85, (0.19 + lf.tint * 0.1 + young * 0.1) * ao * lp.lightness),
+          THREE.SRGBColorSpace,
+        );
+        this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
+        carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
+        n++;
+        continue;
+      }
       this.col.setHSL(
         lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05,
         Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12),
@@ -497,6 +513,9 @@ export class Leaves {
     return replaced;
   }
 }
+
+/** Mean linear colour of the pale pre-painted leaf map the full-path albedo was tuned against. */
+const REF_MAP_MEAN = new THREE.Color(0.7, 0.78, 0.6);
 
 function smooth(a: number, b: number, x: number) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-6)));
