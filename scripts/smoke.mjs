@@ -132,48 +132,64 @@ try {
   const junk = await page.evaluate(() => ({ s: window.__arbor.params.time.speed, t: window.__arbor.sim.time }));
   check('junk query values ignored', Number.isFinite(junk.s) && Number.isFinite(junk.t), JSON.stringify(junk));
 
+  // The desktop page keeps rendering a grown tree; on SwiftShader every page shares one GPU process, so a live
+  // background page starves the next one (navigations then take 60 s+). Close it; each phone step gets a fresh context.
+  await page.close();
+
   // Android phone emulation (412x915 @ DPR 3, mobile UA): auto-Low, adaptive DPR (starts at 2, may step down to 1 on SwiftShader), no post render targets, 1024 shadow map.
-  const mctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
-    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
-  const mp = await mctx.newPage();
-  const merr = [];
-  mp.on('pageerror', (e) => merr.push(e.message));
-  await mp.goto(url);
-  await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
-  await mp.waitForTimeout(6000);
-  const mob = await mp.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, dpr: r.getPixelRatio(), post: !!A.stage._post, shadow: A.stage.sun.shadow.mapSize.x, maxNodes: A.params.growth.maxNodes, fe: A.frameErrors() }; });
-  check('phone: auto Low, DPR in [1,2], no post RTs, small shadow map', mob.q === 'Low' && mob.dpr >= 1 && mob.dpr <= 2 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, JSON.stringify(mob));
-  // Leaf modes: phone defaults to the safe leaf path; ?leafsafe=1/0 and ?leafshader=basic force it; leaves render, no errors.
-  const leafState = () => mp.evaluate(() => { const A = window.__arbor; A.fastForward(15); const m = A.leaves.mesh; return { type: m.material.type, cast: m.castShadow, n: m.count, fe: A.frameErrors() }; });
-  const lm = await leafState();
-  check('phone: safe leaves by default (Lambert, no shadow), leaves drawn', lm.type === 'MeshLambertMaterial' && !lm.cast && lm.n > 0 && lm.fe === 0, JSON.stringify(lm));
-  for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
-    const before = merr.length;
-    await mp.goto(url + q, { waitUntil: 'domcontentloaded' });
+  const phone = async (q, opts = {}) => {
+    const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
+    const mp = await ctx.newPage();
+    const merr = [];
+    mp.on('pageerror', (e) => merr.push(e.message));
+    const t0 = Date.now();
+    await mp.goto(url + q, { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
     await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
-    await mp.waitForTimeout(4000);
-    const st = await leafState();
-    check(`phone ${q}: ${want}`, st.type === want && st.n > 0 && st.fe === 0 && merr.length === before, JSON.stringify(st));
+    return { ctx, mp, merr, loadMs: Date.now() - t0 };
+  };
+  const leafState = (mp) => mp.evaluate(() => { const A = window.__arbor; A.fastForward(15); const m = A.leaves.mesh; return { type: m.material.type, cast: m.castShadow, n: m.count, fe: A.frameErrors() }; });
+  {
+    const { ctx, mp, merr, loadMs } = await phone('');
+    await mp.waitForTimeout(6000);
+    const mob = await mp.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, dpr: r.getPixelRatio(), post: !!A.stage._post, shadow: A.stage.sun.shadow.mapSize.x, maxNodes: A.params.growth.maxNodes, fe: A.frameErrors() }; });
+    check('phone: auto Low, DPR in [1,2], no post RTs, small shadow map', mob.q === 'Low' && mob.dpr >= 1 && mob.dpr <= 2 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, `${JSON.stringify(mob)} load ${loadMs} ms`);
+    // Leaf modes: phone defaults to the safe leaf path; ?leafsafe=1/0 and ?leafshader=basic force it; leaves render, no errors.
+    const lm = await leafState(mp);
+    check('phone: safe leaves by default (Lambert, no shadow), leaves drawn', lm.type === 'MeshLambertMaterial' && !lm.cast && lm.n > 0 && lm.fe === 0, JSON.stringify(lm));
+    await ctx.close();
   }
-  // Context-loss guard: first loss reloads into safe mode (no shadows), second loss stops reloading and shows links.
-  await mp.goto(url + '?leafshader=basic', { waitUntil: 'domcontentloaded' });
-  await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
-  await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
-  await mp.waitForTimeout(3000);
-  await mp.waitForFunction(() => window.__arbor !== undefined && performance.getEntriesByType('navigation')[0]?.type === 'reload', null, { timeout: 60000, polling: 500 })
-    .catch(async () => console.log('ctx reload wait failed', await mp.evaluate(() => [performance.getEntriesByType('navigation')[0]?.type, !!window.__arbor, sessionStorage.getItem('arbor.ctxLost'), document.getElementById('notice')?.textContent]).catch((e) => String(e))));
-  await mp.waitForTimeout(1000);
-  const after1 = await mp.evaluate(() => ({ shadows: window.__arbor.stage.renderer.shadowMap.enabled, n: sessionStorage.getItem('arbor.ctxLost') }));
-  check('context loss 1: reloads with shadows off', !after1.shadows && after1.n === '1', JSON.stringify(after1));
-  await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
-  await mp.waitForTimeout(2500);
-  const after2 = await mp.evaluate(() => ({ page: !!document.getElementById('ctxlost'), nav: performance.getEntriesByType('navigation')[0]?.type, n: sessionStorage.getItem('arbor.ctxLost') }));
-  check('context loss 2: no reload, safe-mode links shown', after2.page && after2.n === '2', JSON.stringify(after2));
-  await mctx.close();
+  for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
+    const { ctx, mp, merr, loadMs } = await phone(q);
+    await mp.waitForTimeout(4000);
+    const st = await leafState(mp);
+    check(`phone ${q}: ${want}`, st.type === want && st.n > 0 && st.fe === 0 && merr.length === 0, `${JSON.stringify(st)} load ${loadMs} ms`);
+    await ctx.close();
+  }
+  // Context-loss guard (own context: sessionStorage counter + Chrome's post-loss WebGL state stay out of other steps):
+  // first loss reloads into safe mode (no shadows), second loss stops reloading and shows links.
+  {
+    const { ctx, mp } = await phone('?leafshader=basic');
+    await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
+    await mp.waitForTimeout(3000);
+    await mp.waitForFunction(() => window.__arbor !== undefined && performance.getEntriesByType('navigation')[0]?.type === 'reload', null, { timeout: 60000, polling: 500 })
+      .catch(async () => console.log('ctx reload wait failed', await mp.evaluate(() => [performance.getEntriesByType('navigation')[0]?.type, !!window.__arbor, sessionStorage.getItem('arbor.ctxLost'), document.getElementById('notice')?.textContent]).catch((e) => String(e))));
+    await mp.waitForTimeout(1000);
+    const after1 = await mp.evaluate(() => ({ shadows: window.__arbor.stage.renderer.shadowMap.enabled, n: sessionStorage.getItem('arbor.ctxLost') }));
+    check('context loss 1: reloads with shadows off', !after1.shadows && after1.n === '1', JSON.stringify(after1));
+    await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
+    await mp.waitForTimeout(2500);
+    const after2 = await mp.evaluate(() => ({ page: !!document.getElementById('ctxlost'), nav: performance.getEntriesByType('navigation')[0]?.type, n: sessionStorage.getItem('arbor.ctxLost') }));
+    check('context loss 2: no reload, safe-mode links shown', after2.page && after2.n === '2', JSON.stringify(after2));
+    await ctx.close();
+  }
 
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.
   const SOAK = Number(process.env.SOAK_S ?? 120);
   if (SOAK > 0) {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(`${url}?quality=High`);
     await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
     await page.evaluate(() => { const P = window.__arbor.params; P.time.speed = 8; P.sky.cycle = true; P.sky.dayLength = 20; });
