@@ -4,6 +4,7 @@ import { TreeSim } from './sim/tree';
 import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
+import { CanopyShadow } from './render/canopyShadow';
 import { makeBarkTextures, makeLeafTexture } from './render/textures';
 import { buildGui } from './ui';
 import { Automation } from './automation';
@@ -139,6 +140,11 @@ function gpuRenderer(gl: WebGLRenderingContext | WebGL2RenderingContext) {
 }
 stage.scene.add(branches.mesh);
 if (diag.leaves) stage.scene.add(leaves.mesh);
+/** CPU canopy shadow decal wherever leaves cannot cast shadow-map shadows (safe path); branches then stop casting. */
+const canopy = new CanopyShadow();
+stage.scene.add(canopy.mesh);
+const sunDirTmp = new THREE.Vector3();
+const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
 const MAX_STEP = 1 / 20;
 /** Crown envelope the attractors were sampled for; automation re-samples when it drifts (e.g. gravity journey). */
@@ -182,6 +188,18 @@ function redraw(time: number, dt: number) {
   if (!leavesDirty) { leaves.tick(time); return; }
   leavesDirty = false;
   tel.phase('leaves rebuild');
+  const S = stage.sun, H = stage.hemi;
+  sunDirTmp.copy(S.position).sub(S.target.position).normalize();
+  leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
+    hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
+  leaves.maxInstances = params.sky.quality === 'Low' ? 25000 : 0;
+  const decal = !leaves.mesh.castShadow && S.castShadow;
+  branches.mesh.castShadow = !decal;
+  if (decal) {
+    tel.phase('canopy shadow');
+    canopy.update(sim, sunDirTmp, Math.min(1, S.intensity / 1.5) * 0.85, time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
+    tel.phase('leaves rebuild');
+  } else canopy.mesh.visible = false;
   const repl = leaves.update(sim, params, time);
   if (repl) {
     tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });

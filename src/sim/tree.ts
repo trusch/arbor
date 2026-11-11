@@ -78,6 +78,10 @@ export class TreeSim {
   buds: Bud[] = [];
   leaves: Leaf[] = [];
   time = 0;
+  /** Last light-grid snapshot (leafy-node density per voxel) for renderers: baked leaf lighting, canopy shadow. */
+  lightGrid: { dens: Float32Array; ox: number; oy: number; oz: number; cell: number; nx: number; ny: number; nz: number } | null = null;
+  /** Bumps whenever `lightGrid` is recomputed. */
+  lightVersion = 0;
   /** Bumps whenever topology (node/leaf count) changes. */
   topology = 0;
   bboxMin = [0, 0, 0];
@@ -103,6 +107,8 @@ export class TreeSim {
     this.chains = [];
     this.buds = [];
     this.leaves = [];
+    this.lightGrid = null;
+    this.lightVersion++;
     this.time = 0;
     this.topology++;
     this.rebuildAttractors();
@@ -272,6 +278,17 @@ export class TreeSim {
           rank: (k + this.rng.next()) / 4, born: this.time, tint: this.rng.next(),
         });
       }
+      // Clump fill: 4 more, smaller leaves toward the twig tip from a per-node hash (does not touch the sim rng, so
+      // tree shapes stay identical). Each shares the rank band of a primary leaf, so a cluster shows 2 × density/4 × 4.
+      let h = (id * 2654435761 + 0x9e3779b9) >>> 0;
+      const hr = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+      for (let k = 0; k < 4; k++) {
+        this.leaves.push({
+          node: id, t: 0.72 + 0.28 * hr(), around: a0 + 1.2 + k * 2.4 + (hr() - 0.5) * 0.8,
+          tilt: 0.35 + 0.6 * hr(), roll: (hr() - 0.5) * 1.4, size: 0.6 + 0.45 * hr(),
+          rank: (k + hr()) / 4, born: this.time, tint: hr(),
+        });
+      }
     }
 
     // Choose next direction.
@@ -377,6 +394,8 @@ export class TreeSim {
       cellOf[i] = c;
       if (c >= 0 && nd.leafy && !this.chains[nd.chain].pruned) dens[c] += 1;
     }
+    this.lightGrid = { dens, ox, oy, oz, cell, nx, ny, nz };
+    this.lightVersion++;
     const k = 0.05;
     const up = new Float32Array(dens.length), sx0 = new Float32Array(dens.length), sx1 = new Float32Array(dens.length);
     const sz0 = new Float32Array(dens.length), sz1 = new Float32Array(dens.length);

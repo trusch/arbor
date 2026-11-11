@@ -178,6 +178,19 @@ export class Leaves {
     uGlow: { value: new THREE.Color(0, 0, 0) },
   };
   private capacity = 0;
+  /** Scene lighting for the CPU bake (set by `setLighting` before `update`). */
+  private lit = {
+    cam: new THREE.Vector3(0, 2, 8), sun: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(1, 1, 1),
+    sky: new THREE.Color(0.5, 0.6, 0.8), ground: new THREE.Color(0.1, 0.1, 0.05),
+  };
+  /** Mean linear colour of the leaf map: instance colours are divided by it so the albedo is what the bake says. */
+  private mapMean = new THREE.Color(0.7, 0.78, 0.6);
+  /** Per-voxel sun transmittance (march through the light grid toward the sun), cached by grid version + sun dir. */
+  private sunT: Float32Array | null = null;
+  private sunTKey = '';
+  /** Max drawn leaves (0 = unlimited); Low caps it for the phone budget. */
+  maxInstances = 0;
+  private rankScale = 1;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private col = new THREE.Color();
@@ -190,6 +203,7 @@ export class Leaves {
 
   constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }) {
     this.mode = mode;
+    this.mapMean.copy(mapMeanColor(map));
     if (mode.shader !== 'full') {
       const v = this.variant = LEAF_VARIANTS[mode.variant ?? 0] ?? LEAF_VARIANTS[0];
       let tex: THREE.Texture | null = null;
@@ -289,6 +303,40 @@ export class Leaves {
     this.uniforms.uSunCol.value.copy(col).multiplyScalar(intensity * 0.35);
   }
 
+  /**
+   * Lighting for the CPU leaf bake: camera position, direction toward the key light as the shadow-casting light sees it,
+   * key colour × intensity, hemisphere sky/ground × intensity (all linear).
+   */
+  setLighting(cam: THREE.Vector3, sunDir: THREE.Vector3, sunCol: THREE.Color, sky: THREE.Color, ground: THREE.Color) {
+    const L = this.lit;
+    L.cam.copy(cam); L.sun.copy(sunDir).normalize(); L.sunCol.copy(sunCol); L.sky.copy(sky); L.ground.copy(ground);
+  }
+
+  /** Sun transmittance per light-grid voxel: exp(-k · leafy density) marched from the voxel toward the sun. */
+  private sunTransmittance(sim: TreeSim): Float32Array | null {
+    const G = sim.lightGrid;
+    if (!G) return null;
+    const L = this.lit.sun;
+    const key = `${sim.lightVersion}|${L.x.toFixed(2)},${L.y.toFixed(2)},${L.z.toFixed(2)}`;
+    if (key === this.sunTKey && this.sunT) return this.sunT;
+    this.sunTKey = key;
+    const { dens, nx, ny, nz } = G;
+    const T = this.sunT && this.sunT.length === dens.length ? this.sunT : new Float32Array(dens.length);
+    const k = 0.05, sx = L.x, sy = Math.max(0.05, L.y), sz = L.z;
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+      const c = (y * nz + z) * nx + x;
+      let acc = dens[c] * 0.5, px = x + 0.5, py = y + 0.5, pz = z + 0.5;
+      for (let i = 0; i < 64; i++) {
+        px += sx; py += sy; pz += sz;
+        const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+        if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) break;
+        acc += dens[(iy * nz + iz) * nx + ix];
+      }
+      T[c] = Math.exp(-k * acc);
+    }
+    return (this.sunT = T);
+  }
+
   /** Emissive glow colour (already scaled by strength and night factor). */
   setGlow(c: THREE.Color, day = 1) {
     this.uniforms.uGlow.value.copy(c);
@@ -311,11 +359,19 @@ export class Leaves {
     const nodes = sim.nodes;
     const arr = this.mesh.instanceMatrix.array as Float32Array;
     const carr = this.mesh.instanceColor!.array as Float32Array;
-    // Brighter safe colours only without the leaf texture (the map already carries shading).
-    const safe = !!this.variant && this.variant.map !== 'leaf';
+    // Safe (Lambert, no leaf shadows, no translucency): the instance colour carries the whole bake. Full path: the shader
+    // does sun, shadows and translucency, so only albedo × sky occlusion is baked.
+    const bakeAll = !!this.variant;
+    const T = bakeAll ? this.sunTransmittance(sim) : null;
+    const G = sim.lightGrid;
+    const Lt = this.lit, L = Lt.sun, mm = this.mapMean;
+    const rs = this.rankScale;
     let n = 0;
+    let cand = 0;
     for (const lf of sim.leaves) {
       if (lf.rank * 4 >= lp.density) continue;
+      cand++;
+      if (lf.rank * 4 >= lp.density * rs) continue;
       const nd = nodes[lf.node];
       if (sim.chains[nd.chain].pruned) continue;
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
@@ -353,28 +409,62 @@ export class Leaves {
       this.scl.set(s * (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh), s * (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh), s);
       this.m.compose(this.pos, this.q, this.scl);
       this.m.toArray(arr, n * 16);
-      // Deep green, darker inside the crown (light grid), young leaves lighter and yellower.
+      // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
       const young = 1 - smooth(2, 14, sim.time - lf.born);
-      const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
-      if (safe) {
-        // Safe path has no translucency/env term: brighter, wider spread (young yellow-green, older deeper).
-        const fresh = Math.max(young, 1 - smooth(10, 50, sim.time - lf.born)) * 0.6 + young * 0.4;
-        this.col.setHSL(
-          lp.hue + (lf.tint - 0.5) * 0.06 - fresh * 0.045,
-          Math.min(1, lp.saturation * (0.9 + lf.tint * 0.3) + fresh * 0.1),
-          Math.min(0.9, (0.27 + lf.tint * 0.1 + fresh * 0.1) * (0.6 + 0.4 * ao) * lp.lightness),
-          THREE.SRGBColorSpace,
-        );
-      } else this.col.setHSL(
-        lp.hue + (lf.tint - 0.5) * 0.045 - young * 0.05,
-        lp.saturation * (0.85 + lf.tint * 0.3) + young * 0.12,
-        Math.min(0.9, (0.2 + lf.tint * 0.09 + young * 0.1) * ao * lp.lightness),
+      const fresh = Math.max(young, 1 - smooth(10, 50, sim.time - lf.born)) * 0.6 + young * 0.4;
+      this.col.setHSL(
+        lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05,
+        Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12),
+        Math.min(0.85, (0.3 + lf.tint * 0.12 + fresh * 0.12) * lp.lightness),
         THREE.SRGBColorSpace,
       );
+      // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
+      const occ = 0.22 + 0.78 * smooth(0.15, 0.85, nd.light);
+      let kr: number, kg: number, kb: number;
+      if (!bakeAll) {
+        const k = 0.5 + 0.5 * occ;
+        kr = kg = kb = k;
+      } else {
+        // Leaf normal (blade +Z of the instance basis) and the face the camera sees.
+        const e = this.m.elements, il = 1 / (Math.hypot(e[8], e[9], e[10]) || 1);
+        let nx = e[8] * il, ny = e[9] * il, nz = e[10] * il;
+        let vx = Lt.cam.x - this.pos.x, vy = Lt.cam.y - this.pos.y, vz = Lt.cam.z - this.pos.z;
+        const vl = 1 / (Math.hypot(vx, vy, vz) || 1);
+        vx *= vl; vy *= vl; vz *= vl;
+        if (nx * vx + ny * vy + nz * vz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        // Sun visibility: grid transmittance toward the sun, softened by the outer-shell factor.
+        let vis = 0.35 + 0.65 * occ;
+        if (T && G) {
+          const gx = Math.floor((this.pos.x - G.ox) / G.cell), gy = Math.floor((this.pos.y - G.oy) / G.cell), gz = Math.floor((this.pos.z - G.oz) / G.cell);
+          if (gx >= 0 && gy >= 0 && gz >= 0 && gx < G.nx && gy < G.ny && gz < G.nz) vis = Math.min(1, T[(gy * G.nz + gz) * G.nx + gx] * (0.75 + 0.5 * occ));
+          else vis = 1;
+        }
+        // Per-leaf dapple so the sunlit shell doesn't read as one flat sheet.
+        vis *= 0.7 + 0.3 * lf.tint;
+        const ndl = nx * L.x + ny * L.y + nz * L.z;
+        const hw = 0.5 * ny + 0.5;
+        // Lambert will apply: E_l = hemi(n) + sun · max(0, n·L). We want: E_w = hemi(n) · occ + sun · |n·L| · vis + glow.
+        const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
+        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
+        const sd = Math.abs(ndl) * vis;
+        const ch = (sky: number, gr: number, sun: number, tint: number, i: number) => {
+          const hemi = gr + (sky - gr) * hw;
+          const El = hemi + sun * Math.max(0, ndl);
+          const Ew = hemi * occ + sun * (sd + glow * tint);
+          return Math.min(8, Ew / Math.max(0.02, El)) / i;
+        };
+        kr = ch(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r);
+        kg = ch(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g);
+        kb = ch(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b);
+      }
+      if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
+      this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
     }
     this.mesh.count = n;
+    // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next rebuild draws ≤ maxInstances.
+    this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
     this.mesh.instanceMatrix.clearUpdateRanges();
     this.mesh.instanceMatrix.addUpdateRange(0, n * 16);
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -388,4 +478,17 @@ export class Leaves {
 function smooth(a: number, b: number, x: number) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-6)));
   return t * t * (3 - 2 * t);
+}
+
+/** Mean linear RGB of the opaque texels of a canvas-backed leaf map (fallback: pale green). */
+function mapMeanColor(map: THREE.Texture): THREE.Color {
+  const out = new THREE.Color(0.7, 0.78, 0.6);
+  const img = map.image as HTMLCanvasElement | undefined;
+  const ctx = img && typeof img.getContext === 'function' ? img.getContext('2d') : null;
+  if (!ctx) return out;
+  const d = ctx.getImageData(0, 0, img!.width, img!.height).data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 16) if (d[i + 3] >= 128) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+  if (!n) return out;
+  return out.setRGB(r / n / 255, g / n / 255, b / n / 255, THREE.SRGBColorSpace);
 }
