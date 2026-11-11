@@ -63,7 +63,8 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `src/sim/rng.ts` | mulberry32 seedable RNG. |
 | `src/render/branchMesh.ts` | Generalized-cylinder tubes per chain, parallel-transport frames, reusable growing buffers. |
 | `src/render/leaves.ts` | InstancedMesh leaves, unfold/drop scaling, wind sway via `onBeforeCompile`. |
-| `src/render/textures.ts` | Procedural bark (color/normal/roughness), leaf alpha, grass textures. |
+| `src/render/canopyShadow.ts` | CPU-baked dappled crown shadow decal for the safe leaf path (no shadow-map leaves). |
+| `src/render/textures.ts` | Procedural bark (color/normal/roughness), painted 512 px oak leaf (lobes, veins, blotches, sheen; procedural, no external assets), grass textures. |
 | `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
 | `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |

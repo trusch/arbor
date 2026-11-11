@@ -82,43 +82,118 @@ export function makeBarkTextures(): BarkTextures {
   return { map: tex(cc, true), normalMap: tex(cn, false), roughnessMap: tex(cr, false) };
 }
 
-/** Leaf shape with midrib and veins on a transparent background (white, tinted by material). */
+/**
+ * Painted oak leaf (512 px, base at bottom centre, tip at top) on a transparent background: obovate lobed outline with
+ * asymmetric lobes and fine marginal teeth, base→tip colour gradient, lighter tapering midrib and secondary veins running
+ * into the lobes, blotches/speckles, darker margins and a baked soft highlight band. Real albedo colours: instance colours
+ * are divided by the map mean (`mapMeanColor` in leaves.ts), so only the relative variation shows.
+ */
 export function makeLeafTexture(): THREE.Texture {
-  const S = 256;
+  const S = 512, cx = S / 2, yB = S * 0.985, yT = S * 0.015, L = yB - yT;
+  const rng = new Rng(29);
+  const noise = makeNoise(17);
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d')!;
   g.clearRect(0, 0, S, S);
-  // Leaf outline: base at bottom centre, tip at top.
+  // Half-width profile along t (0 = base, 1 = tip): obovate envelope × rounded lobes (5 per side, sides out of phase).
+  const NL = 5;
+  const env = (t: number) => 0.47 * S * Math.pow(Math.sin(Math.PI * Math.min(1, t * 0.86 + 0.02)), 0.8) * (0.55 + 0.45 * Math.min(1, t * 1.6));
+  const lobe = (t: number, side: number) => {
+    const ph = t * NL + (side > 0 ? 0.0 : 0.38) + 0.15;
+    const f = ph - Math.floor(ph);
+    const bump = Math.pow(Math.sin(Math.PI * f), 0.55); // rounded lobe, sharp-ish sinus
+    const sinusDepth = 0.42 * smoothstep(0.05, 0.25, t) * (1 - 0.6 * smoothstep(0.75, 1, t));
+    return 1 - sinusDepth * (1 - bump);
+  };
+  const half = (t: number, side: number) => {
+    if (t <= 0 || t >= 1) return 0;
+    const teeth = 1 + 0.025 * Math.sin(t * 140 + side * 1.7) * smoothstep(0.1, 0.3, t);
+    return env(t) * lobe(t, side) * teeth * (side > 0 ? 1 : 0.94);
+  };
+  // Midrib curves slightly.
+  const mid = (t: number) => cx + S * 0.025 * Math.sin(t * Math.PI * 0.9);
+  const yAt = (t: number) => yB - t * L;
   g.beginPath();
-  g.moveTo(S / 2, S * 0.98);
-  g.bezierCurveTo(S * 0.02, S * 0.72, S * 0.12, S * 0.22, S / 2, S * 0.02);
-  g.bezierCurveTo(S * 0.88, S * 0.22, S * 0.98, S * 0.72, S / 2, S * 0.98);
-  const grad = g.createLinearGradient(0, S, 0, 0);
-  grad.addColorStop(0, '#c8d8b0');
-  grad.addColorStop(1, '#f2f6e6');
+  const N = 400;
+  g.moveTo(mid(0), yAt(0));
+  for (let i = 1; i <= N; i++) { const t = i / N; g.lineTo(mid(t) + half(t, 1), yAt(t)); }
+  for (let i = N; i >= 0; i--) { const t = i / N; g.lineTo(mid(t) - half(t, -1), yAt(t)); }
+  g.closePath();
+  // Base colour: yellow-green at the base → deeper green at the tip.
+  const grad = g.createLinearGradient(0, yB, 0, yT);
+  grad.addColorStop(0, '#8fa64a');
+  grad.addColorStop(0.35, '#6e9038');
+  grad.addColorStop(1, '#4f7a2c');
   g.fillStyle = grad;
   g.fill();
-  g.strokeStyle = 'rgba(120,140,90,0.55)';
-  g.lineWidth = 3;
-  g.beginPath();
-  g.moveTo(S / 2, S * 0.98);
-  g.lineTo(S / 2, S * 0.06);
-  g.stroke();
-  g.lineWidth = 1.5;
-  for (let k = 1; k < 8; k++) {
-    const y = S * (0.9 - k * 0.1);
-    for (const sgn of [-1, 1]) {
-      g.beginPath();
-      g.moveTo(S / 2, y);
-      g.quadraticCurveTo(S / 2 + sgn * S * 0.12, y - S * 0.04, S / 2 + sgn * S * 0.28 * Math.sin((k / 8) * Math.PI), y - S * 0.1);
-      g.stroke();
+  // Veins: lighter, tapering. Secondary veins run from the midrib into each lobe tip.
+  const vein = (pts: [number, number][], w0: number, w1: number, col: string) => {
+    g.strokeStyle = col;
+    g.lineCap = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      g.lineWidth = w0 + (w1 - w0) * (i / (pts.length - 1));
+      g.beginPath(); g.moveTo(pts[i - 1][0], pts[i - 1][1]); g.lineTo(pts[i][0], pts[i][1]); g.stroke();
+    }
+  };
+  const midPts: [number, number][] = [];
+  for (let i = 0; i <= 40; i++) { const t = (i / 40) * 0.97; midPts.push([mid(t), yAt(t)]); }
+  vein(midPts, 9, 1.5, 'rgba(196,206,120,0.85)');
+  for (const side of [1, -1]) {
+    for (let k = 0; k < NL; k++) {
+      const off = (side > 0 ? 0.0 : 0.38) + 0.15;
+      const tl = (k + 0.5 - off) / NL; // lobe centre
+      if (tl < 0.08 || tl > 0.95) continue;
+      const t0 = Math.max(0.03, tl - 0.09), pts: [number, number][] = [];
+      for (let i = 0; i <= 12; i++) {
+        const u = i / 12, t = t0 + (tl - t0) * Math.pow(u, 0.7);
+        pts.push([mid(t) + side * half(tl, side) * 0.92 * u, yAt(t)]);
+      }
+      vein(pts, 4, 0.8, 'rgba(176,192,104,0.7)');
+      // Tertiary veinlets off each secondary.
+      for (let m = 1; m < 4; m++) {
+        const [px, py] = pts[m * 3];
+        const ang = -Math.PI / 2 + side * (0.5 + rng.next() * 0.5), len = S * (0.03 + rng.next() * 0.035);
+        vein([[px, py], [px + Math.cos(ang) * len * 0.5 + side * len * 0.4, py + Math.sin(ang) * len * 0.5], [px + Math.cos(ang) * len + side * len * 0.6, py + Math.sin(ang) * len]], 1.6, 0.5, 'rgba(160,180,96,0.45)');
+      }
     }
   }
+  // Per-pixel pass: blotches, speckles, darker margins, baked highlight band.
+  const img = g.getImageData(0, 0, S, S), d = img.data;
+  for (let y = 0; y < S; y++) {
+    const t = (yB - y) / L;
+    if (t <= 0 || t >= 1) continue;
+    const m = mid(t);
+    for (let x = 0; x < S; x++) {
+      const i = (y * S + x) * 4;
+      if (d[i + 3] < 8) continue;
+      const side = x >= m ? 1 : -1, hw = Math.max(1, half(t, side));
+      const r = Math.abs(x - m) / hw; // 0 at midrib, 1 at the margin
+      let k = 1;
+      k *= 1 - 0.28 * smoothstep(0.72, 1.0, r);                                   // darker margin
+      const bl = fbm(noise, (x / S) * 6, (y / S) * 6, 64, 64, 3);
+      k *= 0.86 + 0.26 * bl;                                                      // blotches
+      const sp = noise((x / S) * 90, (y / S) * 90, 128, 128);
+      if (sp > 0.82) k *= 0.82;                                                   // speckles
+      const band = Math.exp(-(((r - 0.38) / 0.18) ** 2)) * (side > 0 ? 1 : 0.55); // soft sheen across the blade
+      const hl = 0.12 * band * (0.6 + 0.4 * Math.sin(t * Math.PI));
+      d[i] = Math.min(255, d[i] * k + 255 * hl * 0.8);
+      d[i + 1] = Math.min(255, d[i + 1] * k + 255 * hl);
+      d[i + 2] = Math.min(255, d[i + 2] * k + 255 * hl * 0.55);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  // Short petiole.
+  vein([[mid(0), yB], [mid(0) - 2, S - 1]], 7, 5, '#7d8a40');
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
+}
+
+function smoothstep(a: number, b: number, x: number) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 /** Grass/meadow ground texture, tileable. */
