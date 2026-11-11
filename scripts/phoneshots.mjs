@@ -1,6 +1,6 @@
 // Phone-emulated proof shots (Android Chrome UA, touch, 411x777 CSS px, DPR 1): framed view + a trunk close-up per stage.
 // Usage: node scripts/phoneshots.mjs [stages=35,90] [extraQuery=leafsafe=1] [prefix=phone]
-// PORT env as in screenshot.mjs. The page picks quality=Low + safe leaves itself (lowEndDevice), like the real phone.
+// PORT env as in screenshot.mjs; SHOT_DPR env sets deviceScaleFactor (real phone: 2.625). The page picks quality=Low + safe leaves itself (lowEndDevice), like the real phone.
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
@@ -20,11 +20,12 @@ const browser = await chromium.launch({
 });
 try {
   const ctx = await browser.newContext({
-    viewport: { width: W, height: H }, deviceScaleFactor: 1, isMobile: true, hasTouch: true,
+    viewport: { width: W, height: H }, deviceScaleFactor: Number(process.env.SHOT_DPR ?? 1), isMobile: true, hasTouch: true,
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36',
   });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
+  page.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.error('[console]', m.text()));
   await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   let done = 0;
@@ -46,7 +47,7 @@ try {
     });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `shots/${prefix}-t${t}-closeup.png` });
-    const q = await page.evaluate(() => ({ q: window.__arbor.params.sky.quality, leaf: window.__arbor.leaves.mode }));
+    const q = await page.evaluate(() => ({ q: window.__arbor.params.sky.quality, leaf: window.__arbor.leaves.mode, dpr: window.__arbor.stage.renderer.getPixelRatio(), buf: [window.__arbor.stage.renderer.domElement.width, window.__arbor.stage.renderer.domElement.height] }));
     console.log(prefix, t, JSON.stringify(info), JSON.stringify(q));
   }
 } finally {

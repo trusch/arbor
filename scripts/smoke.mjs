@@ -1,6 +1,6 @@
 // Interaction smoke test in headless chromium (SwiftShader).
 // Usage: node scripts/smoke.mjs [url]   (default: the deployed app http://10.77.0.2:8050/; pass "dev" to start vite)
-// Checks: no console errors, reload survives, phone emulation picks Low (DPR 1, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset dropdown, drift, journey keyframes + interpolation, H/C keys, cinema camera motion.
+// Checks: no console errors, reload survives, phone emulation picks Low (adaptive DPR start 2, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset dropdown, drift, journey keyframes + interpolation, H/C keys, cinema camera motion.
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 
@@ -132,7 +132,7 @@ try {
   const junk = await page.evaluate(() => ({ s: window.__arbor.params.time.speed, t: window.__arbor.sim.time }));
   check('junk query values ignored', Number.isFinite(junk.s) && Number.isFinite(junk.t), JSON.stringify(junk));
 
-  // Android phone emulation (412x915 @ DPR 3, mobile UA): auto-Low, DPR 1, no post render targets, 1024 shadow map.
+  // Android phone emulation (412x915 @ DPR 3, mobile UA): auto-Low, adaptive DPR (starts at 2, may step down to 1 on SwiftShader), no post render targets, 1024 shadow map.
   const mctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
     userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
   const mp = await mctx.newPage();
@@ -142,7 +142,7 @@ try {
   await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
   await mp.waitForTimeout(6000);
   const mob = await mp.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, dpr: r.getPixelRatio(), post: !!A.stage._post, shadow: A.stage.sun.shadow.mapSize.x, maxNodes: A.params.growth.maxNodes, fe: A.frameErrors() }; });
-  check('phone: auto Low, DPR 1, no post RTs, small shadow map', mob.q === 'Low' && mob.dpr === 1 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, JSON.stringify(mob));
+  check('phone: auto Low, DPR in [1,2], no post RTs, small shadow map', mob.q === 'Low' && mob.dpr >= 1 && mob.dpr <= 2 && !mob.post && mob.shadow === 1024 && mob.fe === 0 && merr.length === 0, JSON.stringify(mob));
   // Leaf modes: phone defaults to the safe leaf path; ?leafsafe=1/0 and ?leafshader=basic force it; leaves render, no errors.
   const leafState = () => mp.evaluate(() => { const A = window.__arbor; A.fastForward(15); const m = A.leaves.mesh; return { type: m.material.type, cast: m.castShadow, n: m.count, fe: A.frameErrors() }; });
   const lm = await leafState();

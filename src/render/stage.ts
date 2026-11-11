@@ -86,6 +86,8 @@ export class Stage {
       this._post?.setSize(window.innerWidth, window.innerHeight);
     });
 
+    document.addEventListener('visibilitychange', () => (this.dprHiddenSeen = true));
+
     let reload = true;
     // GPU reset / mobile tab eviction: keep the page alive, tell the user, reload once the context returns.
     // A loss while the tab is hidden (background eviction, another tab's GPU reset) is only logged: it does not
@@ -108,22 +110,88 @@ export class Stage {
     });
   }
 
-  /** Pixel ratio and shadow map size per quality: High caps DPR at 1.5 and uses a 2048 shadow map, Low uses DPR 1 and 1024. */
+  /** Pixel ratio and shadow map size per quality: start DPR min(dpr, High 1.5 / Low 2) then adaptive (`adaptDpr`); shadow map High 2048, Low 1024. */
   private applyQuality(q: string) {
     if (q === this.quality) return;
     this.quality = q;
     const high = q === 'High';
-    this.renderer.setPixelRatio(Math.min(high ? 1.5 : 1, window.devicePixelRatio || 1));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    if (this._post) {
-      this._post.composer.setPixelRatio(this.renderer.getPixelRatio());
-      this._post.setSize(window.innerWidth, window.innerHeight);
-    }
+    const pin = Number(new URLSearchParams(location.search).get('dpr'));
+    this.dprPinned = Number.isFinite(pin) && pin > 0;
+    this.dprStart = this.dprPinned ? Math.min(pin, 4) : Math.min(high ? 1.5 : 2, window.devicePixelRatio || 1);
+    this.setDpr(this.dprStart);
+    this.dprWinStart = -1;
+    this.dprGoodSince = -1;
     const ms = high ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== ms) {
       this.sun.shadow.mapSize.set(ms, ms);
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
+    }
+  }
+
+  /** Adaptive pixel ratio: start value per quality (Low ≤ 2, High ≤ 1.5), ?dpr=N pins it. */
+  private dprStart = 1;
+  private dprPinned = false;
+  private dprWinStart = -1;
+  private dprWinFrames = 0;
+  private dprLastFrame = 0;
+  private dprGoodSince = -1;
+  private dprLastDown = -1e9;
+  private dprT0 = -1;
+  private dprHiddenSeen = false;
+  static readonly DPR_STEPS = [2, 1.75, 1.5, 1.25, 1];
+
+  private setDpr(v: number) {
+    this.renderer.setPixelRatio(v);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this._post) {
+      this._post.composer.setPixelRatio(v);
+      this._post.setSize(window.innerWidth, window.innerHeight);
+    }
+  }
+
+  /** Called once per rendered frame. 3 s windows (first 3 s and hidden/stalled windows ignored): < 40 fps steps down,
+   *  > 57 fps for 10 s steps up (never above the start value, not within 30 s of a step-down). */
+  private adaptDpr(now: number) {
+    if (this.dprPinned) return;
+    if (this.dprT0 < 0) this.dprT0 = now;
+    // A gap > 2 s means rAF was paused (hidden tab, bfcache) or a hitch such as a fast-forward: drop the window.
+    const stalled = this.dprHiddenSeen || now - this.dprLastFrame > 2000;
+    this.dprHiddenSeen = false;
+    this.dprLastFrame = now;
+    if (now - this.dprT0 < 3000 || document.visibilityState === 'hidden' || stalled || this.dprWinStart < 0) {
+      this.dprWinStart = now;
+      this.dprWinFrames = 0;
+      if (stalled || document.visibilityState === 'hidden') this.dprGoodSince = -1;
+      return;
+    }
+    this.dprWinFrames++;
+    const span = now - this.dprWinStart;
+    if (span < 3000) return;
+    const fps = (this.dprWinFrames * 1000) / span;
+    this.dprWinStart = now;
+    this.dprWinFrames = 0;
+    const cur = this.renderer.getPixelRatio();
+    const steps = Stage.DPR_STEPS.filter((s) => s <= this.dprStart + 1e-6);
+    if (!steps.length || steps[0] < this.dprStart - 1e-6) steps.unshift(this.dprStart);
+    let next = cur;
+    if (fps < 40) {
+      next = steps.find((s) => s < cur - 1e-6) ?? cur;
+      this.dprGoodSince = -1;
+      if (next !== cur) this.dprLastDown = now;
+    } else if (fps > 57) {
+      if (this.dprGoodSince < 0) this.dprGoodSince = now - span;
+      if (now - this.dprGoodSince >= 10000 && now - this.dprLastDown >= 30000) {
+        const up = [...steps].reverse().find((s) => s > cur + 1e-6);
+        if (up !== undefined) next = up;
+        this.dprGoodSince = -1;
+      }
+    } else {
+      this.dprGoodSince = -1;
+    }
+    if (next !== cur) {
+      this.setDpr(next);
+      tel.log('dpr_change', { from: cur, to: next, fps: +fps.toFixed(1), quality: this.quality });
     }
   }
 
@@ -322,6 +390,7 @@ export class Stage {
   render(p: ArborParams) {
     if (this.contextLost) return;
     this.applyQuality(p.sky.quality);
+    this.adaptDpr(performance.now());
     if (p.sky.quality === 'High') {
       this.post.composer.render();
     } else {
