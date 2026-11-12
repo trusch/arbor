@@ -275,11 +275,11 @@ export function makeTuftTexture(seed = 5): THREE.Texture {
   const im = g.getImageData(0, 0, S, S), d = im.data;
   let mr = 0, mg = 0, mb = 0, mn = 0;
   for (let i = 0; i < d.length; i += 4) if (d[i + 3] >= 128) { mr += d[i]; mg += d[i + 1]; mb += d[i + 2]; mn++; }
-  mr /= mn; mg /= mn; mb /= mn;
+  mr = (mr / mn) * 1.1; mg = (mg / mn) * 1.1; mb = (mb / mn) * 1.1;
   for (let x = 0; x < S; x++) {
-    // Root line height per column: two octaves of column noise, 0..11 % of the card, in runs 2-5 px wide.
+    // Root line height per column: two octaves of column noise, 0..15 % of the card, in runs 2-5 px wide.
     const hsh = (v: number) => { const q = Math.sin(v * 91.7 + seed * 13.1) * 43758.5453; return q - Math.floor(q); };
-    const cut = S * (0.015 + 0.06 * hsh(Math.floor(x / 5)) + 0.04 * hsh(Math.floor(x / 2) + 77));
+    const cut = S * (0.015 + 0.09 * hsh(Math.floor(x / 5)) + 0.05 * hsh(Math.floor(x / 2) + 77));
     for (let y = 0; y < S; y++) {
       const up = S - 1 - y, i = (y * S + x) * 4;
       if (up < cut) { d[i + 3] = 0; continue; }

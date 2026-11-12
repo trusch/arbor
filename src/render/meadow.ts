@@ -17,10 +17,10 @@ import { makeTuftTexture, makeFlowerTexture, type FlowerKind } from './textures'
  * variation and the canopy shade (march through the sim light grid toward the sun), rebaked a few patches per frame.
  */
 const PHASES = 24; // 8 bands x 3 interleaved groups along the wind
-const R_DISC = 14, R_FAR = 21;
+const R_DISC = 14, R_FAR = 26;
 /** Shade field resolution and half extent (m); ms of bake work per frame. */
-const SG = 96, SE = R_FAR + 1, FRAME_BUDGET_MS = 1;
-const GRASS_MAX = 20000, FLOWER_MAX = 800;
+const SG = 112, SE = R_FAR + 1, FRAME_BUDGET_MS = 1;
+const GRASS_MAX = 26000, FLOWER_MAX = 800;
 const KINDS: FlowerKind[] = ['daisy', 'buttercup', 'poppy', 'clover'];
 /** Floats per instance: x, z, rot, width, height, hashA, hashB, r. */
 const STRIDE = 8;
@@ -143,12 +143,12 @@ export class Meadow {
     for (let i = 0; i < GRASS_MAX; i++) {
       let r: number;
       if (rng.next() < 0.3) do r = -6 * Math.log(Math.max(1e-9, rng.next() * rng.next())); while (r > R_FAR);
-      else do r = R_FAR * Math.sqrt(rng.next()); while (rng.next() > 1 - 0.85 * smooth(R_DISC + 1, R_FAR, r));
+      else do r = R_FAR * Math.sqrt(rng.next()); while (rng.next() > 1 - 0.9 * smooth(R_DISC + 2, R_FAR, r));
       const a = rng.next() * Math.PI * 2, x = Math.cos(a) * r, z = Math.sin(a) * r;
       const tall = rng.next() < 0.16;
       // Far tufts are larger so coverage holds where the density drops.
       // Past the disc they shrink away again, so the meadow has no edge: it thins and sinks into the ground texture.
-      const edge = 1 - 0.7 * smooth(R_DISC + 1, R_FAR + 1, r);
+      const edge = 1 - 0.65 * smooth(R_DISC + 4, R_FAR + 1, r);
       const far = (1 + Math.min(r, R_DISC) / 11) * edge;
       const w = rng.range(0.26, 0.5) * far, h = (tall ? rng.range(0.34, 0.5) : rng.range(0.13, 0.3)) * (1 + r / 22) * edge;
       const ph = r > R_DISC ? Math.floor(rng.next() * PHASES) : phaseOf(x, z);
@@ -318,7 +318,7 @@ export class Meadow {
       // Crown shade: straight up decides how the plant grows, toward the sun decides how it is lit right now.
       // Both come from the blurred shade field, so neighbouring tufts get neighbouring values (a gradient, not squares).
       const up = this.shade(this.shUp, x, z);
-      const ts = (0.3 + 0.4 * L.night) + (0.7 - 0.4 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
+      const ts = (0.38 + 0.34 * L.night) + (0.62 - 0.34 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
       if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
@@ -341,8 +341,10 @@ export class Meadow {
       if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
       else {
         const macro = vnoise(x * 0.23 + 3.1, z * 0.23 - 1.7), fine = vnoise(x * 1.3, z * 1.3);
-        const dry = smooth(0.5, 0.8, macro * 0.7 + fine * 0.2 + hB * 0.25);
-        const v = 0.72 + 0.34 * hA + 0.14 * (fine - 0.5);
+        // Toward the rim the tufts stand alone on the ground texture: less straw and a little darker there, so they read as grass, not clumps.
+        const rim = smooth(9, 22, data[o + 7]);
+        const dry = smooth(0.5, 0.8, macro * 0.7 + fine * 0.2 + hB * 0.25) * (1 - 0.7 * rim);
+        const v = (0.72 + 0.34 * hA + 0.14 * (fine - 0.5)) * (1 - 0.16 * rim);
         // Channel gains measured against the ground in screenshots (the ground also gets sky fill from the env map).
         col.setRGB(v * (0.95 + 0.45 * dry), v * (0.66 + 0.1 * dry), v * (1.7 - 0.5 * dry));
         if (L.tint > 0) { const lumc = (col.r * 0.3 + col.g * 0.59 + col.b * 0.11) * 2.0; col.r += (tc.r * lumc - col.r) * L.tint; col.g += (tc.g * lumc - col.g) * L.tint; col.b += (tc.b * lumc - col.b) * L.tint; }
@@ -350,7 +352,7 @@ export class Meadow {
         col.multiplyScalar(0.72 + 0.28 * smooth(tR * 0.6, tR * 7, rt));
       }
       // E_wanted / E_lambert: blades stand upright, so a low sun still lights them (the up normal alone would not).
-      const amb = 0.72 + 0.28 * Math.min(up, ts);
+      const amb = 0.78 + 0.22 * Math.min(up, ts);
       const side = ly + 0.4 * (1 - ly) * (1 - ly);
       const f = (hc: number, sc: number) => Math.min(4, (hc * amb + sc * side * ts + 1e-4) / (hc + sc * ly + 1e-4));
       C[i * 3] = col.r * f(hemi.r, sun.r); C[i * 3 + 1] = col.g * f(hemi.g, sun.g); C[i * 3 + 2] = col.b * f(hemi.b, sun.b);
