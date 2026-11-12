@@ -94,6 +94,7 @@ const SKY: SliderDef[] = [
   { key: 'sky.timeOfDay', name: 'Time of day', help: 'Moves the sun. Try sunrise, noon, sunset or night.', min: 0, max: 24, step: 0.05, when: 'now', fmt: (v) => { const hh = Math.floor(v) % 24, mm = Math.floor((v - Math.floor(v)) * 60); return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; } },
   { key: 'sky.dayLength', name: 'Length of a day', help: 'How long a full day and night takes when the cycle is on.', min: 10, max: 1800, log: true, when: 'now', fmt: (v) => (v < 90 ? `${v.toFixed(0)} s` : `${(v / 60).toFixed(v < 600 ? 1 : 0)} min`) },
   { key: 'sky.wind', name: 'Wind', help: 'How hard the wind blows across the meadow. Calmer at night.', min: 0, max: 1, step: 0.01, when: 'now', fmt: (v) => (v < 0.05 ? 'still' : v < 0.3 ? 'light' : v < 0.6 ? 'breezy' : 'windy') },
+  { key: 'sway.amount', name: 'Branch sway', help: 'How much limbs and twigs move with the wind. 0 keeps the tree still.', min: 0, max: 2, step: 0.05, when: 'now', fmt: (v) => (v < 0.05 ? 'still' : `${v.toFixed(2)}x`) },
 ];
 
 /** Everything else, raw, for the Advanced tab: [group title, [field, min, max, step][]]. */
