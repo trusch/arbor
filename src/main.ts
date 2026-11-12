@@ -170,8 +170,8 @@ function regrow() {
   invalidate();
 }
 
-/** WP2 switch: ms of leaf work per frame while a pass is open. */
-const LEAF_BUDGET_MS = Infinity;
+/** Leaf work per frame while a pass is open (ms); the pass is uploaded when its last slice ends. */
+const LEAF_BUDGET_MS = 3;
 let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
 let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
