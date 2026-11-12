@@ -277,14 +277,14 @@ export const LEAF_FORMS: readonly LeafForm[] = [
   {
     id: 'maple', name: 'Maple', aspect: 0.92, len: 0.88,
     paint(k) {
-      const cy = 0.36, r0 = 0.18;
-      const lobes = [{ a: 0, len: 0.62, w: 0.6 }, { a: 0.95, len: 0.53, w: 0.58 }, { a: -0.95, len: 0.5, w: 0.58 }, { a: 1.9, len: 0.34, w: 0.6 }, { a: -1.9, len: 0.33, w: 0.6 }];
+      const cy = 0.36, r0 = 0.2;
+      const lobes = [{ a: 0, len: 0.62, w: 0.8 }, { a: 0.95, len: 0.53, w: 0.78 }, { a: -0.95, len: 0.5, w: 0.78 }, { a: 1.9, len: 0.36, w: 0.7 }, { a: -1.9, len: 0.35, w: 0.7 }];
       const r = (th: number) => {
         let best = r0;
         for (const l of lobes) {
           const q = Math.abs(th - l.a) / l.w;
           if (q >= 1) continue;
-          const v = l.len * Math.max(Math.pow(1 - q, 1.3), 0.6 * Math.max(0, 1 - Math.abs(q - 0.4) / 0.2), 0.36 * Math.max(0, 1 - Math.abs(q - 0.72) / 0.16));
+          const v = l.len * Math.max(Math.pow(1 - q, 1.15), 0.7 * Math.max(0, 1 - Math.abs(q - 0.33) / 0.13), 0.5 * Math.max(0, 1 - Math.abs(q - 0.55) / 0.1));
           if (v > best) best = v;
         }
         return best;
@@ -341,7 +341,7 @@ export const LEAF_FORMS: readonly LeafForm[] = [
     },
   },
   {
-    id: 'spray', name: 'Conifer spray', aspect: 0.62, len: 1.15,
+    id: 'spray', name: 'Conifer', aspect: 0.62, len: 1.15,
     paint(k) {
       // Flattened scale-leaf frond (cypress / thuja): a twig with alternating branchlets, each with two side shoots.
       const segs: { pts: Pt[]; w0: number; w1: number }[] = [];
@@ -374,7 +374,7 @@ export const LEAF_FORMS: readonly LeafForm[] = [
     },
   },
   {
-    id: 'frond', name: 'Forked frond', aspect: 0.82, len: 1.1,
+    id: 'frond', name: 'Forked', aspect: 0.82, len: 1.1,
     paint(k) {
       // Alien: a stalk that forks into two lyre-curved blades with a bulb at the fork.
       const fy = 0.27, L = 0.71;
@@ -418,10 +418,10 @@ export const LEAF_FORMS: readonly LeafForm[] = [
     },
   },
   {
-    id: 'spiral', name: 'Spiral tendril', aspect: 0.86, len: 0.95,
+    id: 'spiral', name: 'Spiral', aspect: 0.86, len: 1.1,
     paint(k) {
       // Alien: a fleshy tendril coiled like a fiddlehead, with a row of beads on the outside of the coil.
-      const cx = -0.05, cy = 0.6, R = 0.345, pts: Pt[] = [];
+      const cx = -0.05, cy = 0.6, R = 0.325, pts: Pt[] = [];
       for (let i = 0; i <= 20; i++) {
         const t = i / 20, a = (1 - t) ** 3, b = 3 * t * (1 - t) ** 2, c = 3 * t * t * (1 - t), d = t ** 3;
         pts.push([b * 0.22 + c * (cx + R) + d * (cx + R), b * 0.05 + c * 0.3 + d * cy + a * 0]);
@@ -430,14 +430,14 @@ export const LEAF_FORMS: readonly LeafForm[] = [
       for (let i = 1; i <= 110; i++) {
         const f = i / 110, ph = f * PH, rr = R - 0.275 * Math.pow(f, 0.9);
         pts.push([cx + rr * Math.cos(ph), cy + rr * Math.sin(ph)]);
-        if (i % 6 === 3 && f < 0.62) beads.push([cx + (rr + 0.058 - 0.02 * f) * Math.cos(ph), cy + (rr + 0.058 - 0.02 * f) * Math.sin(ph)]);
+        if (i % 6 === 3 && f < 0.62) beads.push([cx + (rr + 0.07 - 0.02 * f) * Math.cos(ph), cy + (rr + 0.07 - 0.02 * f) * Math.sin(ph)]);
       }
       const { g } = k;
       g.fillStyle = '#456c28'; for (const [x, y] of beads) { g.beginPath(); g.arc(x, y, 0.03, 0, Math.PI * 2); g.fill(); }
-      k.vein(pts, 0.115, 0.05, '#456c28');
+      k.vein(pts, 0.14, 0.066, '#456c28');
       const end = pts[pts.length - 1];
       g.beginPath(); g.arc(end[0], end[1], 0.05, 0, Math.PI * 2); g.fill();
-      k.vein(pts, 0.088, 0.034, k.grad);
+      k.vein(pts, 0.11, 0.048, k.grad);
       g.fillStyle = '#86a046'; for (const [x, y] of beads) { g.beginPath(); g.arc(x, y, 0.02, 0, Math.PI * 2); g.fill(); }
       k.vein(pts, 0.02, 0.006, VEIN);
       g.fillStyle = '#a9bb62'; g.beginPath(); g.arc(end[0], end[1], 0.036, 0, Math.PI * 2); g.fill();
