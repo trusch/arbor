@@ -15,5 +15,7 @@ git init -q -b gh-pages
 git add -A
 git -c commit.gpgsign=false -c user.name="$(git -C "$root" config user.name)" -c user.email="$(git -C "$root" config user.email)" \
   commit -q -m "Publish $ref"
-git push -q --force "$(git -C "$root" remote get-url origin)" gh-pages
+# Push from the real repo so its remote and credential settings apply.
+git -C "$root" fetch -q "$tmp/src/dist" gh-pages
+git -C "$root" push -q --force origin FETCH_HEAD:refs/heads/gh-pages
 echo "published $ref -> gh-pages"
