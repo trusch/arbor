@@ -39,7 +39,7 @@ try {
       look: { exposure: r(s.renderer.toneMappingExposure), fogDensity: r(s.fog.density), fog: s.fog.color.toArray().map(r), sunI: r(s.sun.intensity), sun: s.sun.color.toArray().map(r), hemiI: r(s.hemi.intensity), hemi: s.hemi.color.toArray().map(r), hemiG: s.hemi.groundColor.toArray().map(r), env: r(s.scene.environmentIntensity), skyGain: r(U.skyGain.value), cloudCov: r(su.cloudCoverage.value), cloudDen: r(su.cloudDensity.value), windBase: r(a.wind.base), windStorm: r(a.wind.storm), decal: r(a.canopy.mesh.material.opacity), rainVisible: a.rain ? a.rain.sheets.filter((m) => m.visible).length : 0, boltVisible: !!a.rain?.bolt.visible } };
   });
   await page.evaluate((h) => { const a = window.__arbor; a.params.sky.timeOfDay = h; a.params.camera.autoFrame = true; a.fastForward(90); }, hour);
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(9000); // Low re-bakes the env map at most every 3 to 4 s: let the hour change settle first
   await page.screenshot({ path: `shots/${tag}-calm.png` });
   const s0 = await state();
   console.log('calm', JSON.stringify(s0));

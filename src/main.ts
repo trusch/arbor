@@ -161,12 +161,15 @@ if (rain) stage.scene.add(rain.group);
   if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
   if (qw === 'storm') weather.snapStorm();
 }
+let bakedCloud = 0;
 /** Before `stage.frame`: advance the weather and hand its scalars to the stage. */
 function weatherFrame(dt: number) {
   tel.phase('weather', true);
   weather.update(dt, params.weather.event as WeatherEvent, params.weather.lightning);
   stage.wx.cloud = weather.cloud;
   stage.wx.flash = weather.flash;
+  // The safe leaf path bakes the light into instance colours: rebake as the storm light moves (and once when it settles).
+  if (Math.abs(weather.cloud - bakedCloud) > 0.06 || (weather.cloud !== bakedCloud && (weather.cloud === 0 || weather.cloud === 1))) { bakedCloud = weather.cloud; leavesDirty = true; }
 }
 /** Just before `stage.render`: flash on the lights (after all bakes read them), decal fade under overcast, rain planes. */
 function weatherRender(dt: number) {
@@ -175,7 +178,7 @@ function weatherRender(dt: number) {
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
-  rain.frame(stage.camera, weather, wind, dt, 0.5 * (1 - night) + 0.05, low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 2 : 3);
+  rain.frame(stage.camera, weather, wind, dt, 0.5 * (1 - night) + 0.05, night, low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 2 : 3);
 }
 function meadowFrame(dt: number) {
   wind.update(dt, params.sky.wind, stage.atmo.night, weather.wind);

@@ -11,11 +11,11 @@ import type { Wind } from '../wind';
  */
 const LAYERS = [
   // distance m, tile size m, fall speed m/s, opacity
-  { d: 14, tile: 9, speed: 9, alpha: 0.5 },
-  { d: 5, tile: 3.6, speed: 10, alpha: 0.42 },
-  { d: 1.6, tile: 1.5, speed: 11, alpha: 0.3 },
+  { d: 16, tile: 7, speed: 9, alpha: 0.5 },
+  { d: 6, tile: 3.2, speed: 10, alpha: 0.4 },
+  { d: 2, tile: 1.7, speed: 11, alpha: 0.22 },
 ];
-const BOLT_DIST = 150, BOLT_H = 95;
+const BOLT_DIST = 110, BOLT_H = 80;
 
 function mulberry(seed: number) {
   return () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -56,16 +56,16 @@ function boltTexture(seed: number) {
       pts.push([x, y]);
       if (depth < 2 && r() < 0.16) path(x, y, Math.min(yEnd, y + 60 + r() * 150), (r() - 0.5) * 16, w * 0.45, a * 0.6, depth + 1);
     }
-    for (const [lw, al, blur] of [[w * 7, 0.1 * a, 10], [w * 2.6, 0.35 * a, 4], [w, a, 0]] as const) {
+    for (const [lw, al, blur] of [[w * 6, 0.035 * a, 8], [w * 2.4, 0.12 * a, 3], [w, a, 0]] as const) {
       g.strokeStyle = `rgba(255,255,255,${al})`;
       g.lineWidth = lw; g.lineJoin = 'round'; g.lineCap = 'round';
-      g.shadowColor = 'rgba(255,255,255,0.8)'; g.shadowBlur = blur;
+      g.shadowColor = 'rgba(255,255,255,0.5)'; g.shadowBlur = blur;
       g.beginPath();
       pts.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py)));
       g.stroke();
     }
   };
-  path(W / 2 + (r() - 0.5) * 60, 0, H - 2, 0, 2.6, 1, 0);
+  path(W / 2 + (r() - 0.5) * 60, 0, H - 2, 0, 1.7, 1, 0);
   return c;
 }
 
@@ -93,7 +93,7 @@ export class Rain {
     const geo = new THREE.PlaneGeometry(1, 1);
     LAYERS.forEach((L, i) => {
       const m = decal.clone();
-      m.map = tex(streakTexture(11 + i * 7, i === 0 ? 150 : i === 1 ? 70 : 26, i === 0 ? 46 : i === 1 ? 80 : 130, i === 0 ? 1.1 : i === 1 ? 1.5 : 2.2), true);
+      m.map = tex(streakTexture(11 + i * 7, i === 0 ? 260 : i === 1 ? 130 : 60, i === 0 ? 30 : i === 1 ? 44 : 62, i === 0 ? 0.9 : i === 1 ? 1.0 : 1.1), true);
       m.color.setRGB(1, 1, 1);
       const mesh = new THREE.Mesh(geo, m);
       mesh.renderOrder = 6 + i;
@@ -116,10 +116,10 @@ export class Rain {
   }
 
   /**
-   * light: scene brightness for the streaks (about 1 at noon, small at night). layers: how many sheets to draw
+   * night 0..1 (exposure is higher at night: the bolt is scaled to match). light: scene brightness for the streaks (about 1 at noon, small at night). layers: how many sheets to draw
    * (2 when the adaptive pixel ratio has stepped down: fill-rate relief).
    */
-  frame(camera: THREE.PerspectiveCamera, W: Weather, wind: Wind, dt: number, light: number, layers = 3) {
+  frame(camera: THREE.PerspectiveCamera, W: Weather, wind: Wind, dt: number, light: number, night: number, layers = 3) {
     const rain = W.rain, show = rain > 0.01;
     camera.getWorldDirection(this.fwd);
     this.right.set(1, 0, 0).applyQuaternion(camera.quaternion);
@@ -129,7 +129,7 @@ export class Rain {
       const lateral = (wind.dirX * this.right.x + wind.dirZ * this.right.z) * wind.base;
       const slant = Math.max(-0.75, Math.min(0.75, Math.atan(lateral * 0.95)));
       this.rot.setFromAxisAngle(this.zAxis, slant);
-      const b = light * (1 + 5 * W.flash);
+      const b = light * (1 + 2.2 * W.flash);
       for (let i = 0; i < this.sheets.length; i++) {
         const mesh = this.sheets[i], L = LAYERS[i], m = mesh.material as THREE.MeshBasicMaterial;
         mesh.visible = i >= this.sheets.length - layers;
@@ -157,9 +157,9 @@ export class Rain {
       const yaw = Math.atan2(this.fwd.x, this.fwd.z) + B.u * Math.atan(Math.tan((camera.fov * Math.PI) / 360) * camera.aspect) * 0.8;
       this.bolt.position.set(camera.position.x + Math.sin(yaw) * BOLT_DIST, BOLT_H / 2 - 2, camera.position.z + Math.cos(yaw) * BOLT_DIST);
       this.bolt.rotation.set(0, yaw + Math.PI, 0);
-      this.bolt.scale.set(BOLT_H * 0.5, BOLT_H, 1);
-      const k = 0.5 + 0.5 * W.flash;
-      m.color.setRGB(14 * k, 15 * k, 18 * k);
+      this.bolt.scale.set(BOLT_H * 0.42, BOLT_H, 1);
+      const k = 0.5 + 0.5 * W.flash, gain = 1 / (1 + 1.6 * night);
+      m.color.setRGB(4.2 * k * gain, 4.8 * k * gain, 6 * k * gain);
       m.opacity = 1;
     }
   }
