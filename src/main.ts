@@ -293,9 +293,15 @@ function redraw(time: number, dt: number, force = false) {
   // Wind sway: new offsets whenever the branch mesh may rebuild; a moving (or just settled) pose forces the rebuild.
   let swayMoved = false;
   if (force || branchDue) { tel.phase('sway', true); swayMoved = sway.update(sim, wind, diag.sway ? params.sway.amount : 0); }
-  if (force || (branchDue && (swayMoved || sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV))) {
+  // High: the full rebuild takes the offsets (exact frames and normals). Low: a full rebuild only when the tree itself
+  // changed (rest pose), then the cheap per-ring translation on top (`applyOffsets`: positions only).
+  const treeMoved = sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV;
+  if (low && !force && branchDue && swayMoved && !treeMoved && branches.applyOffsets(sway.D)) {
+    branchMoved = true;
+  } else if (force || (branchDue && (swayMoved || treeMoved))) {
     tel.phase('geometry rebuild');
-    branches.update(sim, params.thickness.rootFlare, sway.live ? sway.D : null);
+    branches.update(sim, params.thickness.rootFlare, !low && sway.live ? sway.D : null);
+    if (low && sway.live) branches.applyOffsets(sway.D);
     rebuilds++;
     branchAge = 0; branchTime = sim.time; branchTopo = sim.topology; branchPV = pv;
     branchMoved = true;
