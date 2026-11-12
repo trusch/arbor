@@ -412,6 +412,44 @@ try {
         && o.stormOn.spawned > 20 && o.stormOn.ground > 5 && Object.values(o).every((r) => r.fe === 0 && r.errs === 0),
       JSON.stringify(o));
   }
+  // Leaf form gate (PowerVR rule): switching the leaf form on a living tree is data only. Same program count, same
+  // leaf material and map objects (new pixels, version bump), falling-leaf meshes still on the live material, meadow
+  // maps untouched; on the phone path (safe leaves) and on desktop High (full leaves, GTAO g-buffer material).
+  {
+    const FORMS = ['willow', 'birch', 'maple', 'ginkgo', 'round', 'spray', 'frond', 'ring', 'spiral', 'oak'];
+    const probe = () => {
+      const A = window.__arbor, m = A.leaves.mesh.material, others = [];
+      let shared = 0;
+      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
+      return { programs: A.stage.renderer.info.programs.length, mat: m.uuid, map: m.map.uuid, ver: m.map.version, form: A.leaves.formId, shared, others: others.join(','), gb: !!A.leaves.mesh.userData.gbufferMaterial, fe: A.frameErrors(), leaves: A.leaves.mesh.count, textures: A.stage.renderer.info.memory.textures };
+    };
+    const run = async (pg, errs) => {
+      await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); A.leafFall?.force(6); });
+      await pg.waitForTimeout(8000);
+      const before = await pg.evaluate(probe), steps = [];
+      for (const f of FORMS) {
+        await pg.evaluate((id) => window.__arbor.automation.userSet('leaves.form', id), f);
+        await pg.waitForTimeout(700);
+        steps.push(await pg.evaluate(probe));
+      }
+      const ok = steps.every((r, i) => r.programs === before.programs && r.mat === before.mat && r.map === before.map && r.form === FORMS[i] && r.others === before.others
+        && r.shared === before.shared && r.fe === 0 && r.leaves > 0 && r.textures === before.textures && r.ver > (i ? steps[i - 1].ver : before.ver)) && errs.length === 0;
+      return { ok, before, detail: `programs ${before.programs} -> ${steps.map((r) => r.programs).join('/')} forms ${steps.map((r) => r.form).join(',')} shared meshes ${before.shared} gbuffer ${before.gb} textures ${before.textures} -> ${steps[steps.length - 1].textures} errs ${errs.length}` };
+    };
+    const { ctx, mp, merr } = await phone('?speed=0&weather=calm');
+    const ph = await run(mp, merr);
+    await ctx.close();
+    check('phone: switching through every leaf form adds no shader program, keeps the leaf material and map objects, no errors', ph.ok && ph.before.shared >= 2, ph.detail);
+    const dctx = await browser.newContext({ viewport: { width: 1024, height: 640 } });
+    const dp = await dctx.newPage(), derr = [];
+    dp.on('pageerror', (e) => derr.push(e.message));
+    dp.on('console', (m) => m.type() === 'error' && derr.push(m.text()));
+    await dp.goto(`${url}?speed=0&weather=calm&quality=High&autoRotate=false`);
+    await dp.waitForFunction(() => window.__arbor !== undefined);
+    const dk = await run(dp, derr);
+    await dctx.close();
+    check('desktop High: switching through every leaf form adds no shader program (full leaves + GTAO cut-out), no errors', dk.ok && dk.before.gb, dk.detail + (derr.length ? ' ' + derr.join(' | ') : ''));
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);

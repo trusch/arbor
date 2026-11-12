@@ -12,6 +12,12 @@ npm run shots          # headless chromium proof shots -> shots/ (growth stages 
 node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 ```
 
+## Leaf forms
+
+The leaf is a choice, not only the oak: oak, willow, birch, maple, ginkgo, a round leaf, a conifer scale spray, and three invented ones (a forked frond, a ring, a spiral tendril). Every tree in the Grow tab starts with the form that suits it (willow: willow, cypress: conifer spray, Low-gravity alien: forked frond, Crimson world: ring, Bioluminescent night: spiral, Heavy world: round, the others: oak). The "Leaves" tab shows all forms as small pictures; tapping one changes the leaves of the tree you are watching at once, without regrowing. `?form=willow` sets it from the URL (`params.leaves.form`).
+
+How it is built: each form is painted into the same square leaf map and carries its own proportions (a willow leaf is long and narrow, a ginkgo fan is wide), which stretch the leaf card together with the existing blade-shape value. A change of form writes new pixels into the texture the leaf material already uses and new card proportions into the instance matrices; the material, its shader program and the geometry stay the same, on the phone path and on desktop (`npm run smoke` switches through all forms on both and checks the program count: phone 9, desktop High unchanged). Falling leaves, litter and broken limbs use the same material, so they change with the crown; leaves already on the ground keep their old proportions. `PORT=5440 node scripts/formshots.mjs` renders every form on the real GPU (contact sheet, framed view, close-up, picker).
+
 ## Controls panel
 
 `src/ui.ts` + `src/ui.css` (own DOM, no lil-gui). Desktop: side panel on the right, open by default. Phone (≤ 700 px wide): a "Controls" button opens a bottom sheet (47% of the height) that the chevron collapses again. `?panel=open|closed`, `?tab=grow|shape|colours|sky|more`, `?nogui=1`.
@@ -21,7 +27,7 @@ node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 | header (always) | state (Growing / Paused / Fully grown, twig count, age), pause/play, collapse. When fully grown a bar offers "Plant a new tree". |
 | Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed), Regrow this one, preset chips |
 | Shape | Gravity, Reach for light, Branchiness, Branch angle, Twist, Droop, Wildness, Crown width/height/shape, Leaf size, Leaf amount. Each has a one-line explanation, a "new growth" or "instant" tag and a Drift toggle. |
-| Colours | Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
+| Leaves | Leaf shape (ten forms shown as small pictures: oak, willow, birch, maple, ginkgo, round, conifer, and the alien forked, ring and spiral; changes at once on the living tree), Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
 | Sky | Time of day, Day and night cycle, Length of a day |
 | More | Journey keyframes, drift for any value, every raw parameter by technical name, camera, quality, seed |
 
@@ -82,11 +88,11 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `src/render/branchMesh.ts` | Generalized-cylinder tubes per chain, parallel-transport frames, reusable growing buffers. |
 | `src/render/leaves.ts` | InstancedMesh leaves, unfold/drop scaling, wind sway via `onBeforeCompile`. |
 | `src/render/canopyShadow.ts` | CPU-baked dappled crown shadow decal for the safe leaf path (no shadow-map leaves). |
-| `src/render/textures.ts` | Procedural bark (color/normal/roughness), painted 512 px oak leaf (lobes, veins, blotches, sheen; procedural, no external assets), grass textures. |
+| `src/render/textures.ts` | Procedural bark (color/normal/roughness), painted 512 px leaf maps for ten leaf forms (`LEAF_FORMS`: outline, base-to-tip gradient, veins, blotches, sheen; procedural, no external assets), grass textures. |
 | `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
 | `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
-| `src/ui.ts`, `src/ui.css` | Controls panel (tabs Grow / Shape / Colours / Sky / More), declarative control lists. |
+| `src/ui.ts`, `src/ui.css` | Controls panel (tabs Grow / Shape / Leaves / Sky / More), declarative control lists. |
 | `src/automation.ts` | `Automation`: journey keyframes + per-param drift, applied before every sim step (`main.ts advance`). |
 | `src/presets.ts` | Preset overrides + optional journeys. |
 | `scripts/screenshot.mjs` | Playwright-core + system chromium (SwiftShader) shots; uses `window.__arbor.fastForward(s)`. |

@@ -5,7 +5,7 @@ import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
 import { CanopyShadow } from './render/canopyShadow';
-import { makeBarkTextures, makeLeafTexture } from './render/textures';
+import { makeBarkTextures, makeLeafTexture, leafForm } from './render/textures';
 import { buildPanel } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
@@ -135,7 +135,7 @@ tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
 // Final capacity up front (Low is capped at 32k drawn leaves): no InstancedMesh re-creation while the tree grows.
-const leaves = new Leaves(makeLeafTexture(), leafMode, params.sky.quality === 'Low' ? 32000 : 48000);
+const leaves = new Leaves(makeLeafTexture(params.leaves.form), leafMode, params.sky.quality === 'Low' ? 32000 : 48000);
 /** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
 function pickLeafMode(): LeafMode {
   const gpu = gpuRenderer(stage.renderer.getContext());
@@ -344,6 +344,18 @@ function redraw(time: number, dt: number, force = false) {
   }
   if (!diag.leaves) return;
   leaves.tick(time);
+  // Leaf form (`params.leaves.form`: picker, preset load, ?form=): new pixels in the live leaf map, the card stretch
+  // re-placed at once, colours (they divide by the map mean) by a restarted pass. Data only, see `Leaves.setForm`.
+  let formPlaced = false;
+  if (params.leaves.form !== leaves.formId) {
+    params.leaves.form = leafForm(params.leaves.form).id;
+    if (params.leaves.form !== leaves.formId) {
+      tel.phase('leaf form');
+      leaves.setForm(makeLeafTexture(params.leaves.form));
+      formPlaced = leaves.follow(sim, params, stage.camera.position, Infinity, 0);
+      leavesDirty = true; leafRestart = true;
+    }
+  }
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
   // Leaf pass inputs. Growth: every 0.12 s (diag rebuildHz overrides), 1 s once topology is stable for 5 s. Light grid,
@@ -396,7 +408,7 @@ function redraw(time: number, dt: number, force = false) {
     leaves.follow(sim, params, stage.camera.position, LEAF_FOLLOW_MS);
   }
   // Sway rides on top: follow / the pass write rest translations, this adds the twig offsets (wood and leaves of one frame agree).
-  if (swayMoved || (sway.live && (branchMoved || placed))) {
+  if (swayMoved || (sway.live && (branchMoved || placed || formPlaced))) {
     tel.phase('leaves sway', true);
     const t0 = performance.now();
     leaves.sway(sway.D, sway.P);

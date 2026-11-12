@@ -88,7 +88,7 @@ export function makeBarkTextures(): BarkTextures {
  * into the lobes, blotches/speckles, darker margins and a baked soft highlight band. Real albedo colours: instance colours
  * are divided by the map mean (`mapMeanColor` in leaves.ts), so only the relative variation shows.
  */
-export function makeLeafTexture(): THREE.Texture {
+function oakLeafCanvas(): HTMLCanvasElement {
   const S = 512, cx = S / 2, yB = S * 0.985, yT = S * 0.015, L = yB - yT;
   const rng = new Rng(29);
   const noise = makeNoise(17);
@@ -185,9 +185,335 @@ export function makeLeafTexture(): THREE.Texture {
   g.putImageData(img, 0, 0);
   // Short petiole.
   vein([[mid(0), yB], [mid(0) - 2, S - 1]], 7, 5, '#7d8a40');
-  const t = new THREE.CanvasTexture(c);
+  return c;
+}
+
+// ---- Leaf forms -------------------------------------------------------------------------------------------------
+// Every form is painted into a square map that it fills; `aspect` (blade width / length) and `len` (length relative
+// to the oak) give the card its real proportions through the instance matrices (`Leaves.place`). Painters work in
+// "leaf space": x right, y up, base at (0, 0), tip near (0, 1), half-width aspect / 2; line widths are in the same units.
+
+type Pt = [number, number];
+interface Kit {
+  g: CanvasRenderingContext2D;
+  rng: Rng;
+  /** Fill a blade outline (base-to-tip gradient, darker margin), then run `inner` (veins) clipped to it. */
+  blade(path: Path2D, rule: CanvasFillRule, inner?: () => void): void;
+  /** Tapering polyline. */
+  vein(pts: Pt[], w0: number, w1: number, col: string | CanvasGradient): void;
+  grad: CanvasGradient;
+}
+export interface LeafForm {
+  id: string;
+  name: string;
+  /** Blade width / length of the painted form. */
+  aspect: number;
+  /** Card length relative to the oak card. */
+  len: number;
+  paint?: (k: Kit) => void;
+}
+const VEIN = 'rgba(196,206,120,0.85)', VEIN2 = 'rgba(176,192,104,0.7)', VEIN3 = 'rgba(160,180,96,0.5)', STALK = '#7d8a40';
+const frac = (x: number) => x - Math.floor(x);
+const toPath = (pts: Pt[]) => { const p = new Path2D(); pts.forEach(([x, y], i) => (i ? p.lineTo(x, y) : p.moveTo(x, y))); p.closePath(); return p; };
+/** Outline of a blade along +y from y0 to y1: right margin up, left margin down. */
+function bladePts(half: (u: number, side: number) => number, mid: (u: number) => number, y0: number, y1: number, N = 260): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i <= N; i++) { const u = i / N; pts.push([mid(u) + half(u, 1), y0 + (y1 - y0) * u]); }
+  for (let i = N; i >= 0; i--) { const u = i / N; pts.push([mid(u) - half(u, -1), y0 + (y1 - y0) * u]); }
+  return pts;
+}
+/** Closed outline r(theta) around (cx, cy); theta = 0 points up, positive toward +x. */
+function polarPts(cx: number, cy: number, r: (th: number) => number, a0 = -Math.PI, a1 = Math.PI, N = 420): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i <= N; i++) { const th = a0 + ((a1 - a0) * i) / N, rr = r(th); pts.push([cx + rr * Math.sin(th), cy + rr * Math.cos(th)]); }
+  return pts;
+}
+const rot = (pts: Pt[], a: number, ox: number, oy: number): Pt[] => pts.map(([x, y]) => [ox + x * Math.cos(a) + y * Math.sin(a), oy - x * Math.sin(a) + y * Math.cos(a)]);
+const line = (a: Pt, b: Pt, n = 8, bow = 0): Pt[] => {
+  const pts: Pt[] = [], nx = -(b[1] - a[1]), ny = b[0] - a[0];
+  for (let i = 0; i <= n; i++) { const t = i / n, k = bow * Math.sin(Math.PI * t); pts.push([a[0] + (b[0] - a[0]) * t + nx * k, a[1] + (b[1] - a[1]) * t + ny * k]); }
+  return pts;
+};
+
+export const LEAF_FORMS: readonly LeafForm[] = [
+  { id: 'oak', name: 'Oak', aspect: 0.6, len: 1 },
+  {
+    id: 'willow', name: 'Willow', aspect: 0.27, len: 1.5,
+    paint(k) {
+      const y0 = 0.07, y1 = 0.99, mid = (u: number) => 0.032 * Math.sin(Math.PI * u) - 0.016;
+      const half = (u: number) => 0.098 * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.72)), 0.85) * (1 + 0.04 * frac(u * 40) * smoothstep(0.05, 0.2, u));
+      k.blade(toPath(bladePts(half, mid, y0, y1)), 'nonzero', () => {
+        const Y = (u: number) => y0 + (y1 - y0) * u;
+        for (const sd of [1, -1]) for (let i = 0; i < 17; i++) {
+          const u = 0.06 + i * 0.052 + (sd > 0 ? 0 : 0.026);
+          k.vein(line([mid(u), Y(u)], [mid(u + 0.085) + sd * half(u + 0.085) * 0.95, Y(u + 0.085)], 6, sd * 0.08), 0.007, 0.003, VEIN3);
+        }
+        const m: Pt[] = []; for (let i = 0; i <= 40; i++) { const u = (i / 40) * 0.98; m.push([mid(u), Y(u)]); }
+        k.vein(m, 0.024, 0.005, VEIN);
+      });
+      k.vein([[0, 0], [mid(0), y0 + 0.02]], 0.026, 0.022, STALK);
+    },
+  },
+  {
+    id: 'birch', name: 'Birch', aspect: 0.74, len: 0.9,
+    paint(k) {
+      const y0 = 0.14, y1 = 0.99, mid = (u: number) => 0.012 * Math.sin(Math.PI * u);
+      const half = (u: number, sd: number) => 0.33 * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.58)), 0.95) * (1 - 0.3 * u)
+        * (1 + (0.085 * frac(u * 12 + (sd > 0 ? 0 : 0.4)) + 0.04 * frac(u * 36)) * smoothstep(0.04, 0.16, u)) * (sd > 0 ? 1 : 0.95);
+      k.blade(toPath(bladePts(half, mid, y0, y1)), 'nonzero', () => {
+        const Y = (u: number) => y0 + (y1 - y0) * u;
+        for (const sd of [1, -1]) for (let i = 0; i < 9; i++) {
+          const u = 0.03 + (i + (sd > 0 ? 0 : 0.4)) / 12, ue = Math.min(0.99, u + 0.1 + 0.06 * (1 - u));
+          const a: Pt = [mid(u), Y(u)], b: Pt = [mid(ue) + sd * half(ue, sd) * 0.97, Y(ue)];
+          k.vein(line(a, b, 8, -sd * 0.04), 0.011, 0.004, VEIN2);
+          for (let j = 1; j < 4; j++) { const t = j / 4, px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t; k.vein([[px, py], [px + sd * 0.012, py + 0.04]], 0.004, 0.002, VEIN3); }
+        }
+        const m: Pt[] = []; for (let i = 0; i <= 40; i++) { const u = (i / 40) * 0.97; m.push([mid(u), Y(u)]); }
+        k.vein(m, 0.022, 0.004, VEIN);
+      });
+      k.vein([[0, 0], [0.004, y0 + 0.02]], 0.028, 0.022, STALK);
+    },
+  },
+  {
+    id: 'maple', name: 'Maple', aspect: 0.92, len: 0.88,
+    paint(k) {
+      const cy = 0.36, r0 = 0.2;
+      const lobes = [{ a: 0, len: 0.62, w: 0.8 }, { a: 0.95, len: 0.53, w: 0.78 }, { a: -0.95, len: 0.5, w: 0.78 }, { a: 1.9, len: 0.36, w: 0.7 }, { a: -1.9, len: 0.35, w: 0.7 }];
+      const r = (th: number) => {
+        let best = r0;
+        for (const l of lobes) {
+          const q = Math.abs(th - l.a) / l.w;
+          if (q >= 1) continue;
+          const v = l.len * Math.max(Math.pow(1 - q, 1.15), 0.7 * Math.max(0, 1 - Math.abs(q - 0.33) / 0.13), 0.5 * Math.max(0, 1 - Math.abs(q - 0.55) / 0.1));
+          if (v > best) best = v;
+        }
+        return best;
+      };
+      k.blade(toPath(polarPts(0, cy, r, -Math.PI, Math.PI, 720)), 'nonzero', () => {
+        const base: Pt = [0, cy - r0 + 0.02];
+        for (const l of lobes) {
+          const tip: Pt = [l.len * 0.96 * Math.sin(l.a), cy + l.len * 0.96 * Math.cos(l.a)];
+          const main = line(base, tip, 12, 0);
+          for (let j = 3; j < 11; j += 2) for (const sd of [1, -1]) {
+            const [px, py] = main[j], dx = tip[0] - base[0], dy = tip[1] - base[1], L = Math.hypot(dx, dy), s = 0.13 * l.len * (1 - j / 14);
+            const ca = Math.cos(sd * 0.75), sa = Math.sin(sd * 0.75);
+            k.vein([[px, py], [px + ((dx * ca - dy * sa) / L) * s, py + ((dx * sa + dy * ca) / L) * s]], 0.008, 0.003, VEIN3);
+          }
+          k.vein(main, 0.02, 0.004, l.a === 0 ? VEIN : VEIN2);
+        }
+      });
+      k.vein([[0, 0], [0, cy - r0 + 0.03]], 0.028, 0.022, STALK);
+    },
+  },
+  {
+    id: 'ginkgo', name: 'Ginkgo', aspect: 1.24, len: 0.8,
+    paint(k) {
+      const oy = 0.27, A = 1.08;
+      const r = (th: number) => 0.675 * (1 + 0.025 * Math.sin(th * 23) + 0.015 * Math.sin(th * 47 + 1)) * (1 - 0.34 * Math.exp(-((th / 0.055) ** 2))) * (1 - 0.07 * Math.pow(Math.abs(th) / A, 4));
+      const pts = polarPts(0, oy, r, -A, A, 360);
+      pts.push([0.012, oy - 0.03], [-0.012, oy - 0.03]);
+      k.blade(toPath(pts), 'nonzero', () => {
+        for (let i = 0; i < 38; i++) {
+          const th = -A * 0.97 + (2 * A * 0.97 * (i + 0.5)) / 38 + (k.rng.next() - 0.5) * 0.02, rr = r(th) * (0.9 + 0.07 * k.rng.next());
+          k.vein(line([0, oy - 0.01], [rr * Math.sin(th), oy + rr * Math.cos(th)], 6, 0), 0.008, 0.003, i % 3 === 0 ? VEIN2 : VEIN3);
+        }
+      });
+      k.vein([[0, 0], [0, oy + 0.03]], 0.03, 0.022, STALK);
+    },
+  },
+  {
+    id: 'round', name: 'Round', aspect: 0.84, len: 0.8,
+    paint(k) {
+      const cy = 0.565, R = 0.385;
+      const r = (th: number) => R * (1 + 0.1 * Math.exp(-((th / 0.2) ** 2)) + 0.012 * Math.sin(th * 28)) * (1 - 0.13 * Math.exp(-(((Math.PI - Math.abs(th)) / 0.32) ** 2)));
+      const by = cy - r(Math.PI);
+      k.blade(toPath(polarPts(0, cy, r)), 'nonzero', () => {
+        for (const sd of [1, -1]) for (let i = 0; i < 4; i++) {
+          const th = sd * (0.5 + i * 0.52), rr = r(th) * 0.93, sy = by + 0.02 + i * 0.0 + (3 - i) * 0.09;
+          const a: Pt = [0, sy], b: Pt = [rr * Math.sin(th), cy + rr * Math.cos(th)];
+          const v = line(a, b, 10, sd * 0.1);
+          k.vein(v, 0.012, 0.004, VEIN2);
+          for (let j = 3; j < 10; j += 3) k.vein([v[j], [v[j][0] + sd * 0.03, v[j][1] + 0.06]], 0.005, 0.002, VEIN3);
+        }
+        k.vein(line([0, by], [0, cy + r(0) * 0.96], 12, 0), 0.02, 0.004, VEIN);
+      });
+      k.vein([[0, 0], [0, by + 0.03]], 0.026, 0.02, STALK);
+    },
+  },
+  {
+    id: 'spray', name: 'Conifer', aspect: 0.62, len: 1.15,
+    paint(k) {
+      // Flattened scale-leaf frond (cypress / thuja): a twig with alternating branchlets, each with two side shoots.
+      const segs: { pts: Pt[]; w0: number; w1: number }[] = [];
+      const mid = (u: number) => 0.02 * Math.sin(u * 5);
+      const stem: Pt[] = []; for (let i = 0; i <= 30; i++) { const u = i / 30 * 0.97; stem.push([mid(u), u]); }
+      segs.push({ pts: stem, w0: 0.05, w1: 0.03 });
+      for (let i = 0; i < 15; i++) {
+        const u = 0.09 + i * 0.058, sd = i % 2 ? 1 : -1;
+        const L = (0.05 + 0.3 * Math.pow(1 - u, 0.65)) * smoothstep(-0.05, 0.22, u) * (0.9 + 0.2 * k.rng.next());
+        const a = sd * (0.8 + 0.12 * k.rng.next()), o: Pt = [mid(u), u], e: Pt = [o[0] + L * Math.sin(a), o[1] + L * Math.cos(a)];
+        const b = line(o, e, 8, sd * 0.07);
+        segs.push({ pts: b, w0: 0.05, w1: 0.03 });
+        if (L > 0.13) for (const [t, s2] of [[0.38, 1], [0.62, -1]] as const) {
+          const q = b[Math.round(t * 8)], a2 = a + s2 * 0.62, l2 = L * 0.36;
+          segs.push({ pts: line(q, [q[0] + l2 * Math.sin(a2), q[1] + l2 * Math.cos(a2)], 4, 0), w0: 0.042, w1: 0.026 });
+        }
+      }
+      const { g } = k;
+      for (const s of segs) k.vein(s.pts, s.w0 * 1.3, s.w1 * 1.3, '#456c28');
+      for (const s of segs) k.vein(s.pts, s.w0 * 0.86, s.w1 * 0.86, k.grad);
+      // Scale leaves: pale chevrons across each shoot.
+      g.strokeStyle = 'rgba(176,196,110,0.6)'; g.lineWidth = 0.0055; g.lineCap = 'round';
+      for (const s of segs) {
+        const a = s.pts[0], b = s.pts[s.pts.length - 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.floor(L / 0.03);
+        for (let j = 1; j < n; j++) {
+          const f = j / n, p = s.pts[Math.min(s.pts.length - 1, Math.round(f * (s.pts.length - 1)))], dx = (b[0] - a[0]) / L, dy = (b[1] - a[1]) / L, w = (s.w0 + (s.w1 - s.w0) * f) * 0.4;
+          g.beginPath(); g.moveTo(p[0] - dy * w - dx * 0.012, p[1] + dx * w - dy * 0.012); g.lineTo(p[0] + dx * 0.006, p[1] + dy * 0.006); g.lineTo(p[0] + dy * w - dx * 0.012, p[1] - dx * w - dy * 0.012); g.stroke();
+        }
+      }
+    },
+  },
+  {
+    id: 'frond', name: 'Forked', aspect: 0.82, len: 1.1,
+    paint(k) {
+      // Alien: a stalk that forks into two lyre-curved blades with a bulb at the fork.
+      const fy = 0.27, L = 0.71;
+      for (const sd of [1, -1]) {
+        const mid = (u: number) => sd * 0.075 * Math.sin(Math.PI * u) * (1 - 0.6 * u);
+        const half = (u: number) => 0.105 * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.8)), 0.8) * (1 + 0.05 * Math.sin(u * 60));
+        const tr = (pts: Pt[]) => rot(pts, sd * 0.4, 0, fy);
+        k.blade(toPath(tr(bladePts(half, mid, 0, L * (sd > 0 ? 1 : 0.93)))), 'nonzero', () => {
+          const m: Pt[] = []; for (let i = 0; i <= 30; i++) { const u = (i / 30) * 0.96; m.push([mid(u), u * L * (sd > 0 ? 1 : 0.93)]); }
+          const mm = tr(m);
+          for (let i = 3; i < 29; i += 2) for (const s2 of [1, -1]) {
+            const [px, py] = mm[i], dx = mm[i + 1][0] - px, dy = mm[i + 1][1] - py, l = Math.hypot(dx, dy), w = half(i / 30) * 0.85;
+            k.vein([[px, py], [px + (dx / l) * 0.03 - s2 * (dy / l) * w, py + (dy / l) * 0.03 + s2 * (dx / l) * w]], 0.006, 0.003, VEIN3);
+          }
+          k.vein(mm, 0.024, 0.005, VEIN);
+        });
+      }
+      k.vein([[0, 0], [0, fy + 0.03]], 0.05, 0.04, STALK);
+      const { g } = k;
+      g.fillStyle = '#93a653'; g.beginPath(); g.arc(0, fy + 0.02, 0.05, 0, Math.PI * 2); g.fill();
+      g.fillStyle = 'rgba(214,222,150,0.9)'; g.beginPath(); g.arc(-0.012, fy + 0.032, 0.02, 0, Math.PI * 2); g.fill();
+    },
+  },
+  {
+    id: 'ring', name: 'Ring', aspect: 0.88, len: 0.9,
+    paint(k) {
+      // Alien: a ring-shaped blade, thicker below the off-centre hole, with spokes.
+      const cy = 0.565, R = 0.4, hy = 0.635, hr = 0.2;
+      const r = (th: number) => R * (1 + 0.035 * Math.sin(th * 9 + 0.6));
+      const p = toPath(polarPts(0, cy, r));
+      p.moveTo(hr, hy); p.arc(0, hy, hr, 0, Math.PI * 2);
+      k.blade(p, 'evenodd', () => {
+        for (let i = 0; i < 18; i++) {
+          const th = ((i + 0.5) / 18) * Math.PI * 2 - Math.PI, rr = r(th) * 0.94;
+          k.vein(line([hr * Math.sin(th), hy + hr * Math.cos(th)], [rr * Math.sin(th), cy + rr * Math.cos(th)], 5, 0.05), 0.012, 0.004, VEIN2);
+        }
+        const c: Pt[] = []; for (let i = 0; i <= 64; i++) { const th = (i / 64) * Math.PI * 2; c.push([(hr + 0.03) * Math.sin(th), hy + (hr + 0.03) * Math.cos(th)]); }
+        k.vein(c, 0.014, 0.014, VEIN);
+      });
+      k.vein([[0, 0], [0, cy - R + 0.04]], 0.04, 0.03, STALK);
+    },
+  },
+  {
+    id: 'spiral', name: 'Spiral', aspect: 0.86, len: 1.1,
+    paint(k) {
+      // Alien: a fleshy tendril coiled like a fiddlehead, with a row of beads on the outside of the coil.
+      const cx = -0.05, cy = 0.6, R = 0.325, pts: Pt[] = [];
+      for (let i = 0; i <= 20; i++) {
+        const t = i / 20, a = (1 - t) ** 3, b = 3 * t * (1 - t) ** 2, c = 3 * t * t * (1 - t), d = t ** 3;
+        pts.push([b * 0.22 + c * (cx + R) + d * (cx + R), b * 0.05 + c * 0.3 + d * cy + a * 0]);
+      }
+      const PH = Math.PI * 2 * 1.72, beads: Pt[] = [];
+      for (let i = 1; i <= 110; i++) {
+        const f = i / 110, ph = f * PH, rr = R - 0.275 * Math.pow(f, 0.9);
+        pts.push([cx + rr * Math.cos(ph), cy + rr * Math.sin(ph)]);
+        if (i % 6 === 3 && f < 0.62) beads.push([cx + (rr + 0.07 - 0.02 * f) * Math.cos(ph), cy + (rr + 0.07 - 0.02 * f) * Math.sin(ph)]);
+      }
+      const { g } = k;
+      g.fillStyle = '#456c28'; for (const [x, y] of beads) { g.beginPath(); g.arc(x, y, 0.03, 0, Math.PI * 2); g.fill(); }
+      k.vein(pts, 0.14, 0.066, '#456c28');
+      const end = pts[pts.length - 1];
+      g.beginPath(); g.arc(end[0], end[1], 0.05, 0, Math.PI * 2); g.fill();
+      k.vein(pts, 0.11, 0.048, k.grad);
+      g.fillStyle = '#86a046'; for (const [x, y] of beads) { g.beginPath(); g.arc(x, y, 0.02, 0, Math.PI * 2); g.fill(); }
+      k.vein(pts, 0.02, 0.006, VEIN);
+      g.fillStyle = '#a9bb62'; g.beginPath(); g.arc(end[0], end[1], 0.036, 0, Math.PI * 2); g.fill();
+    },
+  },
+];
+export const leafForm = (id: string): LeafForm => LEAF_FORMS.find((f) => f.id === id) ?? LEAF_FORMS[0];
+
+/** Paint a leaf form into a new S x S canvas (transparent background). The oak is the original 512 px painting, scaled. */
+export function leafFormCanvas(id: string, S = 512): HTMLCanvasElement {
+  const def = leafForm(id);
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  if (!def.paint) {
+    const oak = oakLeafCanvas();
+    if (S === 512) return oak;
+    g.drawImage(oak, 0, 0, S, S);
+    return c;
+  }
+  g.save();
+  g.setTransform((0.97 * S) / def.aspect, 0, 0, -0.97 * S, S / 2, 0.985 * S);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const grad = g.createLinearGradient(0, 0, 0, 1);
+  grad.addColorStop(0, '#8fa64a'); grad.addColorStop(0.35, '#6e9038'); grad.addColorStop(1, '#4f7a2c');
+  const kit: Kit = {
+    g, grad, rng: new Rng(31),
+    vein(pts, w0, w1, col) {
+      g.strokeStyle = col; g.lineCap = 'round';
+      for (let i = 1; i < pts.length; i++) {
+        g.lineWidth = w0 + (w1 - w0) * (i / (pts.length - 1));
+        g.beginPath(); g.moveTo(pts[i - 1][0], pts[i - 1][1]); g.lineTo(pts[i][0], pts[i][1]); g.stroke();
+      }
+    },
+    blade(path, rule, inner) {
+      g.fillStyle = grad; g.fill(path, rule);
+      g.save(); g.clip(path, rule);
+      g.strokeStyle = 'rgba(34,58,14,0.17)';
+      g.lineWidth = 0.085; g.stroke(path); g.lineWidth = 0.035; g.stroke(path);
+      inner?.();
+      g.restore();
+    },
+  };
+  def.paint(kit);
+  g.restore();
+  // Per-pixel pass: blotches, speckles, a soft sheen band.
+  const noise = makeNoise(17);
+  const img = g.getImageData(0, 0, S, S), d = img.data;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = (y * S + x) * 4;
+    if (d[i + 3] < 8) continue;
+    const u = x / S, v = y / S;
+    const bl = fbm(noise, u * 6, v * 6, 64, 64, 3);
+    let k = 0.86 + 0.26 * bl;
+    if (noise(u * 90, v * 90, 128, 128) > 0.82) k *= 0.82;
+    const band = Math.exp(-(((u - 0.62 + 0.25 * (v - 0.5) + 0.2 * (bl - 0.5)) / 0.1) ** 2));
+    const hl = 0.1 * band * (0.6 + 0.4 * Math.sin((1 - v) * Math.PI));
+    d[i] = Math.min(255, d[i] * k + 255 * hl * 0.8);
+    d[i + 1] = Math.min(255, d[i + 1] * k + 255 * hl);
+    d[i + 2] = Math.min(255, d[i + 2] * k + 255 * hl * 0.55);
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
+ * Leaf map of a form (see `LEAF_FORMS`; unknown ids give the oak). `userData.form` carries what `Leaves` needs besides
+ * the pixels: the card stretch (`kx`, `ky` on top of `leaves.shape`) and whether the safe-path mips must preserve
+ * coverage (thin forms; the oak keeps its original mip chain).
+ */
+export function makeLeafTexture(id = 'oak'): THREE.Texture {
+  const def = leafForm(id);
+  const t = new THREE.CanvasTexture(leafFormCanvas(def.id));
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  t.userData.form = { id: def.id, kx: (def.len * def.aspect) / 0.6, ky: def.len, preserve: def.id !== 'oak' };
   return t;
 }
 
