@@ -441,7 +441,8 @@ export class TreeSim {
       const b = this.buds[i];
       const ch = this.chains[b.chain];
       const age = this.time - b.born;
-      if (age > 40) {
+      // Buds on shaded-out (pruned) wood are dead too: they used to stay up to 40 s and could even break.
+      if (age > 40 || ch.pruned) {
         this.buds[i] = this.buds[this.buds.length - 1];
         this.buds.pop();
         continue;
