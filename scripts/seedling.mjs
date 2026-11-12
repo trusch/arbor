@@ -50,7 +50,7 @@ try {
       const [, ty, d] = CAMS.find((c) => t <= c[0]);
       await page.evaluate(([ty, d]) => {
         const a = window.__arbor; a.params.camera.autoFrame = false;
-        a.stage.controls.target.set(0, ty, 0); a.stage.camera.position.set(0.8 * d, ty + 0.12 * d, 0.6 * d); a.stage.controls.update?.(); a.fastForward(0);
+        a.stage.controls.target.set(0, ty, 0); a.stage.camera.position.set(0.75 * d, ty + (d < 4 ? 0.5 : 0.12) * d, 0.55 * d); a.stage.controls.update?.(); a.fastForward(0);
       }, [ty, d * k]);
       await page.waitForTimeout(2000);
       await page.screenshot({ path: `shots/${PRE}-${mode}-t${t}.png` });

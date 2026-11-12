@@ -119,8 +119,10 @@ const DOWN_MAX = 0.3;
  * JUV_SEGS[0..1] segments) which the tree sheds again once the trunk at their base is thicker than
  * JUV_SHED[0..1] x twig radius: that is what leaves the clear bole.
  */
-const JUV_H = 1.5, JUV_MIN = 0.2, JUV_SPEED = 0.16, JUV_RADIUS = 0.3, JUV_LEAF = 0.42;
-const JUV_BUDS = 0.62, JUV_BREAK = 3, JUV_SEGS = [4, 8], JUV_SHED = [3.2, 6.4];
+const JUV_H = 1.5, JUV_MIN = 0.2, JUV_SPEED = 0.16, JUV_RADIUS = 0.3, JUV_LEAF = 0.6;
+const JUV_BUDS = 0.75, JUV_BREAK = 3, JUV_SEGS = [3, 6], JUV_SHED = [3.2, 6.4];
+/** Leaves on the leader and on juvenile shoots are born this many seconds 'old' (they unfold in 1 s instead of 3), so the growing tip is not a bare whip. */
+const JUV_UNFOLD = 2;
 
 export class TreeSim {
   nodes: TreeNode[] = [];
@@ -348,14 +350,15 @@ export class TreeSim {
       // Juvenile wood: smaller leaves and, on the short internodes, fewer per node (a pair on the seedling's first
       // nodes, 4 further up), so leaf mass per metre of stem stays about that of an adult twig.
       const ls = n.juv < 1 ? JUV_LEAF + (1 - JUV_LEAF) * (n.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
-      const nPrim = n.juv < 0.45 ? 2 : 4, nFill = n.juv < 0.7 ? 0 : 4;
+      const nPrim = n.juv < 0.3 ? 2 : 4, nFill = n.juv < 0.5 ? 0 : 4;
+      const born = juvenile && (ch.order === 0 || ch.juv !== undefined) ? this.time - JUV_UNFOLD : this.time;
       // A cluster at the node: leaves spiral around the twig at golden-angle steps.
       const a0 = n.phyllo + this.rng.range(0, 1);
       for (let k = 0; k < nPrim; k++) {
         this.leaves.push({
           node: id, t: this.rng.range(0.6, 1), around: a0 + k * (nPrim === 2 ? Math.PI : 2.4) + this.rng.range(-0.3, 0.3),
           tilt: this.rng.range(0.3, 0.9), roll: this.rng.range(-0.6, 0.6), size: this.rng.range(0.7, 1.25) * ls,
-          rank: (k + this.rng.next()) / 4, born: this.time, tint: this.rng.next(),
+          rank: (k + this.rng.next()) / 4, born, tint: this.rng.next(),
         });
       }
       // Clump fill: 4 more, smaller leaves toward the twig tip from a per-node hash (does not touch the sim rng, so
@@ -366,7 +369,7 @@ export class TreeSim {
         this.leaves.push({
           node: id, t: 0.72 + 0.28 * hr(), around: a0 + 1.2 + k * 2.4 + (hr() - 0.5) * 0.8,
           tilt: 0.35 + 0.6 * hr(), roll: (hr() - 0.5) * 1.4, size: (0.6 + 0.45 * hr()) * ls,
-          rank: (k + hr()) / 4, born: this.time, tint: hr(),
+          rank: (k + hr()) / 4, born, tint: hr(),
         });
       }
     }
@@ -453,7 +456,9 @@ export class TreeSim {
       // stem it breaks early into a short leafy side shoot instead, which is shed later (`shedJuvenile`).
       if (ch.order === 0 && n.ry < this.params.crown.bole) {
         if (age < 0.5 || n.radius > g_r0 * JUV_SHED[0]) continue;
-        if (this.rng.next() > g.branchingProbability * release * JUV_BREAK * dt) continue;
+        // Weak apical dominance on the young stem: side shoots follow 2 to 5 nodes behind the tip.
+        const rel = ch.alive ? smoothstep(2, 5, ch.nodes.length - 1 - b.indexInChain) : 1;
+        if (this.rng.next() > g.branchingProbability * rel * JUV_BREAK * dt) continue;
         this.buds[i] = this.buds[this.buds.length - 1];
         this.buds.pop();
         if (hash01(b.node) > JUV_BUDS) continue;
