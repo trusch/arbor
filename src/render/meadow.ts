@@ -94,6 +94,11 @@ export class Meadow {
   private phaseD = new Float32Array(PHASES);
   private dirty: number[] = [];
   private key = '';
+  private trunkKey = '';
+  /** Far-meadow and scenery patches depend on the light only, not on the crown shade or the trunk: they are large
+   *  (thousands of instances each), so they are rebaked only when the light key changes. */
+  private neverBaked = true;
+  private nearPatches() { const out: number[] = []; this.patches.forEach((p, i) => { if (!p.far) out.push(i); }); return out; }
   private lightKeyT = -1e9;
   private lightVersion = -1;
   private L: MeadowLight | null = null;
@@ -262,7 +267,8 @@ export class Meadow {
     if (sim.lightVersion !== this.lightVersion && time - this.lightKeyT > 3) { this.lightVersion = sim.lightVersion; this.lightKeyT = time; }
     const s = L.sunDir, lum = (c: THREE.Color) => (c.r + c.g + c.b).toFixed(1);
     const shKey = `${s.x.toFixed(2)},${s.y.toFixed(2)},${s.z.toFixed(2)}|${this.lightVersion}`;
-    const key = `${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}|${(sim.nodes[0]?.radius ?? 0).toFixed(2)}`;
+    const key = `${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}`;
+    const trunkKey = (sim.nodes[0]?.radius ?? 0).toFixed(2);
     this.L = L;
     if (shKey !== this.shKey && this.fillRow < 0) {
       this.shKey = shKey;
@@ -270,8 +276,11 @@ export class Meadow {
       this.beginFill(sim);
     }
     if (key !== this.key) {
-      this.key = key;
+      this.key = key; this.trunkKey = trunkKey;
       this.dirty = this.patches.map((_, i) => i);
+    } else if (trunkKey !== this.trunkKey) {
+      this.trunkKey = trunkKey;
+      this.dirty = this.nearPatches();
     }
     // Time-sliced: shade field rows first (patches wait for it, so a tuft is never baked twice for one change), then
     // patches, both inside one small budget per frame.
@@ -336,7 +345,7 @@ export class Meadow {
     }
     this.blurStage = 0;
     this.fillRow = -1;
-    this.dirty = this.patches.map((_, i) => i);
+    this.dirty = this.neverBaked ? this.patches.map((_, i) => i) : this.nearPatches();
   }
 
   /** Bilinear sample of a shade field at a ground point. */
@@ -435,6 +444,7 @@ export class Meadow {
       if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; continue; }
       C[i * 3] = col.r * f(hemi.r, sun.r); C[i * 3 + 1] = col.g * f(hemi.g, sun.g); C[i * 3 + 2] = col.b * f(hemi.b, sun.b);
     }
+    if (pt.far) this.neverBaked = false;
     mesh.count = n;
     mesh.instanceMatrix.needsUpdate = true;
     mesh.instanceColor!.needsUpdate = true;

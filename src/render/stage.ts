@@ -13,7 +13,7 @@ const EASE_S = 3;
 
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
 /** Linear ground colour factor with the backdrop on (the old 0xdcdcb4 is 0.72, 0.72, 0.46). */
-const GROUND_GAIN = [0.8, 0.86, 0.5];
+const GROUND_GAIN = [0.76, 0.9, 0.4];
 /** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (9 % at 250 m, 30 % at 500 m, 76 % at 1000 m). */
 const HAZE = 0.3;
 

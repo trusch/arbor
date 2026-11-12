@@ -89,7 +89,7 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `src/render/leaves.ts` | InstancedMesh leaves, unfold/drop scaling, wind sway via `onBeforeCompile`. |
 | `src/render/canopyShadow.ts` | CPU-baked dappled crown shadow decal for the safe leaf path (no shadow-map leaves). |
 | `src/render/textures.ts` | Procedural bark (color/normal/roughness), painted 512 px leaf maps for ten leaf forms (`LEAF_FORMS`: outline, base-to-tip gradient, veins, blotches, sheen; procedural, no external assets), grass textures. |
-| `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
+| `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), terrain (or the old hill ring with `?backdrop=0`), haze, shadow frustum, camera framing, Low/High render path. |
 | `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
 | `src/ui.ts`, `src/ui.css` | Controls panel (tabs Grow / Shape / Leaves / Sky / More), declarative control lists. |
@@ -136,6 +136,14 @@ Limbs, twigs and their leaves move with the wind. In a breeze the outer twigs st
 How it is built: `src/render/sway.ts` computes an offset for every node from the rest pose, the wind and the wind clock each time (nothing accumulates, the simulation never sees it). The branch mesh adds the offset of each ring's node to its rest positions and every leaf adds the offset of its twig to its rest position: one position upload and one instance-matrix upload, every frame on High and every second frame on Low, no new shader program (`npm run smoke` checks the phone program count with and without it, in calm and storm, and that the rest pose returns exactly). `node scripts/swayshots.mjs` measures the cost and takes frame bursts.
 
 Limits: leaves are translated with their twig, they do not rotate with it (on High the leaf shader adds flutter, on the phone path leaves do not flutter on their own); bark shading uses the rest normals; the ground shadow of the crown does not move; a limb that breaks jumps from its swayed pose to its rest pose in that frame.
+
+## Background
+
+Beyond the meadow the land rolls away in ridges with scattered trees, bushes, hedgerows and woods, and fades into haze with distance. The ground is level within 66 m of the tree (everything that lands or grows there assumes height 0) and undulates from there; ridges overlap, so there is no straight horizon line. The meadow no longer ends at a ring: larger, sparser tufts and flower clumps continue to 64 m and shrink into the ground, whose colour is matched to them. Everything follows the time of day, the night and the storm through the same lights and haze as the tree.
+
+How it is built (`src/render/backdrop.ts`, `Stage.makeGround`, far and scenery patches in `src/render/meadow.ts`): one technique on phone and desktop, made only of geometry, texture pixels and clones of materials that are already in use, so no shader program is added (the phone compiles one fewer than before, 9 at noon, because the old hill ring is gone; `npm run smoke` checks it against `?backdrop=0`). The terrain is a polar height grid drawn with the ground material, with its normals tilted by a streaky noise so the sun shades the far ground in patches; the ground texture has stronger low-frequency contrast for dry and lush patches; trees and bushes are alpha-cut crossed cards with painted crowns, drawn by the meadow (about 4000 instances, static). The haze is 0.3 x its former density, because the land now has depth. `?backdrop=0` (also on `diag.html`) restores the level disc, the hill ring, the 26 m meadow and the old haze. `PROF_DIST=/tmp/dist node scripts/backdropshots.mjs desk|phone [prefix] [query]` takes wide, low and far views at noon, golden hour, night and in a storm and prints program counts.
+
+Known limits: the hills carry no grass texture of their own (smooth green at noon), the level meadow's far edge can read as a line against a paler slope behind it, the tree cards do not take the sun's direction (their shading is painted, top-lit), and nothing here has been seen on the real phone GPU.
 
 ## Meadow and wind
 

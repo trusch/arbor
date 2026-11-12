@@ -330,6 +330,13 @@ try {
       on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.grass > 1000 && on.noon.flowers > 100 && off.noon.grass === 0 && on.noon.leaves > 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
+    // Backdrop gate (PowerVR rule): terrain, far meadow and tree cards are geometry, texture pixels and clones of live
+    // materials, so the phone compiles no more programs than with the old background (?backdrop=0); it is one fewer,
+    // because the hill ring's program is gone.
+    const old = await progs('?speed=0&backdrop=0');
+    check('phone: backdrop adds no shader program (noon and night) and draws far tufts',
+      on.noon.programs <= old.noon.programs && on.night.programs <= old.night.programs && on.noon.grass > old.noon.grass && on.noon.meshes > old.noon.meshes && old.noon.fe === 0 && old.night.fe === 0 && old.errs === 0,
+      `backdrop ${on.noon.programs}/${on.night.programs} old ${old.noon.programs}/${old.night.programs} grass ${on.noon.grass} vs ${old.noon.grass} meshes ${on.noon.meshes} vs ${old.noon.meshes}`);
     // Same gate for the storm (WP9): rain sheets and the bolt are clones of the canopy-shadow decal material, everything
     // else is uniforms and intensities. Forced storm with a held flash (bolt drawn) against the calm run above.
     const storm = await progs('?speed=0&weather=storm', true), dry = await progs('?speed=0&weather=storm&rain=0', true);

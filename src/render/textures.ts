@@ -537,7 +537,7 @@ export function makeGrassTexture(patchy = false): THREE.Texture {
       const n = fbm(noise, (x / S) * 8, (y / S) * 8, 8, 8, 5);
       const fine = noise((x / S) * 128, (y / S) * 128, 128, 128);
       const i = (y * S + x) * 4;
-      const k = patchy ? 1.9 : 1, m = n - 0.5;
+      const k = patchy ? 3 : 1, m = n - 0.5;
       img.data[i] = 68 + 40 * k * m + 20 * fine;
       img.data[i + 1] = 97 + 50 * k * m + 30 * fine;
       img.data[i + 2] = 39 + 18 * k * m;
