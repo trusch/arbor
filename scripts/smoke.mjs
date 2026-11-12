@@ -19,7 +19,11 @@ const errors = [];
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM ?? '/usr/sbin/chromium',
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-precise-memory-info'],
+  // SMOKE_GPU=vulkan runs on the real GPU (as profile.mjs does): on a loaded host SwiftShader frames take seconds and
+  // Playwright's click-stability check times out.
+  args: process.env.SMOKE_GPU
+    ? ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.SMOKE_GPU}`, '--enable-gpu', '--ignore-gpu-blocklist', '--enable-precise-memory-info']
+    : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-precise-memory-info'],
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
