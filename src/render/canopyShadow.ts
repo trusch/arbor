@@ -8,17 +8,20 @@ import type { TreeSim } from '../sim/tree';
  * and sized to the footprint, so u and w have independent texel sizes).
  *
  * Deposit, then blur: every caster (a leaf clump per leafy node, samples along trunk and order ≤ 1 limbs) is projected
- * along the sun and adds its mass bilinearly to two of K blur-level layers, chosen by its penumbra sigma (own radius +
+ * along the sun and adds its mass bilinearly to two of K = 5 blur-level layers, chosen by its penumbra sigma (own radius +
  * a term growing with the caster's height along the sun ray; the split between the two neighbouring levels matches the
- * variance exactly). The layers are then cascaded from the widest level down: add layer k, box-blur by the variance
+ * variance exactly). The layers are then cascaded from the widest level down: add layer k, blur (one fractional-box pass per axis) by the variance
  * step to level k-1 (sigma x `stretch` along u, which is a blob's elongated footprint at low sun). Cost is a fixed
- * ~26 sliding-sum passes over 256² instead of one exp per covered texel per caster.
+ * 10 sliding-sum passes over a 128² blur grid (upsampled to the 256² texture) instead of one exp per covered texel per caster.
  *
  * A contact ring darkens the trunk base, sun flecks are punched into moderately dense parts, world-anchored value noise
  * dapples it; opacity is capped at `strength`. Drawn as a transparent MeshBasicMaterial plane just above the ground
  * (dark colour x alpha). Branches stop casting shadow-map shadows on Low. Data-only for the GPU: texture pixels and
  * the plane transform.
  */
+/** Sliding sums leave rounding residue behind the window; anything this small is flushed to 0 (denormals are slow). */
+const EPS = 1e-7;
+
 export class CanopyShadow {
   readonly mesh: THREE.Mesh;
   private readonly S = 256;
@@ -29,11 +32,15 @@ export class CanopyShadow {
   private readonly tmp: Float32Array;
   private readonly noise: Float32Array;
   private img: ImageData;
-  private readonly K = 6;
+  /** Blur grid: the deposit/blur cascade runs at half resolution (its content is band-limited by the clump size). */
+  private readonly N = 128;
+  private readonly K = 5;
+  private readonly bufA: Float32Array;
+  private readonly bufB: Float32Array;
   private readonly layers: Float32Array[] = [];
   private readonly colAcc: Float64Array;
-  private readonly sig = new Float64Array(6);
-  private readonly used = new Uint8Array(6);
+  private readonly sig = new Float64Array(5);
+  private readonly used = new Uint8Array(5);
   private key = '';
   private lastT = -1e9;
   private ver = -1;
@@ -52,8 +59,12 @@ export class CanopyShadow {
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tau = new Float32Array(S * S);
     this.tmp = new Float32Array(S * S);
-    for (let k = 0; k < this.K; k++) this.layers.push(new Float32Array(S * S));
-    this.colAcc = new Float64Array(S);
+    const N = this.N;
+    for (let k = 0; k < this.K; k++) this.layers.push(new Float32Array(N * N));
+    this.bufA = new Float32Array(N * N);
+    this.bufB = new Float32Array(N * N);
+    this.colAcc = new Float64Array(N);
+    this.img.data.fill(255);
     // Two-octave value noise for dappling.
     this.noise = new Float32Array(S * S);
     const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
@@ -82,7 +93,7 @@ export class CanopyShadow {
     this.ver = sim.lightVersion;
     this.lastT = time;
     const t0 = performance.now();
-    const S = this.S, K = this.K, sig = this.sig, layers = this.layers, used = this.used;
+    const S = this.S, N = this.N, K = this.K, sig = this.sig, layers = this.layers, used = this.used;
     const ly = Math.max(0.3, dir.y), hl = Math.hypot(dir.x, dir.z);
     // Sun-aligned ground frame: U = unit azimuth the shadows fall along, W = perpendicular. world = U·u + W·w.
     let ux = 1, uz = 0;
@@ -101,29 +112,29 @@ export class CanopyShadow {
     const sMax = clumpR * 1.3 + pen * (top / ly);
     const padW = G.cell + 1.5 * sMax, padU = G.cell + 1.5 * sMax * stretch;
     u0 -= padU; u1 += padU; w0 -= padW; w1 += padW;
-    const extU = u1 - u0, extW = w1 - w0, toU = S / extU, toW = S / extW;
+    const extU = u1 - u0, extW = w1 - w0, toU = S / extU, toW = S / extW, hU = N / extU, hW = N / extW;
     // Blur levels: geometric sigmas (world units, w axis) from the pixel floor to the widest penumbra.
-    const sMin = 0.6 / toW, ratio = Math.pow(Math.max(1.01, sMax / sMin), 1 / (K - 1));
+    const sMin = 0.6 / hW, ratio = Math.pow(Math.max(1.01, sMax / sMin), 1 / (K - 1));
     for (let k = 0; k < K; k++) { sig[k] = sMin * Math.pow(ratio, k); layers[k].fill(0); used[k] = 0; }
-    const texel = toU * toW; // texels per m²: mass (tau·m²) → tau per texel
+    const texel = hU * hW; // blur-grid texels per m²: mass (tau·m²) → tau per texel
     /** Adds `mass` at world (wx, wy, wz) projected along the sun, to be blurred by gaussian sigma `s` (world, w axis). */
     const deposit = (wx: number, wy: number, wz: number, s: number, mass: number) => {
-      const pu = (wx * ux + wz * uz + wy * slope - u0) * toU - 0.5, pw = (-wx * uz + wz * ux - w0) * toW - 0.5;
-      if (!(pu >= 0 && pw >= 0 && pu < S - 1 && pw < S - 1)) return;
+      const pu = (wx * ux + wz * uz + wy * slope - u0) * hU - 0.5, pw = (-wx * uz + wz * ux - w0) * hW - 0.5;
+      if (!(pu >= 0 && pw >= 0 && pu < N - 1 && pw < N - 1)) return;
       let k = 0;
       while (k < K - 2 && s > sig[k + 1]) k++;
       const a = sig[k] * sig[k], b = sig[k + 1] * sig[k + 1];
       const f = Math.min(1, Math.max(0, (s * s - a) / (b - a)));
-      const iu = pu | 0, iw = pw | 0, fu = pu - iu, fw = pw - iw, o = iw * S + iu, m = mass * texel;
+      const iu = pu | 0, iw = pw | 0, fu = pu - iu, fw = pw - iw, o = iw * N + iu, m = mass * texel;
       const w00 = (1 - fu) * (1 - fw), w10 = fu * (1 - fw), w01 = (1 - fu) * fw, w11 = fu * fw;
-      if (f < 1) { const L = layers[k], v = m * (1 - f); L[o] += v * w00; L[o + 1] += v * w10; L[o + S] += v * w01; L[o + S + 1] += v * w11; used[k] = 1; }
-      if (f > 0) { const L = layers[k + 1], v = m * f; L[o] += v * w00; L[o + 1] += v * w10; L[o + S] += v * w01; L[o + S + 1] += v * w11; used[k + 1] = 1; }
+      if (f < 1) { const L = layers[k], v = m * (1 - f); L[o] += v * w00; L[o + 1] += v * w10; L[o + N] += v * w01; L[o + N + 1] += v * w11; used[k] = 1; }
+      if (f > 0) { const L = layers[k + 1], v = m * f; L[o] += v * w00; L[o + 1] += v * w10; L[o + N] += v * w01; L[o + N + 1] += v * w11; used[k + 1] = 1; }
     };
     // Crown: one deposit per leafy node (the leaf clump) at its real position. Overlapping clumps under the dense core
     // build optical depth; gaps between clumps stay lighter. Mass = integral of the clump's gaussian footprint.
     const nodes = sim.nodes;
     let j = 1;
-    const jr = () => { j = (j * 16807) % 2147483647; return j / 2147483647 - 0.5; };
+    const jr = () => { j = (Math.imul(j, 1664525) + 1013904223) | 0; return (j >>> 8) / 16777216 - 0.5; };
     const TAU = 2 * Math.PI;
     for (let i = 1; i < nodes.length; i++) {
       const nd = nodes[i];
@@ -138,7 +149,7 @@ export class CanopyShadow {
       for (let i = 1; i < ch.nodes.length; i++) {
         const a = nodes[ch.nodes[i - 1]], b = nodes[ch.nodes[i]];
         const len = Math.hypot(b.wx - a.wx, b.wy - a.wy, b.wz - a.wz);
-        const steps = Math.max(1, Math.ceil((len * toW) / 1.2));
+        const steps = Math.max(1, Math.ceil(len * hW));
         const r = Math.max(sMin, b.radius * 0.8), m = v * r * r;
         for (let s = 0; s < steps; s++) {
           const t = (s + 0.5) / steps, y = a.wy + (b.wy - a.wy) * t;
@@ -147,16 +158,24 @@ export class CanopyShadow {
       }
     }
     // Cascade from the widest level down: add the level's deposits, blur by the variance step to the next level.
-    let cur = this.tau, oth = this.tmp, any = false;
+    let cur = this.bufA, oth = this.bufB, any = false;
     cur.fill(0);
     for (let k = K - 1; k >= 0; k--) {
-      if (used[k]) { const L = layers[k]; for (let i = 0; i < S * S; i++) cur[i] += L[i]; any = true; }
+      if (used[k]) { const L = layers[k]; for (let i = 0; i < N * N; i++) cur[i] += L[i]; any = true; }
       if (!any) continue;
-      const dv = sig[k] * sig[k] - (k > 0 ? sig[k - 1] * sig[k - 1] : 0), extra = k === 0 ? 1 : 0, n = k === 0 ? 3 : 2;
-      if (this.blur(cur, oth, dv * stretch * stretch * toU * toU + extra, true, n)) { const t = cur; cur = oth; oth = t; }
-      if (this.blur(cur, oth, dv * toW * toW + extra, false, n)) { const t = cur; cur = oth; oth = t; }
+      const dv = sig[k] * sig[k] - (k > 0 ? sig[k - 1] * sig[k - 1] : 0);
+      if (this.blur(cur, oth, dv * stretch * stretch * hU * hU, true)) { const t = cur; cur = oth; oth = t; }
+      if (this.blur(cur, oth, dv * hW * hW, false)) { const t = cur; cur = oth; oth = t; }
     }
-    const tau = cur, holes = oth;
+    // Bilinear upsample to the full-resolution optical depth (texel centres: full x ↔ blur-grid x/2 - 0.25).
+    const tau = this.tau, holes = this.tmp;
+    const row = this.colAcc;
+    for (let z = 0; z < S; z++) {
+      const hz = Math.max(0, z * 0.5 - 0.25), iz = Math.min(N - 2, hz | 0), fz = Math.min(1, hz - iz), r0 = iz * N, r1 = r0 + N, o = z * S;
+      for (let x = 0; x < N; x++) { const a = cur[r0 + x]; row[x] = a + (cur[r1 + x] - a) * fz; }
+      tau[o] = row[0]; tau[o + S - 1] = row[N - 1];
+      for (let x = 0, q = o + 1; x < N - 1; x++, q += 2) { const a = row[x], b = row[x + 1]; tau[q] = 0.75 * a + 0.25 * b; tau[q + 1] = 0.25 * a + 0.75 * b; }
+    }
     // Contact darkening at the trunk base (ambient occlusion ring; on the ground, so neither projected nor stretched).
     const n0 = nodes[0], tr = Math.max(0.08, nodes[Math.min(1, nodes.length - 1)].radius);
     const bu = (n0.wx * ux + n0.wz * uz - u0) * toU - 0.5, bw = (-n0.wx * uz + n0.wz * ux - w0) * toW - 0.5;
@@ -185,23 +204,22 @@ export class CanopyShadow {
     }
     // Dapple with world-anchored noise (stable while the footprint grows or the sun moves), map optical depth to
     // opacity (cap = strength), fade to 0 at the border.
-    const px8 = this.img.data, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS;
+    const px8 = this.img.data, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS, k255 = 255 * Math.min(1, strength);
     for (let z = 0, i = 0; z < S; z++) {
       const ww = w0 + (z + 0.5) / toW, uu = u0 + 0.5 / toU;
-      let nx = (uu * ux - ww * uz) * NS, nz = (uu * uz + ww * ux) * NS;
+      // +4096: keeps the noise coordinate positive so `| 0` floors.
+      let nx = (uu * ux - ww * uz) * NS + 4096, nz = (uu * uz + ww * ux) * NS + 4096;
       const ez = Math.min(z, S - 1 - z);
       for (let x = 0; x < S; x++, i++, nx += dxu, nz += dzu) {
         const t = tau[i];
         let a8 = 0;
-        if (t > 1e-4) {
-          const nv = noise[((Math.floor(nz) & 255) << 8) | (Math.floor(nx) & 255)];
-          const a = (1 - Math.exp(-t * (0.35 + 1.2 * nv * nv))) * strength * (1 - 0.8 * holes[i]);
-          const e = Math.min(x, S - 1 - x, ez);
-          a8 = Math.round(255 * Math.min(1, a) * Math.min(1, e / 4));
+        if (t > 1e-3) {
+          const nv = noise[(((nz | 0) & 255) << 8) | ((nx | 0) & 255)];
+          let a = (1 - Math.exp(-t * (0.35 + 1.2 * nv * nv))) * (1 - 0.8 * holes[i]) * k255;
+          if (ez < 4 || x < 4 || x > S - 5) a *= Math.min(x, S - 1 - x, ez) / 4;
+          a8 = (a + 0.5) | 0;
         }
-        const p = i * 4;
-        px8[p] = px8[p + 1] = px8[p + 2] = 255;
-        px8[p + 3] = a8;
+        px8[i * 4 + 3] = a8;
       }
     }
     this.ctx.putImageData(this.img, 0, 0);
@@ -217,46 +235,45 @@ export class CanopyShadow {
   }
 
   /**
-   * Gaussian blur of `src` along one axis with variance `v` (px²) by `n` sliding box passes (zero outside), ping-ponging
-   * with `tmp`. Variances under 0.5 use one 3-tap pass. Returns true when the result ended up in `tmp`.
+   * One sliding-sum pass of `src` into `dst` along one axis with variance `v` (px², zero outside): a box of radius R
+   * whose two outer taps carry a fractional weight f, so any variance is matched exactly (R = 0 is a 3-tap kernel).
+   * The cascade stacks several of these, which rounds the kernel off. Returns false (nothing written) for v ≈ 0.
    */
-  private blur(src: Float32Array, tmp: Float32Array, v: number, alongU: boolean, n: number): boolean {
-    const S = this.S;
+  private blur(src: Float32Array, dst: Float32Array, v: number, alongU: boolean): boolean {
+    const S = this.N;
     if (v < 0.02) return false;
-    let a = src, b = tmp, swapped = false;
-    if (v <= 0.5) {
-      const e = v / 2, c = 1 - v;
-      if (alongU) for (let z = 0; z < S; z++) { const o = z * S; for (let x = 0; x < S; x++) b[o + x] = c * a[o + x] + e * ((x > 0 ? a[o + x - 1] : 0) + (x < S - 1 ? a[o + x + 1] : 0)); }
-      else for (let z = 0; z < S; z++) { const o = z * S; for (let x = 0; x < S; x++) b[o + x] = c * a[o + x] + e * ((z > 0 ? a[o + x - S] : 0) + (z < S - 1 ? a[o + x + S] : 0)); }
-      return true;
-    }
-    let wl = Math.floor(Math.sqrt((12 * v) / n + 1));
-    if (wl % 2 === 0) wl--;
-    const m = Math.round((12 * v - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
-    const acc = this.colAcc;
-    for (let p = 0; p < n; p++) {
-      const R = Math.min(S >> 1, ((p < m ? wl : wl + 2) - 1) >> 1);
-      if (R < 1) continue;
-      const inv = 1 / (2 * R + 1);
-      if (alongU) {
-        for (let z = 0; z < S; z++) {
-          const o = z * S;
-          let s = 0;
-          for (let x = 0; x < R; x++) s += a[o + x];
-          for (let x = 0; x < S; x++) { if (x + R < S) s += a[o + x + R]; b[o + x] = s * inv; if (x >= R) s -= a[o + x - R]; }
-        }
-      } else {
-        acc.fill(0);
-        for (let z = 0; z < R; z++) { const o = z * S; for (let x = 0; x < S; x++) acc[x] += a[o + x]; }
-        for (let z = 0; z < S; z++) {
-          const o = z * S;
-          if (z + R < S) { const q = o + R * S; for (let x = 0; x < S; x++) acc[x] += a[q + x]; }
-          for (let x = 0; x < S; x++) b[o + x] = acc[x] * inv;
-          if (z >= R) { const q = o - R * S; for (let x = 0; x < S; x++) acc[x] -= a[q + x]; }
+    let R = 0;
+    while (R < (S >> 1) && ((R + 1) * (R + 2)) / 3 <= v) R++; // box variance R(R+1)/3
+    const bv = (R * (R + 1) * (2 * R + 1)) / 3, E = R + 1;
+    const f = Math.min(1, Math.max(0, (v * (2 * R + 1) - bv) / (2 * E * E - 2 * v)));
+    const inv = 1 / (2 * R + 1 + 2 * f), acc = this.colAcc;
+    if (alongU) {
+      for (let z = 0; z < S; z++) {
+        const o = z * S;
+        let s = 0;
+        for (let x = 0; x < R; x++) s += src[o + x];
+        for (let x = 0; x < S; x++) {
+          if (x + R < S) s += src[o + x + R];
+          const e = (x >= E ? src[o + x - E] : 0) + (x + E < S ? src[o + x + E] : 0);
+          const t = s + f * e;
+          dst[o + x] = t > EPS ? t * inv : 0;
+          if (x >= R) s -= src[o + x - R];
         }
       }
-      const t = a; a = b; b = t; swapped = !swapped;
+    } else {
+      acc.fill(0);
+      for (let z = 0; z < R; z++) { const o = z * S; for (let x = 0; x < S; x++) acc[x] += src[o + x]; }
+      for (let z = 0; z < S; z++) {
+        const o = z * S;
+        if (z + R < S) { const q = o + R * S; for (let x = 0; x < S; x++) acc[x] += src[q + x]; }
+        const lo = z >= E ? o - E * S : -1, hi = z + E < S ? o + E * S : -1;
+        for (let x = 0; x < S; x++) {
+          const t = acc[x] + f * ((lo >= 0 ? src[lo + x] : 0) + (hi >= 0 ? src[hi + x] : 0));
+          dst[o + x] = t > EPS ? t * inv : 0;
+        }
+        if (z >= R) { const q = o - R * S; for (let x = 0; x < S; x++) acc[x] -= src[q + x]; }
+      }
     }
-    return swapped;
+    return true;
   }
 }
