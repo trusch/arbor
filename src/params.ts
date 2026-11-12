@@ -131,6 +131,13 @@ export interface ArborParams {
     groundTint: number;
     quality: 'High' | 'Low';
   };
+  /** Wind breakage (WP10). Own group so it merges cleanly next to `weather`. */
+  breakage: {
+    /** Limbs and twigs can snap in storm-strength wind. */
+    enabled: boolean;
+    /** Wood strength sigma in `S = sigma * r^3`; calibrated at the 99th percentile of the load ratio (see CLAUDE.md "Breakage"). */
+    strength: number;
+  };
   camera: {
     autoFrame: boolean;
     autoRotate: boolean;
@@ -173,6 +180,7 @@ export function defaultParams(): ArborParams {
     leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },
   };

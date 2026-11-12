@@ -248,6 +248,27 @@ try {
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
   }
+  // Breakage program gate (WP10, PowerVR rule): a falling limb reuses the live bark and leaf programs. The count is read
+  // once the page has settled (three re-keys the bark program by itself a few seconds after the first frames), then in
+  // flight and at rest; a twig break (leaf fall) on top must not add one either.
+  {
+    const { ctx, mp, merr } = await phone('?speed=0');
+    const st = () => mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phases: A.debris.state.map((l) => l.phase), lowest: A.debris.state.map((l) => l.lowest), stats: A.debris.stats, fe: A.frameErrors() }; });
+    await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
+    await mp.waitForTimeout(7000);
+    const before = await st();
+    const ev = await mp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && { nodes: e.nodeIds.length, leaves: e.leaves }; });
+    await mp.waitForTimeout(500);
+    const flight = await st();
+    await mp.evaluate(() => { window.__arbor.breakTwig(); });
+    await mp.waitForTimeout(8000);
+    const rest = await st();
+    check('phone: limb break adds no shader program (before / in flight / at rest), limb comes to rest on the ground',
+      !!ev && before.programs === flight.programs && flight.programs === rest.programs && flight.phases.length === 1 && flight.phases[0] < 2 && rest.phases[0] === 2
+        && rest.lowest[0] > -0.01 && rest.stats.limbs === 1 && rest.stats.twigs === 1 && rest.fe === 0 && merr.length === 0,
+      `programs ${before.programs}/${flight.programs}/${rest.programs} event ${JSON.stringify(ev)} flight phases ${flight.phases} rest phases ${rest.phases} lowest ${rest.lowest} drawn leaves ${rest.stats.lastLeaves} build ${rest.stats.maxBuildMs.toFixed(1)} ms errs ${merr.length}`);
+    await ctx.close();
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);

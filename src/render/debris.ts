@@ -15,7 +15,7 @@ const G = 9.81;
 const GROUND = 0.02;
 const MAX_LIMBS = 3;
 /** Subtrees below this node count fall as loose leaves (no wood mesh). */
-export const TWIG_NODES = 30;
+export const TWIG_NODES = 12;
 const BROWN_S = 60;
 
 const HINGE = 0, FLY = 1, REST = 2, LEAVING = 3;
@@ -67,7 +67,7 @@ export class Debris {
   group = new THREE.Group();
   private limbs: Limb[] = [];
   private twigs: Twig[] = [];
-  stats = { limbs: 0, twigs: 0, falling: 0, resting: 0, leafFalls: 0, lastBuildMs: 0, maxBuildMs: 0, lastLeaves: 0, lastNodes: 0, minY: 0 };
+  stats = { limbs: 0, twigs: 0, falling: 0, resting: 0, leafFalls: 0, lastBuildMs: 0, maxBuildMs: 0, lastLeaves: 0, lastNodes: 0, minY: 0, takeMs: 0, tubeMs: 0 };
 
   /** Whether limb wood casts shadow-map shadows (mirrors the tree's branch mesh; off on the canopy-decal path). */
   barkShadow = true;
@@ -88,6 +88,7 @@ export class Debris {
     const inSub = new Uint8Array(nodes.length);
     for (const i of ev.nodeIds) inSub[i] = 1;
     const lv = this.leaves.takeInstances(inSub);
+    this.stats.takeMs = performance.now() - t0;
     const live = this.leaves.mesh;
     let lm: THREE.InstancedMesh | null = null;
     if (lv.n > 0) {
@@ -130,7 +131,9 @@ export class Debris {
     // Tubes of the detached chains, in world coordinates, through the shared tube builder.
     const bm = new BranchMesh(this.bark);
     const chains = ev.chains.map((c) => ({ ...sim.chains[c], pruned: false }));
+    const tb = performance.now();
     bm.update({ nodes, chains } as unknown as TreeSim, 0);
+    this.stats.tubeMs = performance.now() - tb;
     // Centroid and gyration radius, weighted by wood (len · radius) plus leaves.
     const pn = nodes[nodes[ev.root].parent];
     const pivot = new THREE.Vector3(pn.wx, pn.wy, pn.wz);
@@ -164,6 +167,12 @@ export class Debris {
       lx = nd.wx; ly = nd.wy; lz = nd.wz;
       pts[p * 4] = lx - com.x; pts[p * 4 + 1] = ly - com.y; pts[p * 4 + 2] = lz - com.z; pts[p * 4 + 3] = nd.radius + 0.03;
     }
+    // Bounding spheres up front (three would compute them on first sort: every vertex and every instance).
+    let R = 0;
+    for (let p = 0; p < NP; p++) R = Math.max(R, Math.hypot(pts[p * 4], pts[p * 4 + 1], pts[p * 4 + 2]));
+    const sphere = new THREE.Sphere(com.clone(), R + 0.5);
+    bm.mesh.geometry.boundingSphere = sphere;
+    if (lm) lm.boundingSphere = sphere;
     const g = new THREE.Group();
     bm.mesh.position.copy(com).negate();
     bm.mesh.castShadow = true; bm.mesh.receiveShadow = true;

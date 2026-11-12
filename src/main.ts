@@ -174,6 +174,11 @@ stage.scene.add(debris.group);
 let debrisSimT = 0;
 /** Before `redraw`: a break on a paused tree still needs its structure pass. */
 function breakagePre(_dt: number) {
+  // The rule runs on real time (wind is real time), also on a paused tree; it does nothing while wind.base <= 0.6.
+  if (diag.breakage && params.breakage.enabled) {
+    tel.phase('wind load', true);
+    sim.windLoad(_dt, wind, params.breakage.strength);
+  }
   if (sim.breaks.length && (params.time.paused || params.time.speed <= 0)) sim.updateStructure(0);
 }
 /** After `redraw` (the branch mesh has dropped the limb, the leaf follow is done): hand the limb over to the debris. */
@@ -496,5 +501,27 @@ requestAnimationFrame(loop);
     /** Break at a node id, the biggest order-1 limb ('big') or a random order-1 limb (no argument). Returns the event. */
     breakLimb: (id?: number | 'big') => sim.breakAt(typeof id === 'number' ? id : pick(false, id === 'big')),
     breakTwig: () => sim.breakAt(pick(true)),
+    /** Calibration: load ratios u at a fixed gust (default 1) as a sorted array, with percentiles. */
+    loadRatios: (gust = 1, sigma = params.breakage.strength) => {
+      const u: number[] = [], big: { id: number; u: number; len: number }[] = [];
+      sim.loadRatios(wind, sigma, (id, v, len) => { u.push(v); big.push({ id, u: +v.toFixed(3), len: +len.toFixed(1) }); }, gust);
+      u.sort((a, b) => a - b);
+      const q = (p: number) => +(u[Math.min(u.length - 1, Math.floor(p * u.length))] ?? 0).toFixed(4);
+      return { n: u.length, p50: q(0.5), p90: q(0.9), p95: q(0.95), p97: q(0.97), p98: q(0.98), p99: q(0.99), max: q(1), top: big.sort((a, b) => b.u - a.u).slice(0, 8) };
+    },
+    /** Calibration: run the rule for `seconds` of synthetic wind time at `base` (no rendering); returns break counts. */
+    stormTest: (seconds: number, base: number, sigma = params.breakage.strength) => {
+      const keepT = wind.t, keepB = wind.base, tw0 = sim.loadStats.twigs, li0 = sim.loadStats.limbs;
+      const ev: { t: number; nodes: number; leaves: number }[] = [];
+      let maxU = 0;
+      for (let t = 0; t < seconds; t += 0.25) {
+        wind.t = keepT + t; wind.base = base;
+        const e = sim.windLoad(0.25, wind, sigma);
+        if (sim.loadStats.max > maxU) maxU = sim.loadStats.max;
+        if (e) ev.push({ t, nodes: e.nodeIds.length, leaves: e.leaves });
+      }
+      wind.t = keepT; wind.base = keepB;
+      return { twigs: sim.loadStats.twigs - tw0, limbs: sim.loadStats.limbs - li0, maxU: +maxU.toFixed(3), events: ev };
+    },
   });
 }

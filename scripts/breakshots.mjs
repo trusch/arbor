@@ -45,7 +45,7 @@ const setup = async (mode, extra = '') => {
     window.__pick = best.id;
     return { pick: best, nodes: n, H: +H.toFixed(2), quality: A.params.sky.quality, leafShader: A.leaves.mode?.shader ?? '?', gl: A.stage.renderer.getContext().getParameter(A.stage.renderer.getContext().VERSION) };
   }, [HOUR, PICK]);
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(7000); // settle: three re-keys the bark program by itself a few seconds in
   return { ctx, page, errs, info };
 };
 const progs = (page) => page.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, calls: A.stage.renderer.info.render.calls, fe: A.frameErrors(), debris: A.debris.state, stats: A.debris.stats, leafInst: A.leaves.mesh.count }; });
@@ -56,12 +56,13 @@ try {
       const { ctx, page, errs, info } = await setup(mode);
       const before = await progs(page);
       const tim = await page.evaluate(() => new Promise((res) => {
-        const A = window.__arbor, iv = []; let last = 0, t0 = 0, n = 0, pre = [];
+        const A = window.__arbor, iv = [], js = []; let last = 0, t0 = 0, n = 0, pre = [];
         const tick = (t) => {
           if (last) (t0 ? iv : pre).push(+(t - last).toFixed(1));
           last = t; n++;
+          if (t0) js.push(+(performance.now() - t).toFixed(1)); // app frame JS time (its rAF callback runs before this one)
           if (n === 40) { A.breakLimb(window.__pick); t0 = t; }
-          if (t0 && t - t0 > 1000) return res({ pre: pre.slice(-30), iv });
+          if (t0 && t - t0 > 1000) return res({ pre: pre.slice(-30), iv, js });
           requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
@@ -70,13 +71,13 @@ try {
       await page.waitForTimeout(9000);
       const rest = await progs(page);
       const med = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
-      console.log(JSON.stringify({ mode, throttle: THROTTLE, gpu: GPU, info, preMedianMs: med(tim.pre), preMaxMs: Math.max(...tim.pre), breakMaxMs: Math.max(...tim.iv), breakFirst5: tim.iv.slice(0, 5), breakMedianMs: med(tim.iv),
+      console.log(JSON.stringify({ mode, throttle: THROTTLE, gpu: GPU, info, preMedianMs: med(tim.pre), preMaxMs: Math.max(...tim.pre), breakMaxMs: Math.max(...tim.iv), breakFirst5: tim.iv.slice(0, 5), jsFirst5: tim.js.slice(0, 5), jsMax: Math.max(...tim.js), breakMedianMs: med(tim.iv),
         programs: { before: before.programs, flight: during.programs, rest: rest.programs }, calls: { before: before.calls, flight: during.calls, rest: rest.calls },
-        buildMs: +rest.stats.lastBuildMs.toFixed(2), limbLeaves: rest.stats.lastLeaves, limbNodes: rest.stats.lastNodes, flight: during.debris, rest: rest.debris, fe: rest.fe, errs }));
+        buildMs: +rest.stats.lastBuildMs.toFixed(2), takeMs: +rest.stats.takeMs.toFixed(2), tubeMs: +rest.stats.tubeMs.toFixed(2), limbLeaves: rest.stats.lastLeaves, limbNodes: rest.stats.lastNodes, flight: during.debris, rest: rest.debris, fe: rest.fe, errs }));
       await ctx.close();
     }
     // (2) Shots.
-    {
+    if (E.SHOTS !== '0') {
       const { ctx, page } = await setup(mode);
       await page.screenshot({ path: `shots/${PRE}-${mode}-0-before.png` });
       await page.evaluate(() => { window.__bt = performance.now(); window.__arbor.breakLimb(window.__pick); });
