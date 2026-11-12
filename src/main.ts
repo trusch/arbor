@@ -16,6 +16,7 @@ import { wind } from './wind';
 import { weather, type WeatherEvent } from './weather';
 import { Rain } from './render/rain';
 import { Debris } from './render/debris';
+import { LeafFall } from './render/leaffall';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -232,6 +233,28 @@ function breakagePost(dt: number) {
   debris.barkShadow = branches.mesh.castShadow;
   debris.frame(dt, wind);
 }
+/** Falling leaves and litter (`leaffall.ts`): live leaf geometry + material instance (PowerVR rule); ?leaffall=0. */
+const leafFall = diag.leaffall && diag.leaves ? new LeafFall(leaves) : null;
+if (leafFall) {
+  stage.scene.add(leafFall.group);
+  debris.leafSink = (m, c, n) => leafFall.adopt(m, c, n, weather.violence);
+}
+let leafFallSimT = 0;
+/** After `breakagePost` (twig leaves are handed over there). */
+function leafFallFrame(dt: number) {
+  if (!leafFall) return;
+  if (sim.time < leafFallSimT) leafFall.clear(); // tree was reset
+  leafFallSimT = sim.time;
+  leafFall.group.visible = params.leaffall.enabled;
+  if (!params.leaffall.enabled) return;
+  tel.phase('leaf fall', true);
+  const low = params.sky.quality === 'Low', n = stage.atmo.night;
+  leafFall.frame(dt, wind, {
+    violence: weather.violence, dusk: 4 * n * (1 - n), simLeaves: sim.leaves.length, min: sim.bboxMin, max: sim.bboxMax, low,
+    scale: low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.5 : 1,
+    rate: params.leaffall.rate, litter: params.leaffall.litter,
+  });
+}
 const sunDirTmp = new THREE.Vector3();
 const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
@@ -446,6 +469,7 @@ function frame(now: number) {
   redraw(elapsed, dt);
   meadowFrame(dt);
   breakagePost(dt);
+  leafFallFrame(dt);
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -508,6 +532,7 @@ requestAnimationFrame(loop);
   weather,
   rain,
   debris,
+  leafFall,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {

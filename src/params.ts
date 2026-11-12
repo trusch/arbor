@@ -147,6 +147,14 @@ export interface ArborParams {
   seed: {
     seed: number;
   };
+  /** Falling leaves and litter (`src/render/leaffall.ts`). Own group; read live. */
+  leaffall: {
+    enabled: boolean;
+    /** Multiplier on how often leaves let go (calm and storm). */
+    rate: number;
+    /** Multiplier on the litter cap (0 = landed leaves vanish). */
+    litter: number;
+  };
   /** Weather (`src/weather.ts`): 'auto' = storms on a slow random schedule, 'calm' = never, 'storm' = held storm. */
   weather: {
     event: 'auto' | 'calm' | 'storm';
@@ -186,6 +194,7 @@ export function defaultParams(): ArborParams {
     leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    leaffall: { enabled: true, rate: 1, litter: 1 },
     weather: { event: 'auto', lightning: true },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
@@ -206,7 +215,7 @@ export function paramsSignature(p: ArborParams): number {
   const groups = p as unknown as Record<string, Record<string, unknown>>;
   let sig = 0, i = 1;
   for (const g in groups) {
-    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather') continue;
+    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather' || g === 'leaffall') continue;
     const grp = groups[g];
     for (const f in grp) {
       const v = grp[f];

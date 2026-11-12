@@ -71,6 +71,8 @@ export class Debris {
 
   /** Whether limb wood casts shadow-map shadows (mirrors the tree's branch mesh; off on the canopy-decal path). */
   barkShadow = true;
+  /** Falling-leaf system (`leaffall.ts`): when set, twig leaves go there instead of the local twig path. */
+  leafSink: ((matrices: Float32Array, colours: Float32Array, n: number) => void) | null = null;
 
   constructor(private bark: THREE.Material, private leaves: Leaves) {
     this.group.name = 'debris';
@@ -91,6 +93,13 @@ export class Debris {
     this.stats.takeMs = performance.now() - t0;
     const live = this.leaves.mesh;
     let lm: THREE.InstancedMesh | null = null;
+    if (ev.nodeIds.length < TWIG_NODES && this.leafSink) {
+      this.leafSink(lv.matrices, lv.colours, lv.n);
+      this.stats.twigs++; this.stats.leafFalls += lv.n;
+      this.stats.lastBuildMs = performance.now() - t0;
+      this.stats.lastLeaves = lv.n; this.stats.lastNodes = ev.nodeIds.length;
+      return;
+    }
     if (lv.n > 0) {
       lm = new THREE.InstancedMesh(live.geometry, live.material, lv.n);
       (lm.instanceMatrix.array as Float32Array).set(lv.matrices);

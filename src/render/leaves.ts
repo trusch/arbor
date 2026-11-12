@@ -543,6 +543,18 @@ export class Leaves {
     return { n: k, matrices, colours };
   }
 
+  /** Falling leaves: copy the world matrix and colour of one drawn instance (u in 0..1 picks it). False when it is hidden. */
+  sampleInstance(u: number, m: Float32Array, c: Float32Array): boolean {
+    const n = this.mesh.count;
+    if (n <= 0) return false;
+    const i = Math.min(n - 1, Math.floor(u * n)), a = this.mesh.instanceMatrix.array as Float32Array, o = i * 16;
+    if (a[o] * a[o] + a[o + 1] * a[o + 1] + a[o + 2] * a[o + 2] < 1e-8) return false;
+    for (let j = 0; j < 16; j++) m[j] = a[o + j];
+    const col = this.mesh.instanceColor!.array as Float32Array;
+    c[0] = col[i * 3]; c[1] = col[i * 3 + 1]; c[2] = col[i * 3 + 2];
+    return true;
+  }
+
   /** Per-node moved verdict for one follow sweep: 1 when the node left its reference state by more than the epsilons. */
   private markMoved(sim: TreeSim) {
     const nodes = sim.nodes, N = nodes.length;

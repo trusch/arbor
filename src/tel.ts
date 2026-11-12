@@ -31,6 +31,8 @@ export function diagSwitches(q: URLSearchParams) {
     rain: !off('rain'),
     /** ?breakage=0: no wind breakage (limbs never snap; dev hooks still work). */
     breakage: !off('breakage'),
+    /** ?leaffall=0: no falling leaves and no leaf litter. */
+    leaffall: !off('leaffall'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),
