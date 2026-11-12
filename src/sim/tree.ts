@@ -91,11 +91,20 @@ export interface WindLike { base: number; dirX: number; dirZ: number; gust(x: nu
 const A_LEAF = 0.012, C_WOOD = 1, G_W = 0.08;
 /**
  * Strength scale: `params.breakage.strength` 1 = this sigma, the 98th percentile of u at gust 1.0 on the t = 90 default
- * oak (scripts/breakcalib.mjs): a 120 s full-strength storm (wind.base 1.0) takes about 4 twigs and 1 small limb.
+ * oak (scripts/breakcalib.mjs): a 120 s full-strength storm (wind.base 1.0) takes about 5 twigs (4 twigs and 1 small limb before the sag-righting change, p98 now 0.94).
  */
 export const SIGMA_REF = 9.94e6;
 
 const UP: [number, number, number] = [0, 1, 0];
+/**
+ * Length scale (m) over which wood recovers from the sag it inherits from its parent segment (gravitropic righting).
+ * Without it a long unbranched shoot (twig radius however long: the pipe model sees one tip) carried the summed bend
+ * of its whole path, reached the 1.3 rad cap and hung as a bare whip to the ground while its rest pose, where growth
+ * decisions are made, was still inside the crown.
+ */
+const SAG_RIGHT = 3;
+/** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
+const DOWN_MAX = 0.3;
 
 export class TreeSim {
   nodes: TreeNode[] = [];
@@ -361,6 +370,14 @@ export class TreeSim {
     // Limit the per-segment turn so branches bend smoothly and never loop back.
     const l = Math.hypot(dx, dy, dz) || 1;
     dx /= l; dy /= l; dz /= l;
+    // No plunging shoots: without a weeping habit the wanted direction is never steeper than DOWN_MAX below the
+    // horizontal (attractors below a high branch used to pull order 1 shoots metres straight down through the crown).
+    // A shoot that starts steeper (bud angle on a descending parent) levels out at maxTurn per segment.
+    const minDy = -(DOWN_MAX + (1 - DOWN_MAX) * Math.min(1, Math.max(0, g.weeping)));
+    if (dy < minDy) {
+      const h = Math.hypot(dx, dz);
+      if (h > 1e-4) { const f = Math.sqrt(1 - minDy * minDy) / h; dx *= f; dz *= f; dy = minDy; }
+    }
     const maxT = (g.maxTurn * Math.PI) / 180;
     const cosA = Math.max(-1, Math.min(1, dx * n.dx + dy * n.dy + dz * n.dz));
     const ang = Math.acos(cosA);
@@ -622,6 +639,8 @@ export class TreeSim {
     }
     // Forward pass: accumulate sag (bend toward -Y) and world positions.
     const gk = p.growth.gravity * p.growth.sag * 4e-6;
+    // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).
+    const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
     const mn = this.bboxMin, mx = this.bboxMax;
     mn[0] = mn[1] = mn[2] = Infinity;
     mx[0] = mx[1] = mx[2] = -Infinity;
@@ -634,7 +653,9 @@ export class TreeSim {
         const pn = nodes[nd.parent];
         const h = Math.hypot(nd.dx, nd.dz);
         const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
-        nd.sag = Math.min(1.3, pn.sag + bend);
+        // Inherited sag fades over SAG_RIGHT metres of wood (each new internode rights itself toward the direction it
+        // grew in), so droop is local to the loaded stretch instead of piling up along the whole path to the cap.
+        nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
         bendDown(nd.dx, nd.dy, nd.dz, nd.sag, this.tmp);
         nd.wdx = this.tmp[0]; nd.wdy = this.tmp[1]; nd.wdz = this.tmp[2];
         nd.wx = pn.wx + nd.wdx * nd.len;
