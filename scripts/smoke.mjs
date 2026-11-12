@@ -224,6 +224,26 @@ try {
       `set=${t1.g.toFixed(3)} after3s=${t2.g.toFixed(3)} scrollTop=${t2.sy} autoFrame=${t2.af} sheetTop=${box.y.toFixed(0)}`);
     await ctx.close();
   }
+  // PowerVR program gate (audit 3.1): the meadow reuses the safe leaf program, so the phone compiles exactly as many
+  // programs with it as without it (?meadow=0), at noon and at night.
+  {
+    const progs = async (q) => {
+      const { ctx, mp, merr } = await phone(q);
+      const out = {};
+      for (const [name, hour] of [['noon', 13], ['night', 23.5]]) {
+        out[name] = await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true; return 0; }, hour).catch(() => 0);
+        await mp.waitForTimeout(1500);
+        out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, grass: A.meadow?.counts.grass ?? 0, flowers: A.meadow?.counts.flowers ?? 0, meshes: A.meadow?.counts.meshes ?? 0, leaves: A.leaves.mesh.count, fe: A.frameErrors() }; });
+      }
+      await ctx.close();
+      return { ...out, errs: merr.length };
+    };
+    const on = await progs('?speed=0'), off = await progs('?speed=0&meadow=0');
+    check('phone: meadow adds no shader program (noon and night), tufts and flowers drawn',
+      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.grass > 1000 && on.noon.flowers > 100 && off.noon.grass === 0 && on.noon.leaves > 0
+        && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
+      `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);

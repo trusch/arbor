@@ -237,3 +237,108 @@ export function makeGrassTexture(): THREE.Texture {
   t.anisotropy = 8;
   return t;
 }
+
+/** Meadow tuft map (WP3): a fan of tapering grass blades from the bottom centre, darker at the base, lighter tips. Dense low down so far mips keep a clump. */
+export function makeTuftTexture(seed = 5): THREE.Texture {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const rng = new Rng(seed);
+  g.lineCap = 'round';
+  // Back-to-front: darker blades first.
+  const N = 64;
+  for (let k = 0; k < N; k++) {
+    const f = k / N; // 0 back .. 1 front
+    const x0 = S * (0.5 + rng.range(-0.3, 0.3) * (0.4 + 0.6 * rng.next()));
+    const lean = rng.range(-1, 1);
+    const hgt = S * (0.35 + 0.6 * Math.pow(rng.next(), 0.8)) * (k % 7 === 0 ? 1 : 0.85);
+    const x1 = x0 + lean * hgt * 0.42, y1 = S - hgt;
+    const cx = x0 + lean * hgt * 0.08, cy = S - hgt * 0.6;
+    const v = rng.next(), dry = rng.next() < 0.14;
+    const w0 = S * (0.028 + 0.022 * rng.next());
+    // Tapered blade: several strokes of decreasing width along the quadratic.
+    const seg = 10;
+    for (let s = 0; s < seg; s++) {
+      const a = s / seg, b = (s + 1) / seg;
+      const P = (t: number) => [(1 - t) * (1 - t) * x0 + 2 * t * (1 - t) * cx + t * t * x1, (1 - t) * (1 - t) * S + 2 * t * (1 - t) * cy + t * t * y1];
+      const [ax, ay] = P(a), [bx, by] = P(b);
+      const lt = 0.72 + 0.22 * f + 0.3 * a; // lighter toward the tip and for front blades
+      const r = dry ? 118 + 30 * v : 62 + 46 * v, gg = dry ? 150 + 30 * v : 104 + 52 * v, bl = dry ? 40 + 12 * v : 38 + 22 * v;
+      g.strokeStyle = `rgb(${Math.min(255, r * lt) | 0},${Math.min(255, gg * lt) | 0},${Math.min(255, bl * lt) | 0})`;
+      g.lineWidth = Math.max(1.6, w0 * (1 - 0.82 * a));
+      g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+export type FlowerKind = 'daisy' | 'buttercup' | 'poppy' | 'clover';
+/** Wildflower map (WP3): a few stems with side-on flower heads in the upper part, small leaves low down. */
+export function makeFlowerTexture(kind: FlowerKind): THREE.Texture {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const rng = new Rng({ daisy: 21, buttercup: 22, poppy: 23, clover: 24 }[kind]);
+  g.lineCap = 'round';
+  const stems = kind === 'clover' ? 4 : 3;
+  for (let k = 0; k < stems; k++) {
+    const x0 = S * (0.5 + rng.range(-0.12, 0.12));
+    const hgt = S * (kind === 'clover' ? rng.range(0.45, 0.7) : rng.range(0.62, 0.86));
+    const x1 = S * (0.5 + (k - (stems - 1) / 2) * 0.24 + rng.range(-0.05, 0.05)), y1 = S - hgt;
+    g.strokeStyle = `rgb(${70 + rng.next() * 20},${112 + rng.next() * 25},${44})`;
+    g.lineWidth = 3.4;
+    g.beginPath(); g.moveTo(x0, S); g.quadraticCurveTo(x0, S - hgt * 0.5, x1, y1); g.stroke();
+    // A leaf or two on the stem.
+    for (let l = 0; l < 2; l++) {
+      const t = rng.range(0.15, 0.5), lx = x0 + (x1 - x0) * t * t, ly = S - hgt * t, sd = rng.next() < 0.5 ? -1 : 1;
+      g.fillStyle = `rgb(${66 + rng.next() * 24},${118 + rng.next() * 24},46)`;
+      g.beginPath(); g.ellipse(lx + sd * 7, ly - 3, 8, 3.2, sd * -0.5, 0, Math.PI * 2); g.fill();
+    }
+    const R = S * (kind === 'poppy' ? 0.115 : kind === 'daisy' ? 0.1 : kind === 'clover' ? 0.075 : 0.07);
+    g.save();
+    g.translate(x1, y1);
+    g.rotate(rng.range(-0.35, 0.35));
+    if (kind === 'daisy') {
+      // Seen three-quarter on: an ellipse of white rays around a yellow dome.
+      for (let p = 0; p < 14; p++) {
+        const a = (p / 14) * Math.PI * 2;
+        g.fillStyle = p % 2 ? '#f6f4ea' : '#e6e6dc';
+        g.beginPath(); g.ellipse(Math.cos(a) * R * 0.62, Math.sin(a) * R * 0.4, R * 0.5, R * 0.2, Math.atan2(Math.sin(a) * 0.65, Math.cos(a)), 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = '#e8b422';
+      g.beginPath(); g.ellipse(0, -R * 0.05, R * 0.36, R * 0.27, 0, 0, Math.PI * 2); g.fill();
+    } else if (kind === 'buttercup') {
+      for (let p = 0; p < 5; p++) {
+        const a = (p / 5) * Math.PI * 2 + 0.3;
+        g.fillStyle = p % 2 ? '#f4cf1c' : '#e9bd10';
+        g.beginPath(); g.ellipse(Math.cos(a) * R * 0.5, Math.sin(a) * R * 0.38, R * 0.55, R * 0.42, a, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = '#c99408';
+      g.beginPath(); g.arc(0, 0, R * 0.25, 0, Math.PI * 2); g.fill();
+    } else if (kind === 'poppy') {
+      for (let p = 0; p < 4; p++) {
+        const a = (p / 4) * Math.PI * 2 + 0.6;
+        g.fillStyle = p % 2 ? '#d8301c' : '#c4220f';
+        g.beginPath(); g.ellipse(Math.cos(a) * R * 0.42, Math.sin(a) * R * 0.3, R * 0.72, R * 0.58, a, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = '#2a1410';
+      g.beginPath(); g.ellipse(0, 0, R * 0.26, R * 0.2, 0, 0, Math.PI * 2); g.fill();
+    } else {
+      // Clover head: a ball of small pink-mauve florets.
+      for (let p = 0; p < 26; p++) {
+        const a = rng.next() * Math.PI * 2, rr = Math.sqrt(rng.next()) * R;
+        const v = rng.next();
+        g.fillStyle = `rgb(${196 + v * 40},${120 + v * 50},${170 + v * 40})`;
+        g.beginPath(); g.ellipse(Math.cos(a) * rr, Math.sin(a) * rr * 0.9, R * 0.3, R * 0.2, a, 0, Math.PI * 2); g.fill();
+      }
+    }
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

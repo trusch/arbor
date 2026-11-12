@@ -25,6 +25,8 @@ export function diagSwitches(q: URLSearchParams) {
     safe,
     shadows: !off('shadows'),
     leaves: !off('leaves'),
+    /** ?meadow=0: no grass tufts / wildflowers (WP3). */
+    meadow: !off('meadow'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),

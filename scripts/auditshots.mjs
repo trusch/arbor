@@ -35,10 +35,10 @@ async function run(name, ctxOpts, hours) {
       if (t === 35 && hn !== hours[0][1]) continue;
       await page.evaluate((hh) => { const a = window.__arbor; a.params.camera.autoFrame = true; a.params.sky.timeOfDay = hh; a.fastForward(0); }, h);
       await page.waitForTimeout(900);
-      await page.screenshot({ path: `shots/audit-${name}-t${t}-${hn}-framed.png` });
+      await page.screenshot({ path: `shots/${process.env.SHOT_PREFIX ?? "audit"}-${name}-t${t}-${hn}-framed.png` });
       await page.evaluate(closeup);
       await page.waitForTimeout(700);
-      await page.screenshot({ path: `shots/audit-${name}-t${t}-${hn}-close.png` });
+      await page.screenshot({ path: `shots/${process.env.SHOT_PREFIX ?? "audit"}-${name}-t${t}-${hn}-close.png` });
     }
   }
   console.log(name, await page.evaluate(() => { const r = window.__arbor.stage.renderer, gl = r.getContext(), e = gl.getExtension('WEBGL_debug_renderer_info'); return [gl.getParameter(e.UNMASKED_RENDERER_WEBGL), window.__arbor.params.sky.quality, window.__arbor.leaves.mode]; }));
