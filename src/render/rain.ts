@@ -13,7 +13,7 @@ const LAYERS = [
   // distance m, tile size m, fall speed m/s, opacity
   { d: 16, tile: 7, speed: 9, alpha: 0.5 },
   { d: 6, tile: 3.2, speed: 10, alpha: 0.4 },
-  { d: 2, tile: 1.7, speed: 11, alpha: 0.22 },
+  { d: 2.2, tile: 1.7, speed: 11, alpha: 0.17 },
 ];
 const BOLT_DIST = 110, BOLT_H = 80;
 
@@ -93,7 +93,7 @@ export class Rain {
     const geo = new THREE.PlaneGeometry(1, 1);
     LAYERS.forEach((L, i) => {
       const m = decal.clone();
-      m.map = tex(streakTexture(11 + i * 7, i === 0 ? 260 : i === 1 ? 130 : 60, i === 0 ? 30 : i === 1 ? 44 : 62, i === 0 ? 0.9 : i === 1 ? 1.0 : 1.1), true);
+      m.map = tex(streakTexture(11 + i * 7, i === 0 ? 260 : i === 1 ? 130 : 60, i === 0 ? 30 : i === 1 ? 42 : 46, i === 0 ? 0.9 : i === 1 ? 1.0 : 1.1), true);
       m.color.setRGB(1, 1, 1);
       const mesh = new THREE.Mesh(geo, m);
       mesh.renderOrder = 6 + i;

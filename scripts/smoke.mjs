@@ -227,13 +227,13 @@ try {
   // PowerVR program gate (audit 3.1): the meadow reuses the safe leaf program, so the phone compiles exactly as many
   // programs with it as without it (?meadow=0), at noon and at night.
   {
-    const progs = async (q) => {
+    const progs = async (q, flash = false) => {
       const { ctx, mp, merr } = await phone(q);
       const out = {};
       for (const [name, hour] of [['noon', 13], ['night', 23.5]]) {
-        out[name] = await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true; return 0; }, hour).catch(() => 0);
+        out[name] = await mp.evaluate(([h, fl]) => { const A = window.__arbor; if (fl) A.weather.holdFlash = true; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true; return 0; }, [hour, flash]).catch(() => 0);
         await mp.waitForTimeout(1500);
-        out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, grass: A.meadow?.counts.grass ?? 0, flowers: A.meadow?.counts.flowers ?? 0, meshes: A.meadow?.counts.meshes ?? 0, leaves: A.leaves.mesh.count, fe: A.frameErrors() }; });
+        out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, grass: A.meadow?.counts.grass ?? 0, flowers: A.meadow?.counts.flowers ?? 0, meshes: A.meadow?.counts.meshes ?? 0, leaves: A.leaves.mesh.count, fe: A.frameErrors(), rain: A.rain ? A.rain.sheets.filter((m) => m.visible).length : 0, bolt: !!A.rain?.bolt.visible, cloud: A.weather.cloud }; });
       }
       await ctx.close();
       return { ...out, errs: merr.length };
@@ -243,6 +243,21 @@ try {
       on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.grass > 1000 && on.noon.flowers > 100 && off.noon.grass === 0 && on.noon.leaves > 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
+    // Same gate for the storm (WP9): rain sheets and the bolt are clones of the canopy-shadow decal material, everything
+    // else is uniforms and intensities. Forced storm with a held flash (bolt drawn) against the calm run above.
+    const storm = await progs('?speed=0&weather=storm', true), dry = await progs('?speed=0&weather=storm&rain=0', true);
+    check('phone: storm adds no shader program (noon and night), rain sheets and bolt drawn',
+      storm.noon.programs === on.noon.programs && storm.night.programs === on.night.programs && storm.noon.rain >= 2 && storm.night.rain >= 2 && storm.noon.bolt && storm.night.bolt
+        && storm.noon.cloud === 1 && on.noon.cloud === 0 && on.noon.rain === 0 && dry.noon.rain === 0 && !dry.noon.bolt && dry.noon.programs === on.noon.programs
+        && storm.noon.fe === 0 && storm.night.fe === 0 && storm.errs === 0 && dry.errs === 0,
+      `storm ${JSON.stringify(storm)} calm ${JSON.stringify(on)} rain=0 ${JSON.stringify(dry)}`);
+    // Lightning off means no flash and no bolt at all, even when one is forced.
+    {
+      const { ctx, mp } = await phone('?speed=0&weather=storm&lightning=0');
+      const r = await mp.evaluate(async () => { const A = window.__arbor; A.weather.holdFlash = true; A.weather.strike(); await new Promise((res) => setTimeout(res, 600)); return { flash: A.weather.flash, bolt: A.weather.bolt.on, vis: !!A.rain?.bolt.visible, lightning: A.params.weather.lightning }; });
+      await ctx.close();
+      check('phone: lightning off gives no flash and no bolt', r.lightning === false && r.flash === 0 && !r.bolt && !r.vis, JSON.stringify(r));
+    }
   }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
