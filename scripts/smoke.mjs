@@ -631,6 +631,47 @@ try {
     await ctx.close();
   }
 
+  // Start screen (src/start.ts): a plain load proposes a random tree and holds growth; deep links and ?start=0 bypass it.
+  {
+    const sp = await browser.newPage({ viewport: { width: 411, height: 777 } });
+    const serr = [];
+    sp.on('pageerror', (e) => serr.push(e.message));
+    await sp.goto(url, { waitUntil: 'domcontentloaded' });
+    await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await sp.waitForTimeout(2500);
+    const st = () => sp.evaluate(() => { const A = window.__arbor, el = document.getElementById('arbor-start'), P = A.params;
+      return { shown: !!el && !el.hidden && getComputedStyle(el).opacity === '1', t: A.sim.time, nodes: A.sim.nodes.length, paused: P.time.paused, intro: A.stage.intro, name: document.getElementById('arbor-start-name')?.textContent,
+        seed: P.seed.seed, form: P.leaves.form, h: P.crown.height, r: P.crown.radius, hue: P.leaves.hue, want: A.start()?.proposal?.values ?? null, fe: A.frameErrors() }; });
+    const s0 = await st();
+    const box = await sp.evaluate(() => { const c = document.querySelector('.as-card').getBoundingClientRect(), g = document.getElementById('arbor-start-go').getBoundingClientRect(); return { bottom: c.bottom, top: c.top, goH: g.height, goBottom: g.bottom }; });
+    check('start screen: shown on a plain load, nothing grows behind it, fits a 411x777 phone', s0.shown && s0.t === 0 && s0.nodes <= 2 && s0.paused && s0.intro && s0.fe === 0 && serr.length === 0 && box.top > 60 && box.bottom <= 777 && box.goH >= 48,
+      `${s0.name} t=${s0.t} nodes=${s0.nodes} card ${box.top.toFixed(0)}..${box.bottom.toFixed(0)} go ${box.goH}px`);
+    const seen = new Set([JSON.stringify(s0.want)]);
+    for (let i = 0; i < 3; i++) { await sp.click('#arbor-start-reroll'); await sp.waitForTimeout(150); seen.add(JSON.stringify((await st()).want)); }
+    const s1 = await st();
+    check('start screen: reroll draws a new proposal each time and still holds growth', seen.size === 4 && s1.seed !== s0.seed && s1.t === 0 && s1.shown, `${seen.size} distinct of 4, now ${s1.name}`);
+    await sp.click('.as-form[data-form="ginkgo"]');
+    await sp.evaluate(() => { const i = document.querySelector('[data-start-param="crown.height"]'); i.value = '9'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+    await sp.click('#arbor-start-go');
+    await sp.waitForTimeout(2500);
+    const s2 = await st();
+    const el = await sp.evaluate(() => ({ hidden: document.getElementById('arbor-start').hidden, pill: !!document.getElementById('arbor-panel-open')?.offsetParent }));
+    check('start screen: start grows the shown tree (proposal + choices), the screen leaves and the panel is back',
+      s2.t > 1 && s2.nodes > s1.nodes && !s2.paused && !s2.intro && el.hidden && el.pill && s2.seed === s1.seed && s2.form === 'ginkgo' && s2.h === 9 && s2.r === s1.r && s2.hue === s1.hue && s2.fe === 0 && serr.length === 0,
+      `t=${s2.t.toFixed(1)} nodes=${s2.nodes} seed=${s2.seed} form=${s2.form} h=${s2.h} ${serr[0] ?? ''}`);
+    const by = [];
+    for (const q of ['?start=0', '?preset=Weeping%20willow&t=5', '?seed=7', '?gravity=1']) {
+      await sp.goto(url + q, { waitUntil: 'domcontentloaded' });
+      await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+      await sp.waitForTimeout(1200);
+      by.push({ q, ...(await st()), el: await sp.evaluate(() => !!document.getElementById('arbor-start')) });
+    }
+    check('start screen: ?start=0 and deep links go straight to growing with unrandomised parameters',
+      by.every((b) => !b.el && !b.paused && !b.intro && b.t > 0.3 && b.r === (b.q.includes('willow') ? 4.6 : 3.6) && b.hue === (b.q.includes('willow') ? 0.22 : 0.27)) && by[0].seed === 1 && by[0].form === 'oak' && by[0].h === 6.5 && by[1].form === 'willow' && by[1].t >= 5 && by[2].seed === 7,
+      by.map((b) => `${b.q}: el=${b.el} t=${b.t.toFixed(1)} seed=${b.seed} form=${b.form}`).join(' | '));
+    await sp.close();
+  }
+
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.
   const SOAK = Number(process.env.SOAK_S ?? 120);
   if (SOAK > 0) {
