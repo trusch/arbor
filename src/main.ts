@@ -553,7 +553,7 @@ function frame(now: number) {
   meadowFrame(dt);
   breakagePost(dt);
   leafFallFrame(dt);
-  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId }); }
+  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;

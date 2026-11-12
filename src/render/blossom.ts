@@ -29,7 +29,7 @@ export const BLOSSOM_END = OPEN0 + OPEN_SPREAD + HOLD0 + HOLD_SPREAD + SHED + 0.
 export const BLOSSOM_PEAK = 0.056;
 /** A fixed "south": clusters on this side of the crown open first. */
 const SOUTH_X = 0.5, SOUTH_Z = 0.866;
-const CAP_LOW = 3600, CAP_HIGH = 7000;
+const CAP_LOW = 3000, CAP_HIGH = 7000;
 /** Record per cluster: anchor xyz, X col, Y col, N col (each x size), tOpen, tFall, shade, anchor share along Y. */
 const R = 16;
 const MAX_EMIT = 6;
@@ -49,7 +49,7 @@ interface BlossomForm {
 
 /** Per leaf form. The oak gets a showy apple-like blossom on purpose (a real oak has catkins nobody would notice). */
 const FORMS: Record<string, BlossomForm | null> = {
-  oak: { kind: 'flower', petal: '#fff6f6', edge: '#f7b6cc', centre: '#e8c24a', bud: [1.0, 0.5, 0.62], amount: 1, size: 0.4, fall: '#fbe4ea' },
+  oak: { kind: 'flower', petal: '#fbe3ea', edge: '#ee8fb2', centre: '#e0b040', bud: [1.0, 0.5, 0.62], amount: 0.7, size: 0.36, fall: '#fbe4ea' },
   round: { kind: 'flower', petal: '#ffffff', edge: '#f1ead8', centre: '#d9c050', bud: [0.92, 0.95, 0.8], amount: 0.9, size: 0.38, fall: '#f6f2e6' },
   maple: { kind: 'flower', petal: '#d9e36a', edge: '#b4c63e', centre: '#8c9a2c', bud: [0.95, 0.72, 0.5], amount: 0.8, size: 0.3, fall: '#cfdc6a' },
   willow: { kind: 'catkin', petal: '#dfe26a', edge: '#b9c048', centre: '#f1ec9a', bud: [0.85, 0.9, 0.8], amount: 0.8, size: 0.42, fall: '#d6da70' },
@@ -84,7 +84,11 @@ export function blossomCanvas(f: BlossomForm, S = 256): HTMLCanvasElement {
   const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
   if (f.kind === 'flower') {
     // Seven five-petalled flowers, overlapping, the later ones on top.
-    const at: [number, number, number][] = [[0.27, 0.27, 0.2], [0.73, 0.25, 0.19], [0.5, 0.5, 0.23], [0.24, 0.72, 0.2], [0.76, 0.74, 0.2], [0.5, 0.17, 0.15], [0.5, 0.83, 0.16], [0.12, 0.48, 0.13], [0.88, 0.5, 0.13]];
+    const at: [number, number, number][] = [];
+    for (let t = 0; t < 400 && at.length < 13; t++) {
+      const x = 0.13 + 0.74 * rnd(), y = 0.13 + 0.74 * rnd(), r = 0.105 + 0.035 * rnd();
+      if (Math.hypot(x - 0.5, y - 0.5) < 0.44 && at.every((p) => Math.hypot(p[0] - x, p[1] - y) > (p[2] + r) * 0.8)) at.push([x, y, r]);
+    }
     for (const [x, y, r] of at) {
       const cx = x * S, cy = y * S, rr = r * S, a0 = rnd() * 6.283;
       for (let k = 0; k < 5; k++) {
@@ -93,11 +97,10 @@ export function blossomCanvas(f: BlossomForm, S = 256): HTMLCanvasElement {
         g.translate(cx + Math.cos(a) * rr * 0.52, cy + Math.sin(a) * rr * 0.52);
         g.rotate(a);
         const gr = g.createRadialGradient(-rr * 0.35, 0, 0, 0, 0, rr * 0.62);
-        gr.addColorStop(0, f.edge); gr.addColorStop(0.45, f.petal); gr.addColorStop(1, f.petal);
+        gr.addColorStop(0, f.edge); gr.addColorStop(0.5, f.petal); gr.addColorStop(0.85, f.petal); gr.addColorStop(1, f.edge);
         g.fillStyle = gr;
         g.beginPath(); g.ellipse(0, 0, rr * 0.56, rr * 0.42, 0, 0, 6.283); g.fill();
-        g.strokeStyle = f.edge; g.lineWidth = S / 170; g.globalAlpha = 0.55; g.stroke(); g.globalAlpha = 1;
-        g.restore();
+                g.restore();
       }
       g.fillStyle = f.centre;
       g.beginPath(); g.arc(cx, cy, rr * 0.2, 0, 6.283); g.fill();
@@ -164,6 +167,10 @@ export interface BlossomEnv {
   wind: Wind;
   violence: number;
   formId: string;
+  /** Scene lights and camera (the colours compensate the Lambert term, like the safe leaf bake). */
+  sun: THREE.DirectionalLight;
+  hemi: THREE.HemisphereLight;
+  cam: THREE.Vector3;
 }
 
 const pm = new Float32Array(MAX_EMIT * 16), pc = new Float32Array(MAX_EMIT * 3);
@@ -274,7 +281,7 @@ export class Blossom {
       let n = 0;
       for (let id = 1; id < nodes.length && n < this.cap; id++) {
         const nd = nodes[id];
-        if (!nd.leafy || nd.born > tSpring || nd.light < 0.06 || chains[nd.chain]?.pruned) continue;
+        if (!nd.leafy || nd.order === 0 || nd.born > tSpring || nd.light < 0.06 || chains[nd.chain]?.pruned) continue;
         const lw = sm(0.06, 0.28, nd.light);
         if (h01(id * 7 + 1) >= share * (0.25 + 0.75 * lw)) continue;
         if (pass === 0) { elig++; continue; }
@@ -327,10 +334,20 @@ export class Blossom {
     this.simT = sim.time;
     const n = this.n, rec = this.rec, D = e.D, ND = this.node;
     const a = mesh.instanceMatrix.array as Float32Array;
-    const ck = Math.round(ph * 800) + Math.round(e.night * 20) * 1000;
+    const ck = Math.round(ph * 800) + Math.round(e.night * 20) * 1000 + Math.floor(performance.now() / 500) * 1e5;
     const paintCol = ck !== this.colKey;
     this.colKey = ck;
-    const col = mesh.instanceColor!.array as Float32Array, dim = (e.low ? 0.8 : 0.72) * (1 - 0.5 * e.night);
+    const col = mesh.instanceColor!.array as Float32Array, dim = 0.74 * (1 - 0.5 * e.night);
+    // Lights as the Lambert shader of the card will see them.
+    const S = e.sun, Hm = e.hemi, si = S.intensity, hi = Hm.intensity;
+    let lx = S.position.x - S.target.position.x, ly = S.position.y - S.target.position.y, lz = S.position.z - S.target.position.z;
+    const ll = Math.hypot(lx, ly, lz) || 1; lx /= ll; ly /= ll; lz /= ll;
+    const sr = S.color.r * si, sg = S.color.g * si, sb = S.color.b * si;
+    const kr = Hm.color.r * hi, kg = Hm.color.g * hi, kb = Hm.color.b * hi, gr = Hm.groundColor.r * hi, gg = Hm.groundColor.g * hi, gb = Hm.groundColor.b * hi;
+    // Wanted light: the hemisphere half-way, pulled 60 % to neutral (a blossom in shade is not sky blue), plus the sun.
+    const hl = 0.15 * (kr + gr) + 0.3 * (kg + gg) + 0.05 * (kb + gb);
+    const wr = 0.6 * hl + 0.2 * (kr + gr), wg = 0.6 * hl + 0.2 * (kg + gg), wb = 0.6 * hl + 0.2 * (kb + gb);
+    const camX = e.cam.x, camY = e.cam.y, camZ = e.cam.z;
     let drawn = 0, open = 0, nf = 0;
     for (let i = 0, o = 0, q = 0; i < n; i++, o += R, q += 16) {
       const tOpen = rec[o + 12], tFall = rec[o + 13], s = blossomScale(ph, tOpen, tFall);
@@ -348,7 +365,15 @@ export class Blossom {
       if (paintCol) {
         // Bud tint while closed, the painted colours once open, a little duller while it sheds.
         const k = sm(tOpen - 0.004, tOpen + OPENING, ph), g = dim * rec[o + 14] * (1 - 0.2 * sm(tFall, tFall + SHED, ph)), b = f.bud;
-        col[i * 3] = g * (b[0] + (1 - b[0]) * k); col[i * 3 + 1] = g * (b[1] + (1 - b[1]) * k); col[i * 3 + 2] = g * (b[2] + (1 - b[2]) * k);
+        // The face the camera sees: what Lambert adds there, and what it should get (sun term softened: no black backs).
+        const il = 1 / (Math.hypot(rec[o + 9], rec[o + 10], rec[o + 11]) || 1);
+        let nx = rec[o + 9] * il, ny = rec[o + 10] * il, nz = rec[o + 11] * il;
+        if (nx * (camX - rec[o]) + ny * (camY - rec[o + 1]) + nz * (camZ - rec[o + 2]) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        const ndl = Math.max(0, nx * lx + ny * ly + nz * lz), hw = 0.5 + 0.5 * ny, want = 0.24 + 0.4 * ndl + 0.14 * hw;
+        const cr = Math.min(6, (wr + sr * want) / (gr + (kr - gr) * hw + sr * ndl + 1e-4));
+        const cg = Math.min(6, (wg + sg * want) / (gg + (kg - gg) * hw + sg * ndl + 1e-4));
+        const cb = Math.min(6, (wb + sb * want) / (gb + (kb - gb) * hw + sb * ndl + 1e-4));
+        col[i * 3] = g * cr * (b[0] + (1 - b[0]) * k); col[i * 3 + 1] = g * cg * (b[1] + (1 - b[1]) * k); col[i * 3 + 2] = g * cb * (b[2] + (1 - b[2]) * k);
       }
     }
     mesh.count = n; mesh.visible = drawn > 0;
@@ -362,7 +387,7 @@ export class Blossom {
     if (fall && f.fall && !season.jumped && nf + open > 0) {
       const w = e.wind, cxz = ND[nf > 0 ? this.falling[0] : 0] >= 0 ? rec : rec;
       const g0 = w.base > 1e-3 ? w.gust(cxz[0], cxz[2]) / w.base : 0, g3 = g0 * g0 * g0;
-      const rate = Math.min(1.5, e.amount) * (e.low ? 26 : 70) * (Math.min(1, nf / 120) + 0.03 * Math.min(1, open / 400) * (1 + 6 * g3)) * (0.45 + 1.5 * g3 + 2.5 * e.violence);
+      const rate = Math.min(1.5, e.amount) * (e.low ? 40 : 90) * (Math.min(1, nf / 120) + 0.03 * Math.min(1, open / 400) * (1 + 6 * g3)) * (0.45 + 1.5 * g3 + 2.5 * e.violence);
       this.acc = Math.min(MAX_EMIT, this.acc + rate * dt);
       const free = Math.max(0, (fall.stats.airCap || 0) - fall.counts.air);
       let k = 0;
