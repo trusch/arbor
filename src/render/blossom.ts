@@ -49,12 +49,12 @@ interface BlossomForm {
 
 /** Per leaf form. The oak gets a showy apple-like blossom on purpose (a real oak has catkins nobody would notice). */
 const FORMS: Record<string, BlossomForm | null> = {
-  oak: { kind: 'flower', petal: '#fbe3ea', edge: '#ee8fb2', centre: '#e0b040', bud: [1.0, 0.5, 0.62], amount: 0.7, size: 0.36, fall: '#fbe4ea' },
+  oak: { kind: 'flower', petal: '#fbe3ea', edge: '#ee8fb2', centre: '#e0b040', bud: [1.0, 0.5, 0.62], amount: 0.7, size: 0.36, fall: '#f9cfdc' },
   round: { kind: 'flower', petal: '#ffffff', edge: '#f1ead8', centre: '#d9c050', bud: [0.92, 0.95, 0.8], amount: 0.9, size: 0.38, fall: '#f6f2e6' },
-  maple: { kind: 'flower', petal: '#d9e36a', edge: '#b4c63e', centre: '#8c9a2c', bud: [0.95, 0.72, 0.5], amount: 0.8, size: 0.3, fall: '#cfdc6a' },
-  willow: { kind: 'catkin', petal: '#dfe26a', edge: '#b9c048', centre: '#f1ec9a', bud: [0.85, 0.9, 0.8], amount: 0.8, size: 0.42, fall: '#d6da70' },
-  birch: { kind: 'catkin', petal: '#d8c877', edge: '#a8904a', centre: '#efe3a4', bud: [0.8, 0.7, 0.55], amount: 0.6, size: 0.36, fall: '#cdbd72' },
-  ginkgo: { kind: 'catkin', petal: '#cfdc8a', edge: '#a3b860', centre: '#e9f0b8', bud: [0.85, 0.9, 0.7], amount: 0.35, size: 0.26, fall: null },
+  maple: { kind: 'flower', petal: '#c3d048', edge: '#93a82a', centre: '#6f7c1e', bud: [0.95, 0.72, 0.5], amount: 0.38, size: 0.28, fall: '#c2cf55' },
+  willow: { kind: 'catkin', petal: '#c9cf45', edge: '#98a830', centre: '#e0dc70', bud: [0.85, 0.9, 0.8], amount: 0.3, size: 0.34, fall: '#c6cc55' },
+  birch: { kind: 'catkin', petal: '#c4ad55', edge: '#917a38', centre: '#ddc97a', bud: [0.8, 0.7, 0.55], amount: 0.28, size: 0.36, fall: '#cdbd72' },
+  ginkgo: { kind: 'catkin', petal: '#cfdc8a', edge: '#a3b860', centre: '#e9f0b8', bud: [0.85, 0.9, 0.7], amount: 0.2, size: 0.26, fall: null },
   // Conifer: none.
   spray: null,
   // Alien forms: turquoise stars on the frond, pale gold on the crimson ring, cold blue-white lights on the spiral.
@@ -283,7 +283,8 @@ export class Blossom {
     let elig = 0;
     for (let pass = 0; pass < 2; pass++) {
       // Pass 0 counts, pass 1 fills (thinned evenly by hash when the cap would be exceeded).
-      const keep = pass === 0 ? 1 : Math.min(1, this.cap / Math.max(1, elig * per));
+      // The cap is the oak at amount 1; sparser forms and a lower amount get a share of it.
+      const keep = pass === 0 ? 1 : Math.min(1, (this.cap * Math.min(1, (e.amount * f.amount) / 0.7)) / Math.max(1, elig * per));
       let n = 0;
       for (let id = 1; id < nodes.length && n < this.cap; id++) {
         const nd = nodes[id];
@@ -423,9 +424,10 @@ export class Blossom {
     if (fall && f.fall && !season.jumped && nf + open > 0) {
       const w = e.wind, cxz = ND[nf > 0 ? this.falling[0] : 0] >= 0 ? rec : rec;
       const g0 = w.base > 1e-3 ? w.gust(cxz[0], cxz[2]) / w.base : 0, g3 = g0 * g0 * g0;
-      const rate = Math.min(1.5, e.amount) * (e.low ? 40 : 90) * (Math.min(1, nf / 120) + 0.03 * Math.min(1, open / 400) * (1 + 6 * g3)) * (0.45 + 1.5 * g3 + 2.5 * e.violence);
+      const rate = Math.min(1.5, e.amount) * (e.low ? 60 : 110) * (Math.min(1, nf / 120) + 0.03 * Math.min(1, open / 400) * (1 + 6 * g3)) * (0.45 + 1.5 * g3 + 2.5 * e.violence);
       this.acc = Math.min(MAX_EMIT, this.acc + rate * dt);
-      const free = Math.max(0, (fall.stats.airCap || 0) - fall.counts.air);
+      // Petals are small: they may fill the air up to twice the leaf cap (the air mesh has 512 slots).
+      const free = Math.max(0, Math.min(480, 2 * (fall.stats.airCap || 0)) - fall.counts.air);
       let k = 0;
       while (this.acc >= 1 && k < MAX_EMIT && k < free) {
         this.acc -= 1;
@@ -434,7 +436,7 @@ export class Blossom {
         else for (let t = 0; t < 4 && i < 0; t++) { const c = Math.floor(this.rnd() * n); if (a[c * 16 + 15] !== 0) i = c; }
         if (i < 0) continue;
         // A petal: random pose, a few centimetres, somewhere in the cluster.
-        const q = k * 16, s = 0.075 + 0.05 * this.rnd();
+        const q = k * 16, s = 0.075 + 0.04 * this.rnd();
         let ax = this.rnd() - 0.5, ay = this.rnd() - 0.5, az = this.rnd() - 0.5;
         const al = Math.hypot(ax, ay, az) || 1; ax /= al; ay /= al; az /= al;
         let bx = ay, by = -ax, bz = 0;
