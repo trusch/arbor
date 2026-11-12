@@ -38,7 +38,7 @@ export const bloom = (ph: number, k: number) => sm(0.035 + 0.03 * k, 0.17 + 0.04
 /** Colour factor of the ground material (multiplies its summer colour), written into `out` [r, g, b]. */
 export function groundSeason(ph: number, out: number[]): number[] {
   const L = landSeason(ph, tmp), f = L.fresh, s = L.straw, w = L.winter;
-  out[0] = (1 + 0.12 * f + 1.05 * s + 0.75 * w) * (1 - 0.2 * w);
+  out[0] = (1 + 0.12 * f + 1.05 * s + 0.95 * w) * (1 - 0.2 * w);
   out[1] = (1 + 0.12 * f + 0.1 * s - 0.1 * w) * (1 - 0.2 * w);
   out[2] = (1 - 0.25 * f - 0.3 * s + 0.2 * w) * (1 - 0.2 * w);
   return out;
@@ -48,8 +48,11 @@ const tmp: LandSeason = { fresh: 0, straw: 0, winter: 0, height: 1 };
 export interface TreeSeason {
   /** Size factor of the leafed crown card (0 = not drawn). */
   leaf: number;
-  /** The bare crown card is drawn. */
+  /** The bare crown card is drawn, at this size factor (small behind a crown still in leaf: it only supplies trunk and limbs). */
   bare: boolean;
+  bareSize: number;
+  /** Evergreen: summer state all year. */
+  evergreen: boolean;
   /** Spring flush 0..1 (pale yellow-green). */
   pale: number;
   /** Autumn turn 0..1 and drying on the twig 0..1. */
@@ -68,10 +71,12 @@ export interface TreeSeason {
 export function treeSeason(ph: number, hA: number, hB: number, g: number, bush: boolean, out: TreeSeason): TreeSeason {
   const u3 = fr(hA * 13.7 + hB * 5.3), u4 = fr(hA * 91.7 + hB * 3.9);
   out.shade = fr(hB * 7.31 + hA * 3.1); out.brown = fr(hA * 57.3) < 0.22;
-  if (u4 < (bush ? 0.05 : 0.07 + 0.5 * sm(0.66, 0.8, g))) { out.leaf = 1; out.bare = false; out.pale = out.turn = out.dry = 0; return out; }
+  if (u4 < (bush ? 0.05 : 0.07 + 0.5 * sm(0.66, 0.8, g))) { out.leaf = 1; out.bare = false; out.evergreen = true; out.bareSize = 1; out.pale = out.turn = out.dry = 0; return out; }
+  out.evergreen = false;
   const tOn = 0.02 + 0.05 * hB + 0.03 * g, tTurn = 0.485 + 0.1 * u3 + 0.05 * g, tFall = tTurn + 0.08 + 0.07 * hA;
   out.leaf = ph >= tFall || ph <= tOn ? 0 : (0.72 + 0.28 * sm(tOn, tOn + 0.05, ph)) * (1 - 0.18 * sm(tFall - 0.03, tFall, ph));
-  out.bare = ph < tOn + 0.05 || ph > tFall - 0.04;
+  out.bare = ph < tOn + 0.05 || ph > (bush ? tFall - 0.04 : tTurn + 0.004);
+  out.bareSize = ph > tTurn && ph < tFall ? 0.62 + 0.38 * sm(tFall - 0.06, tFall - 0.015, ph) : 1;
   out.pale = 1 - sm(tOn + 0.03, tOn + 0.2, ph);
   out.turn = sm(tTurn, tTurn + 0.06, ph);
   out.dry = sm(tTurn + 0.06, tFall, ph);

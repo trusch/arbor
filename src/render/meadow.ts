@@ -46,11 +46,11 @@ function mapMean(map: THREE.Texture): number[] {
 const NIGHT_DIM = { grass: 1.1, flower: 0.7, scenery: 0.9 };
 /** Seasonal grass targets as linear RGB of unit luminance x a luminance gain: spring flush, autumn straw, winter straw-grey-green. */
 const unitLum = (hex: number, gain: number) => { const c = new THREE.Color(hex), l = (0.3 * c.r + 0.59 * c.g + 0.11 * c.b) / gain; return [c.r / l, c.g / l, c.b / l]; };
-const G_FRESH = unitLum(0x7cc23c, 1.18), G_STRAW = unitLum(0xd8c070, 1.45), G_WINTER = unitLum(0x9a9870, 0.9);
+const G_FRESH = unitLum(0x7cc23c, 1.18), G_STRAW = unitLum(0xd8c070, 1.45), G_WINTER = unitLum(0xa39c6e, 0.92);
 /** Bloom order of the species in KINDS (see `bloom`). */
 const BLOOM_K = [0, 0.5, 2, 1];
 /** Instance colour of the bare winter crowns (their map is already grey-brown). */
-const BARE_GAIN = [0.95, 0.88, 0.7];
+const BARE_GAIN = [0.95, 0.86, 0.62];
 
 export interface MeadowLight {
   /** Toward the key light, world space, normalised. */
@@ -124,7 +124,7 @@ export class Meadow {
   private key = '';
   private seasonKey = -1;
   private LS: LandSeason = { fresh: 0, straw: 0, winter: 0, height: 1 };
-  private TS: TreeSeason = { leaf: 1, bare: false, pale: 0, turn: 0, dry: 0, shade: 0, brown: false };
+  private TS: TreeSeason = { leaf: 1, bare: false, bareSize: 1, evergreen: false, pale: 0, turn: 0, dry: 0, shade: 0, brown: false };
   private trunkKey = '';
   /** Far-meadow and scenery patches depend on the light only, not on the crown shade or the trunk: they are large
    *  (thousands of instances each), so they are rebaked only when the light key changes. */
@@ -272,6 +272,8 @@ export class Meadow {
       mesh.matrixAutoUpdate = false;
       mesh.userData.gbufferMaterial = mm.gb;
       mesh.count = 0;
+      // Bare crowns draw before the leafed cards they share a plane with, so a crown in leaf covers its own skeleton.
+      if (li >= SCN + 3) mesh.renderOrder = -1;
       this.group.add(mesh);
       // Flower patches copy the shear of a mid-field grass phase with the same fast-ripple phase.
       this.patches.push({ mesh, data, n, flower, far: isFar, scenery, phase: isFar ? ((li - NEAR) * 5 + 2) % PHASES : flower ? ((li - PHASES) % 2 ? 16 : 13) : li,
@@ -470,13 +472,14 @@ export class Meadow {
       let w = data[o + 3], h = data[o + 4];
       const rt = Math.hypot(x - tx, z - tz);
       if (seasonal && !pt.scenery && !pt.flower) h *= LS.height;
-      if (pt.scenery) treeSeason(ph, hA, hB, vnoise(x / 130 + 2.2, z / 130 - 4.1), pt.mesh.material === this.bushMat || pt.mesh.material === this.bushBare, TS);
+      const bushy = pt.mesh.material === this.bushMat || pt.mesh.material === this.bushBare;
+      if (pt.scenery) treeSeason(ph, hA, hB, vnoise(x / 130 + 2.2, z / 130 - 4.1), bushy, TS);
       // Crown shade: straight up decides how the plant grows, toward the sun decides how it is lit right now.
       // Both come from the blurred shade field, so neighbouring tufts get neighbouring values (a gradient, not squares).
       const up = pt.far ? 1 : this.shade(this.shUp, x, z);
       const ts = pt.far ? 1 : (0.38 + 0.34 * L.night) + (0.62 - 0.34 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
-      if (pt.scenery) { show = pt.bare ? TS.bare : TS.leaf > 0; if (!pt.bare) { w *= TS.leaf; h *= TS.leaf; } }
+      if (pt.scenery) { show = pt.bare ? TS.bare : TS.leaf > 0; const k = pt.bare ? TS.bareSize : TS.leaf; w *= k; h *= k; }
       else if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
         if (blm < 1 && (hB * 17.3) % 1 >= blm) show = false; // not in bloom at this time of year
@@ -488,17 +491,21 @@ export class Meadow {
         h *= near ? 0.8 + 0.5 * hB : 0.55 + 0.45 * up;
         if (near) w *= 0.75;
       }
+      // A turned tree's trunk would take the crown's autumn gain (red): the leafed card sinks by its trunk and the bare card behind it shows the wood.
+      const sink = pt.scenery && !pt.bare && !bushy ? 0.16 * TS.turn : 0;
       const c = Math.cos(rot), s = Math.sin(rot), q = i * 16;
       if (!show) w = h = 0;
       M[q] = c * w; M[q + 1] = 0; M[q + 2] = -s * w; M[q + 3] = 0;
       M[q + 4] = (hB - 0.5) * 0.3 * h; M[q + 5] = h; M[q + 6] = (hA - 0.5) * 0.3 * h; M[q + 7] = 0; // slight static lean per tuft
       M[q + 8] = s * w; M[q + 9] = 0; M[q + 10] = c * w; M[q + 11] = 0;
-      M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h; M[q + 14] = z; M[q + 15] = 1;
+      M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h - sink * h; M[q + 14] = z; M[q + 15] = 1;
       // Colour: tint variation (macro drifts of lush / dry, per-tuft jitter) x shade.
       const col = this.col;
       if (pt.bare) col.setRGB(BARE_GAIN[0], BARE_GAIN[1], BARE_GAIN[2]).multiplyScalar(0.72 + 0.4 * hA);
       else if (pt.scenery) {
         col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.7 + 0.5 * hA).multiply(this.tintCol.setRGB(1 + 0.25 * (hB - 0.5), 1, 1 - 0.3 * (hB - 0.5)));
+        // Evergreens keep their leaves and read darker against the bare and turned woods (exactly the summer colour in summer).
+        if (TS.evergreen && seasonal) col.multiplyScalar(1 - 0.42 * Math.max(LS.winter, LS.straw, 0.6 * LS.fresh));
         if (TS.pale > 0) { col.r *= 1 + 0.5 * TS.pale; col.g *= 1 + 0.3 * TS.pale; col.b *= 1 - 0.3 * TS.pale; }
         if (TS.turn > 0) {
           // Autumn: the drawn colour (instance x map mean) goes to this tree's own shade (russet .. orange .. yellow, a share dull brown), then dries.

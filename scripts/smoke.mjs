@@ -473,12 +473,13 @@ try {
     const on = await phone('?speed=0&weather=calm'), off = await phone('?speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
-    const st = {}, offP = [];
+    const st = {}, offP = [], land = {};
     for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
       await on.mp.evaluate((dd) => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
       await settle(1);
       st[name] = await read(on.mp);
       offP.push((await read(off.mp)).programs);
+      land[name] = await on.mp.evaluate(() => window.__arbor.meadow.probe());
     }
     const o0 = await read(off.mp);
     // Hold: time runs, the date does not. Then released: the year moves on.
@@ -494,6 +495,15 @@ try {
     check('phone: seasons add no shader program in any season (vs seasons off at the same moments)',
       progs.every((p, i) => p === offP[i]) && Object.values(st).every((r) => r.fe === 0) && on.merr.length === 0 && off.merr.length === 0,
       `on ${progs.join('/')} off ${offP.join('/')} errs ${on.merr.length}+${off.merr.length}`);
+    // Landscape (far trees, hedgerows, woods, tufts, flowers) follows the same year, data-only (programs are covered by the gate above).
+    {
+      const near = (a, b) => a.rgb.every((v, i) => Math.abs(v - b.rgb[i]) < 0.02 * Math.max(v, b.rgb[i]) + 1e-3), rg = (a) => a.rgb[0] / a.rgb[1], S = land.summer, P = land.peak, W = land.winter;
+      check('phone: the landscape follows the year (far trees turn and stand bare, grass yellows and dulls, flowers come and go) and returns to the same summer',
+        S.bare.n === 0 && S.trees.n > 3000 && S.flowers.n > 100 && rg(P.trees) > 1.5 * rg(S.trees) && P.trees.n > 1000 && W.bare.n > 3000 && W.trees.n > 100 && W.trees.n < 0.3 * S.trees.n && W.flowers.n === 0
+          && rg(P.tufts) > 1.2 * rg(S.tufts) && !near(W.tufts, S.tufts) && !near(W.tufts, P.tufts) && land.flush.flowers.n < S.flowers.n
+          && near(land.summer2.trees, S.trees) && near(land.summer2.tufts, S.tufts) && land.summer2.bare.n === 0 && land.summer2.trees.n === S.trees.n,
+        `trees r/g summer ${rg(S.trees).toFixed(2)} peak ${rg(P.trees).toFixed(2)} winter leafed ${W.trees.n} bare ${W.bare.n} of ${S.trees.n}; tufts summer ${S.tufts.rgb} peak ${P.tufts.rgb} winter ${W.tufts.rgb} summer2 ${land.summer2.tufts.rgb}; flowers ${land.flush.flowers.n}/${S.flowers.n}/${P.flowers.n}/${W.flowers.n}`);
+    }
     check('phone: scrubbing the year changes leaf colour and drawn leaves (flush, green, turning, peak, thinning, bare, flush again) and returns to the same summer',
       st.summer.n > 5000 && Math.abs(st.summer.n - o0.n) < 0.02 * o0.n && st.flush.n < 0.9 * st.summer.n && st.flush.n > 0 && st.flush.lum > st.summer.lum
         && st.summer.rg < 0.8 && st.turning.rg > st.summer.rg && st.peak.rg > 1.5 && st.peak.rg > st.turning.rg && st.peak.n < st.summer.n
