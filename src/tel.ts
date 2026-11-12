@@ -33,6 +33,8 @@ export function diagSwitches(q: URLSearchParams) {
     breakage: !off('breakage'),
     /** ?sway=0: wood and leaves do not move with the wind (rest pose). */
     sway: !off('sway'),
+    /** ?leaffall=0: no falling leaves and no leaf litter. */
+    leaffall: !off('leaffall'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),

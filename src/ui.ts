@@ -328,7 +328,8 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     toggle('sky.meadow', 'Meadow', 'Grass tufts and wildflowers around the tree.'),
     h('h3', { class: 'ap-sub', text: 'Weather' }),
     weatherRow,
-    toggle('weather.lightning', 'Lightning', 'Bright flashes during a storm. Turn off if flashing light bothers you.'));
+    toggle('weather.lightning', 'Lightning', 'Bright flashes during a storm. Turn off if flashing light bothers you.'),
+    toggle('leaffall.enabled', 'Falling leaves', 'Leaves let go now and then, are torn off in a storm and collect on the grass.'));
 
   // ---- Advanced ----
   const raw = (key: string, name: string, min: number, max: number, step: number): HTMLElement => {
