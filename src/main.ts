@@ -14,6 +14,7 @@ import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
 import { weather, type WeatherEvent } from './weather';
+import { season } from './season';
 import { Rain } from './render/rain';
 import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
@@ -39,7 +40,7 @@ function loadPreset(name: string) {
   presetName = name;
   const src = presetParams(name) as unknown as Record<string, Record<string, unknown>>;
   const dst = params as unknown as Record<string, Record<string, unknown>>;
-  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather') Object.assign(dst[g], src[g]);
+  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather' && g !== 'season') Object.assign(dst[g], src[g]);
   params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
   bumpParams();
   automation.drift = {};
@@ -267,7 +268,21 @@ function leafFallFrame(dt: number) {
   if (!params.leaffall.enabled) return;
   tel.phase('leaf fall', true);
   const low = params.sky.quality === 'Low', n = stage.atmo.night;
+  // Autumn drop: leaves `Leaves.follow` saw pass their fall date this frame fly on through the one falling-leaf system.
+  const dq = leaves.drops;
+  if (dq.n > 0) {
+    const free = Math.max(0, (leafFall.stats.airCap || 0) - leafFall.counts.air);
+    leafFall.adopt(dq.m, dq.c, Math.min(dq.n, free), weather.violence);
+    dq.n = 0;
+  }
+  {
+    // Share of the falling crown leaves that get a flying copy, so the air count peaks near its cap at the height of
+    // the drop instead of sitting on it all autumn (the rest just leave the crown); gusts and storms bring more at once.
+    const g = wind.base > 1e-3 ? wind.gust((sim.bboxMin[0] + sim.bboxMax[0]) / 2, (sim.bboxMin[2] + sim.bboxMax[2]) / 2) / wind.base : 0;
+    leaves.dropChance = season.active ? Math.min(1, ((leafFall.stats.airCap || 110) / 1600) * params.leaffall.rate * (0.35 + 1.3 * g * g * g + 3 * weather.violence)) : 0;
+  }
   leafFall.frame(dt, wind, {
+    keep: season.litterKeep,
     violence: weather.violence, dusk: 4 * n * (1 - n), simLeaves: sim.leaves.length, min: sim.bboxMin, max: sim.bboxMax, low,
     scale: low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.5 : 1,
     rate: params.leaffall.rate, litter: params.leaffall.litter,
@@ -304,6 +319,7 @@ const LEAF_BUDGET_MS = 3;
 const LEAF_FOLLOW_MS = 2.5;
 let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
+let leafPhase = -1;
 let leafRestart = false;
 let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
 const leafBakeDir = new THREE.Vector3(), camDirTmp = new THREE.Vector3();
@@ -361,6 +377,12 @@ function redraw(time: number, dt: number, force = false) {
       leavesDirty = true; leafRestart = true;
     }
   }
+  // Seasons: leaf colours and the instance set follow the year phase (a pass per 0.004 of the year, or at once after
+  // a jump: scrub, hold, on/off), sizes are re-placed by `follow` (at once after a jump).
+  if (season.jumped) {
+    formPlaced = leaves.follow(sim, params, stage.camera.position, Infinity, 0) || formPlaced;
+    leavesDirty = true; leafPhase = season.phase;
+  } else if (season.active && Math.abs(season.phase - leafPhase) > 0.004) { leavesDirty = true; leafPhase = season.phase; }
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
   // Leaf pass inputs. Growth: every 0.12 s (diag rebuildHz overrides), 1 s once topology is stable for 5 s. Light grid,
@@ -517,6 +539,7 @@ function frame(now: number) {
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else if (paramsVersion() !== structPV) sim.updateStructure(0); // paused: only after a params edit
   structPV = paramsVersion();
+  season.update(sim.time, params.season);
   weatherFrame(dt);
   tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
@@ -544,7 +567,7 @@ function frame(now: number) {
     frames = 0;
     fpsT = 0;
     const hr = params.sky.timeOfDay, hh = Math.floor(hr), mm = Math.floor((hr - hh) * 60);
-    overlay.textContent = `${presetName} · age ${sim.time.toFixed(0)} s · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    overlay.textContent = `${presetName} · ${params.season.on ? `${season.name}, year ${season.year}` : `age ${sim.time.toFixed(0)} s`} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     hud.textContent = `t ${sim.time.toFixed(1)}s  nodes ${sim.nodes.length}  leaves ${leaves.mesh.count}  free attractors ${sim.attractorCount}  ${fps.toFixed(0)} fps`;
   }
 }
@@ -591,6 +614,7 @@ requestAnimationFrame(loop);
   sway,
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   leafFall,
+  season,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {

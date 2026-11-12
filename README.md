@@ -18,6 +18,31 @@ The leaf is a choice, not only the oak: oak, willow, birch, maple, ginkgo, a rou
 
 How it is built: each form is painted into the same square leaf map and carries its own proportions (a willow leaf is long and narrow, a ginkgo fan is wide), which stretch the leaf card together with the existing blade-shape value. A change of form writes new pixels into the texture the leaf material already uses and new card proportions into the instance matrices; the material, its shader program and the geometry stay the same, on the phone path and on desktop (`npm run smoke` switches through all forms on both and checks the program count: phone 9, desktop High unchanged). Falling leaves, litter and broken limbs use the same material, so they change with the crown; leaves already on the ground keep their old proportions. `PORT=5440 node scripts/formshots.mjs` renders every form on the real GPU (contact sheet, framed view, close-up, picker).
 
+## Seasons
+
+The tree lives through a year. One year takes 5 minutes at normal growth speed (the growth-speed control scales it; the
+day and night cycle is separate), and a new tree starts in spring.
+
+- Spring: the crown flushes over a few weeks, leaves unfolding small and pale yellow-green, then darkening.
+- Summer: full green.
+- Autumn: leaves turn one by one, the top and the sunlit outside of the crown first, the interior last, each to its own
+  shade (oak russet, gold and brown; maple red and orange; birch and ginkgo yellow; willow pale yellow). Then they fall
+  through the falling-leaf system, thinning the crown until it is bare, and collect as litter that fades over winter.
+- Winter: a bare crown. Wood that grew meanwhile flushes next spring.
+
+The "Seasons" tab has: seasons on/off, a "Time of year" slider that scrubs the year (the season is named), "Hold this
+season", and the length of a year. The current season and year show in the corner readout and the panel header.
+Every seasonal look is computed from the date alone, so scrubbing to a date shows the same tree as waiting for it.
+
+Which trees have seasons is decided by the leaf form: oak, willow, birch, maple, ginkgo and the round leaf are
+deciduous; the cypress spray is evergreen; the alien frond turns violet and sheds; the Crimson world ring turns gold
+for the cold months and keeps its leaves; the bioluminescent spiral has no seasons.
+
+URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
+winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
+(frame cost summer vs autumn). Not built yet: blossom, growth tied to the year, the meadow's seasons, snow, seasonal
+weather, sun height by season.
+
 ## Controls panel
 
 `src/ui.ts` + `src/ui.css` (own DOM, no lil-gui). Desktop: side panel on the right, open by default. Phone (≤ 700 px wide): a "Controls" button opens a bottom sheet (47% of the height) that the chevron collapses again. `?panel=open|closed`, `?tab=grow|shape|colours|sky|more`, `?nogui=1`.

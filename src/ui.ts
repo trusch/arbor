@@ -1,4 +1,5 @@
 import './ui.css';
+import { season, seasonName } from './season';
 import type { ArborParams } from './params';
 import { type Automation, numericPaths } from './automation';
 import { LEAF_FORMS, leafFormCanvas } from './render/textures';
@@ -350,6 +351,19 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   const weatherRow = h('div', { class: 'ap-weather' },
     h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-weather', text: 'Weather' }), wSel),
     h('div', { class: 'ap-row-actions' }, btn('Storm now', () => a.stormNow(), '', 'arbor-storm-now'), wInfo));
+  // ---- Seasons ----
+  const seasonInfo = h('p', { class: 'ap-note', id: 'arbor-season-info', role: 'status' });
+  syncers.push(() => {
+    const on = get('season.on') as boolean, d = num('season.date');
+    seasonInfo.textContent = on ? `Now: ${seasonName(d).toLowerCase()} of year ${season.year}${get('season.hold') ? ', held' : ''}.` : 'Seasons are off: it is always summer.';
+  });
+  tab('seasons', 'Seasons',
+    toggle('season.on', 'Seasons', 'The tree lives through the year: fresh leaves in spring, colour and leaf fall in autumn, bare in winter.'),
+    seasonInfo,
+    slider({ key: 'season.date', name: 'Time of year', help: 'Drag to jump to any time of the year. Starts in spring, ends in winter.', min: 0, max: 0.999, step: 0.001, big: true, fmt: (v) => seasonName(v) }),
+    toggle('season.hold', 'Hold this season', 'Stay at this time of year. The tree keeps growing.'),
+    slider({ key: 'season.yearLength', name: 'Length of a year', help: 'How long one year takes at normal growth speed. Growth speed makes the year pass faster or slower too.', min: 60, max: 1200, step: 30, fmt: (v) => `${(v / 60).toFixed(1)} min` }),
+    note('Evergreen trees (the cypress) keep their leaves. Trees from other worlds follow their own calendar.'));
   tab('sky', 'Sky',
     slider(SKY[0]),
     toggle('sky.cycle', 'Day and night cycle', 'Let the sun move on its own.'),
@@ -442,7 +456,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     const g = a.growth();
     const state = g.grown ? 'Fully grown' : p.time.paused || p.time.speed <= 0 ? 'Paused' : 'Growing';
     if (stState.textContent !== state) stState.textContent = state;
-    stSub.textContent = `${g.nodes.toLocaleString('en')} twigs · age ${g.age.toFixed(0)} s`;
+    stSub.textContent = `${g.nodes.toLocaleString('en')} twigs · ${get('season.on') ? `${season.name.toLowerCase()}, year ${season.year}` : `age ${g.age.toFixed(0)} s`}`;
     grownBar.hidden = !g.grown;
     root.classList.toggle('grown', g.grown);
     const paused = p.time.paused;
