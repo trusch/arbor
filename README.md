@@ -125,3 +125,11 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 ## Meadow and wind
 
 The ground around the tree is a meadow of grass tufts and wildflowers (daisy, buttercup, poppy, clover) that lean and ripple as gusts travel across it. It is thinner and shorter under the crown and fades out with distance. Controls: Sky tab, "Wind" slider and "Meadow" switch (`sky.wind`, `sky.meadow`); `?meadow=0` removes it (also linked on `diag.html`). All wind comes from `src/wind.ts`. On the phone path the meadow reuses the leaf shader program (no new program is compiled; `npm run smoke` checks this). `node scripts/meadowshots.mjs [hour]` takes a trunk-base shot and measures the motion between two frames 0.5 s apart.
+
+## Breakage
+
+In storm-strength wind (`wind.base` above 0.6; the Wind slider near its top, or a storm) overloaded twigs and small limbs snap. A limb gives at its junction, hinges down for a moment while still attached, comes free, falls with its leaves, lands and stays on the ground; its leaves dry to brown over a minute. The tree keeps a stub. At most 3 fallen limbs are kept (older ones shrink away); twigs under 12 segments fall as loose leaves only.
+
+- Rule (`TreeSim.windLoad`, 4 Hz): load ratio `u = M / S` at every chain base, wind moment (gust² × leaf and wood sail area × lever arm across the wind) plus a gravity moment, against `S = strength × SIGMA_REF × r³`. Damage accumulates while `u > 1` and the limb breaks when it passes 1. `params.breakage.strength` (default 1) scales the wood strength, `params.breakage.enabled` and `?breakage=0` turn the rule off.
+- By hand: `__arbor.breakLimb()` (random order-1 limb), `__arbor.breakLimb('big')`, `__arbor.breakLimb(nodeId)`, `__arbor.breakTwig()`. `__arbor.debris.state` / `.stats` show what is falling or resting.
+- Scripts (against the built app, e.g. `HOST=127.0.0.1 PORT=5401 node server/serve.mjs`): `node scripts/breakcheck.mjs URL` (sim assertions), `node scripts/breakshots.mjs URL` (frame times at the break, program counts, screenshots `shots/break-*`), `node scripts/breakcalib.mjs URL` (load-ratio distribution and 120 s storm/calm runs).
