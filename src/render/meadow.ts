@@ -492,7 +492,7 @@ export class Meadow {
         if (near) w *= 0.75;
       }
       // A turned tree's trunk would take the crown's autumn gain (red): the leafed card sinks by its trunk and the bare card behind it shows the wood.
-      const sink = pt.scenery && !pt.bare && !bushy ? 0.16 * TS.turn : 0;
+      const sink = pt.scenery && !pt.bare && !bushy ? 0.2 * TS.turn : 0;
       const c = Math.cos(rot), s = Math.sin(rot), q = i * 16;
       if (!show) w = h = 0;
       M[q] = c * w; M[q + 1] = 0; M[q + 2] = -s * w; M[q + 3] = 0;
@@ -510,7 +510,7 @@ export class Meadow {
         if (TS.turn > 0) {
           // Autumn: the drawn colour (instance x map mean) goes to this tree's own shade (russet .. orange .. yellow, a share dull brown), then dries.
           const dr = col.r * mmn[0], dg = col.g * mmn[1], db = col.b * mmn[2], lm = 0.3 * dr + 0.59 * dg + 0.11 * db, u = TS.shade;
-          const a = this.tintCol.setHSL(TS.brown ? 0.075 + 0.03 * u : 0.04 + 0.105 * u, (TS.brown ? 0.38 : 0.55 + 0.3 * u) * (1 - 0.4 * TS.dry), 0.5, THREE.SRGBColorSpace);
+          const a = this.tintCol.setHSL(TS.brown ? 0.075 + 0.03 * u : 0.052 + 0.093 * u, (TS.brown ? 0.38 : 0.55 + 0.3 * u) * (1 - 0.4 * TS.dry), 0.5, THREE.SRGBColorSpace);
           const k = (lm * (TS.brown ? 0.95 : 1.25 + 1.2 * u) * (1 - 0.25 * TS.dry)) / (0.3 * a.r + 0.59 * a.g + 0.11 * a.b), c = TS.turn;
           col.r = (dr + (a.r * k - dr) * c) / mmn[0]; col.g = (dg + (a.g * k - dg) * c) / mmn[1]; col.b = (db + (a.b * k - db) * c) / mmn[2];
         }
