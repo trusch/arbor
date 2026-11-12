@@ -7,6 +7,9 @@ import { Atmosphere } from './atmosphere';
 import { Post } from './post';
 import { tel } from '../tel';
 
+/** Seconds the camera takes to ease from a hand-set view back into the automatic camera. */
+const EASE_S = 3;
+
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -33,8 +36,15 @@ export class Stage {
   private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) }, tint: { value: new THREE.Vector4(0, 0, 0, 0) } };
   /** Companion-star fill light (no shadows). */
   sun2: THREE.DirectionalLight;
-  /** Seconds since the last user camera interaction (cinema resumes after IDLE). */
-  idle = 1e9;
+  /** True once the user has orbited or zoomed by hand. While set, nothing automatic (cinema, auto-rotate,
+   *  auto-frame) writes the camera; only `autoCamera()` clears it. */
+  manual = false;
+  /** Ease back into the automatic camera: seconds since `autoCamera()`, and the hand-set view it started from. */
+  private easeT = 1e9;
+  private easePos = new THREE.Vector3();
+  private easeTgt = new THREE.Vector3();
+  private prevCinema = true;
+  private prevAutoFrame = true;
   private cineT = 0;
   private cineYaw = 0;
   private cineOn = false;
@@ -75,7 +85,6 @@ export class Stage {
     this.scene.add(this.sun, this.sun.target);
     this.sun2 = new THREE.DirectionalLight(0xffffff, 0);
     this.scene.add(this.sun2, this.sun2.target);
-    this.controls.addEventListener('start', () => (this.idle = 0));
 
     this.scene.add(this.makeGround(), this.makeHills());
 
@@ -254,6 +263,24 @@ export class Stage {
     return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x3e4a34, roughness: 1, side: THREE.BackSide }));
   }
 
+  /** The user has set the view by hand: the automatic camera stays off until `autoCamera()`. */
+  takeControl() {
+    this.manual = true;
+    this.easeT = 1e9;
+  }
+
+  /** Hand the camera back to cinema / auto-rotate / auto-frame, easing from the current view over `EASE_S`. */
+  autoCamera() {
+    if (!this.manual) return;
+    this.manual = false;
+    this.easeT = 0;
+    this.easePos.copy(this.camera.position);
+    this.easeTgt.copy(this.controls.target);
+    this.center.copy(this.controls.target);
+    this.dist = this.camera.position.distanceTo(this.controls.target);
+    this.cineOn = false;
+  }
+
   /** Per-frame: advance clock, atmosphere, lights, shadow frustum, camera. snap=true jumps instead of easing. */
   frame(sim: TreeSim, p: ArborParams, dt: number, snap = false) {
     const k = p.sky;
@@ -345,8 +372,12 @@ export class Stage {
       P.grade.uniforms.saturation.value = 1.04 + 0.1 * day;
     }
 
-    this.idle += dt;
-    const cine = p.camera.cinema && this.idle > 10;
+    // Switching cinema or auto-frame on in the panel is the user asking for the automatic camera.
+    if (this.manual && ((p.camera.cinema && !this.prevCinema) || (p.camera.autoFrame && !this.prevAutoFrame))) this.autoCamera();
+    this.prevCinema = p.camera.cinema;
+    this.prevAutoFrame = p.camera.autoFrame;
+    const auto = !this.manual;
+    const cine = p.camera.cinema && auto;
     if (cine && !this.cineOn) {
       // Resume from the current view: no jump.
       const off = this.camera.position.clone().sub(this.controls.target);
@@ -354,7 +385,7 @@ export class Stage {
       p.camera.autoFrame = true;
     }
     this.cineOn = cine;
-    this.controls.autoRotate = p.camera.autoRotate && !cine;
+    this.controls.autoRotate = p.camera.autoRotate && !cine && auto;
     if (cine) {
       // Cinematic dolly: slow orbit, breathing height, occasional slow push-ins; always frames the tree.
       this.cineT += dt;
@@ -378,7 +409,7 @@ export class Stage {
         Math.max(0.35, this.center.y + Math.sin(elev) * this.dist - this.center.y * 0.35),
         this.center.z + Math.cos(this.cineYaw) * ce * this.dist,
       );
-    } else if (p.camera.autoFrame) {
+    } else if (p.camera.autoFrame && auto) {
       const want = Math.max(2.5, fit);
       // Pull back faster than we push in so a growing crown never outruns the frame.
       const kk = snap ? 1 : 1 - Math.exp(-dt * (want > this.dist ? 2.5 : 1.0));
@@ -390,6 +421,13 @@ export class Stage {
       if (snap) off.y = this.dist * 0.08;
       this.controls.target.copy(this.center);
       this.camera.position.copy(this.center).add(off);
+    }
+    if (auto && this.easeT < EASE_S) {
+      // Blend from the hand-set view into the automatic pose: smoothstep weight, exact at the end (no jump).
+      this.easeT = snap ? EASE_S : this.easeT + dt;
+      const x = Math.min(1, this.easeT / EASE_S), w = x * x * (3 - 2 * x);
+      this.camera.position.lerpVectors(this.easePos, this.camera.position, w);
+      this.controls.target.lerpVectors(this.easeTgt, this.controls.target, w);
     }
     this.controls.update(dt);
   }

@@ -156,6 +156,55 @@ try {
   });
   check('auto-frame keeps crown bbox in view', inView === 8, `${inView}/8 corners`);
 
+  // A view set by hand stays put: real mouse orbit + wheel zoom, then 15 s of growth, day cycle and panel use.
+  const camPose = (pg) => pg.evaluate(() => { const s = window.__arbor.stage; return { p: s.camera.position.toArray(), t: s.controls.target.toArray(), manual: s.manual, btn: !document.querySelector('#arbor-auto-camera').hidden }; });
+  const camDelta = (a, b) => Math.max(Math.hypot(...a.p.map((v, i) => v - b.p[i])), Math.hypot(...a.t.map((v, i) => v - b.t[i])));
+  // OrbitControls damping lets the gesture glide out for a moment (longer at low frame rates): wait until it is at rest.
+  const camSettled = async (pg) => {
+    let a = await camPose(pg);
+    for (let i = 0; i < 40; i++) { await pg.waitForTimeout(500); const b = await camPose(pg); if (camDelta(a, b) < 1e-6) return b; a = b; }
+    return a;
+  };
+  {
+    const pre = await camPose(page);
+    await page.mouse.move(300, 250); await page.mouse.down(); await page.mouse.move(460, 300, { steps: 10 }); await page.mouse.up();
+    await page.mouse.wheel(0, -300);
+    const h0 = await camSettled(page);
+    await tab('sky'); await tab('grow');
+    await page.waitForTimeout(15000);
+    const h1 = await camPose(page);
+    check('hand-set view (mouse orbit + wheel) unchanged after 15 s, Auto camera button shown', !pre.manual && !pre.btn && h0.manual && h0.btn && camDelta(pre, h0) > 0.5 && camDelta(h0, h1) < 1e-3 && h1.manual,
+      `input moved ${camDelta(pre, h0).toFixed(2)} m, drift over 15 s ${camDelta(h0, h1).toExponential(1)} m`);
+    // Per-frame camera steps over the 4 s after the click: a jump would put most of the path into one frame.
+    const ease = await page.evaluate(() => new Promise((res) => {
+      const cam = window.__arbor.stage.camera, last = cam.position.clone(), t0 = performance.now();
+      let path = 0, maxStep = 0, first = -1, frames = 0;
+      document.querySelector('#arbor-auto-camera').click();
+      const tick = () => {
+        const d = cam.position.distanceTo(last); last.copy(cam.position);
+        if (first < 0) first = d;
+        path += d; maxStep = Math.max(maxStep, d); frames++;
+        if (performance.now() - t0 < 4000) requestAnimationFrame(tick); else res({ path, maxStep, first, frames });
+      };
+      requestAnimationFrame(tick);
+    }));
+    const e1 = await camPose(page);
+    check('Auto camera button resumes the automatic camera with an ease (no jump), then hides', !e1.manual && !e1.btn && ease.path > 0.05 && ease.frames > 30 && ease.maxStep < 0.1 * ease.path && ease.first < 0.02 * ease.path,
+      `path ${ease.path.toFixed(2)} m over ${ease.frames} frames, largest frame step ${ease.maxStep.toFixed(3)} m, first ${ease.first.toFixed(4)} m`);
+    await page.mouse.move(300, 250); // back over the canvas (the pointer was left on a panel tab)
+    await page.mouse.wheel(0, -200);
+    await page.waitForTimeout(300);
+    const m1 = await camPose(page);
+    await page.keyboard.press('c');
+    const m2 = await camPose(page);
+    await page.mouse.wheel(0, -200);
+    await page.waitForTimeout(300);
+    const m3 = await camPose(page);
+    await page.locator('#arbor-regrow').click();
+    const m4 = await camPose(page);
+    check('C key and a new tree (regrow) both return to the automatic camera', m1.manual && !m2.manual && m3.manual && !m4.manual && (await page.evaluate(() => window.__arbor.params.camera.cinema)), JSON.stringify([m1.manual, m2.manual, m3.manual, m4.manual]));
+  }
+
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
@@ -228,6 +277,40 @@ try {
       `set=${t1.g.toFixed(3)} after3s=${t2.g.toFixed(3)} scrollTop=${t2.sy} autoFrame=${t2.af} sheetTop=${box.y.toFixed(0)}`);
     await ctx.close();
   }
+  // Phone camera: one-finger orbit + pinch zoom set the view; it holds for 15 s while the sheet is opened and used;
+  // the Auto camera button is reachable with the sheet open (not covered by it) and resumes the automatic camera.
+  {
+    const { ctx, mp, merr } = await phone('');
+    await mp.waitForTimeout(1500);
+    const cdp = await ctx.newCDPSession(mp);
+    const T = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+    const pre = await camPose(mp);
+    await T('touchStart', [[120, 300]]);
+    for (let i = 1; i <= 8; i++) { await T('touchMove', [[120 + i * 15, 300 + i * 4]]); await mp.waitForTimeout(30); }
+    await T('touchEnd', []);
+    await mp.waitForTimeout(300);
+    await T('touchStart', [[180, 350], [230, 350]]);
+    for (let i = 1; i <= 8; i++) { await T('touchMove', [[180 - i * 6, 350], [230 + i * 6, 350]]); await mp.waitForTimeout(30); }
+    await T('touchEnd', []);
+    const h0 = await camSettled(mp);
+    await mp.tap('#arbor-panel-open');
+    await mp.tap('[data-tab="sky"]');
+    await mp.tap('[data-tab="shape"]');
+    await mp.waitForTimeout(15000);
+    const h1 = await camPose(mp);
+    const zoomed = Math.hypot(...h0.p.map((v, i) => v - h0.t[i])) / Math.hypot(...pre.p.map((v, i) => v - pre.t[i]));
+    check('phone: hand-set view (touch orbit + pinch) unchanged after 15 s with the sheet in use', !pre.manual && h0.manual && h0.btn && zoomed < 0.8 && camDelta(h0, h1) < 1e-3 && h1.manual && merr.length === 0,
+      `pinch zoom x${zoomed.toFixed(2)}, drift over 15 s ${camDelta(h0, h1).toExponential(1)} m`);
+    const bb = await mp.locator('#arbor-auto-camera').boundingBox();
+    const sheet = await mp.locator('#arbor-panel').boundingBox();
+    await mp.tap('#arbor-auto-camera');
+    await mp.waitForTimeout(4000);
+    const e1 = await camPose(mp);
+    check('phone: Auto camera button (48 px, clear of the open sheet) resumes the automatic camera', bb.height >= 44 && bb.y + bb.height < sheet.y && !e1.manual && !e1.btn && camDelta(h1, e1) > 0.05,
+      `button ${bb.width.toFixed(0)}x${bb.height.toFixed(0)} at y=${bb.y.toFixed(0)}, sheet top ${sheet.y.toFixed(0)}, moved ${camDelta(h1, e1).toFixed(3)} m in 4 s`);
+    await ctx.close();
+  }
+
   // PowerVR program gate (audit 3.1): the meadow reuses the safe leaf program, so the phone compiles exactly as many
   // programs with it as without it (?meadow=0), at noon and at night.
   {

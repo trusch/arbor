@@ -79,6 +79,17 @@ try {
 }
 if (!stageOrNull) await new Promise<never>(() => { /* stop here: nothing to render with */ });
 const stage = stageOrNull!;
+// A hand-set view survives the context-loss reload (saved in `contextLost`).
+const CAM_KEY = 'arbor.cam';
+try {
+  const v = JSON.parse(sessionStorage.getItem(CAM_KEY) ?? 'null') as number[] | null;
+  sessionStorage.removeItem(CAM_KEY);
+  if (Array.isArray(v) && v.length === 6 && v.every(Number.isFinite)) {
+    stage.camera.position.set(v[0], v[1], v[2]);
+    stage.controls.target.set(v[3], v[4], v[5]);
+    stage.takeControl();
+  }
+} catch { /* private mode */ }
 function showNoWebglPage() {
   const el = document.createElement('div');
   el.id = 'nowebgl';
@@ -93,6 +104,7 @@ function contextLost(): boolean {
   let n = ctxLosses + 1;
   try { n = (Number(sessionStorage.getItem(CTX_KEY)) || 0) + 1; sessionStorage.setItem(CTX_KEY, String(n)); } catch { /* private mode */ }
   tel.log('ctx_loss_count', { n });
+  try { if (stageOrNull?.manual) sessionStorage.setItem('arbor.cam', JSON.stringify([...stageOrNull.camera.position.toArray(), ...stageOrNull.controls.target.toArray()])); } catch { /* private mode */ }
   if (n < 2) return true;
   showLossPage();
   return false;
@@ -395,13 +407,17 @@ function redraw(time: number, dt: number, force = false) {
 if (query.get('nogui') !== '1') {
   const qp = query.get('panel');
   buildPanel(params, automation, {
-    regrow,
+    // A new tree (regrow, new seed, preset) returns to the automatic camera: the old view no longer fits.
+    regrow: () => { regrow(); stage.autoCamera(); },
     newSeed: () => {
       params.seed.seed = Math.floor(Math.random() * 999999);
       regrow();
+      stage.autoCamera();
     },
+    cameraManual: () => stage.manual,
+    autoCamera: () => stage.autoCamera(),
     crownChanged: () => sim.rebuildAttractors(),
-    preset: (name) => { loadPreset(name); regrow(); },
+    preset: (name) => { loadPreset(name); regrow(); stage.autoCamera(); },
     presetNames: Object.keys(PRESETS),
     currentPreset: () => presetName,
     simTime: () => sim.time,
@@ -411,7 +427,7 @@ if (query.get('nogui') !== '1') {
     growth: () => ({ nodes: sim.nodes.length, age: sim.time, grown: sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive)) }),
   }, { open: qp === 'open' ? true : qp === 'closed' ? false : undefined, tab: query.get('tab') ?? undefined });
 }
-// Only a real orbit/zoom stops auto-framing: a tap (e.g. to collapse the GUI) used to freeze the camera at the
+// Only a real orbit/zoom takes the camera (`stage.manual`; it stays the user's until they ask for the automatic camera): a tap (e.g. to collapse the GUI) used to freeze the camera at the
 // sapling distance, and the crown then grew around it.
 {
   const el = stage.renderer.domElement;
@@ -420,9 +436,9 @@ if (query.get('nogui') !== '1') {
   el.addEventListener('pointerup', () => (down = null));
   el.addEventListener('pointercancel', () => (down = null));
   el.addEventListener('pointermove', (e) => {
-    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) params.camera.autoFrame = false;
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) stage.takeControl();
   });
-  el.addEventListener('wheel', () => (params.camera.autoFrame = false), { passive: true });
+  el.addEventListener('wheel', () => stage.takeControl(), { passive: true });
 }
 
 // Watch mode: H hides all UI; a small age/time overlay fades in on activity and out when idle.
@@ -443,7 +459,8 @@ addEventListener('keydown', (e) => {
   if (typing(el)) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'h' || e.key === 'H') { uiHidden = !uiHidden; applyUi(); activity = 0; }
-  if (e.key === 'c' || e.key === 'C') { params.camera.cinema = !params.camera.cinema; stage.idle = 1e9; }
+  // C: back to the automatic camera from a hand-set view, else toggle the cinema camera.
+  if (e.key === 'c' || e.key === 'C') { if (stage.manual) { params.camera.cinema = true; stage.autoCamera(); } else params.camera.cinema = !params.camera.cinema; }
 }, true);
 addEventListener('pointermove', () => (activity = 0));
 // Debug HUD line: hidden by default, ?hud=1 or D shows it.
@@ -544,7 +561,7 @@ requestAnimationFrame(loop);
 (window as unknown as { __arbor: unknown }).__arbor = {
   params,
   automation,
-  loadPreset: (n: string) => { loadPreset(n); regrow(); },
+  loadPreset: (n: string) => { loadPreset(n); regrow(); stage.autoCamera(); },
   sim,
   leaves,
   canopy,

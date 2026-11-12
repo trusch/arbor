@@ -22,6 +22,12 @@ body.watch .arbor-ui { display: none !important; }
   background: var(--bg); border: 1px solid var(--line); border-radius: 24px; font-weight: 600;
 }
 .ap-open.hidden { display: none; }
+.ap-autocam {
+  position: fixed; z-index: 6; left: 14px; top: 14px; min-height: 48px; padding: 0 18px 0 14px;
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--accent); color: var(--accent-ink) !important; border: 1px solid var(--line); border-radius: 24px; font-weight: 600;
+}
+.ap-autocam[hidden] { display: none; }
 
 .ap-panel {
   position: fixed; z-index: 5; top: 12px; right: 12px; bottom: 12px; width: 356px; max-width: calc(100vw - 24px);

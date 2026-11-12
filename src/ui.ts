@@ -5,6 +5,10 @@ import { type Automation, numericPaths } from './automation';
 export interface UiActions {
   regrow(): void;
   newSeed(): void;
+  /** True while the user holds the camera (orbited or zoomed by hand). */
+  cameraManual(): boolean;
+  /** Hand the camera back to the automatic camera. */
+  autoCamera(): void;
   crownChanged(): void;
   preset(name: string): void;
   presetNames: string[];
@@ -424,7 +428,13 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   });
 
   root.append(h('header', { class: 'ap-top' }, status, pauseBtn, closeBtn), tablist, grownBar, bodies);
-  document.body.append(opener, root);
+  // Auto camera: shown only while the user holds the camera; outside the panel so the phone reaches it with the sheet closed.
+  const autoCam = h('button', { type: 'button', class: 'arbor-ui ap-autocam', id: 'arbor-auto-camera', hidden: true, title: 'Return to the automatic camera (key C)' });
+  autoCam.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg><span>Auto camera</span>';
+  const syncAutoCam = () => { const m = a.cameraManual(); if (autoCam.hidden === m) autoCam.hidden = !m; };
+  autoCam.addEventListener('click', () => { a.autoCamera(); syncAutoCam(); });
+  setInterval(syncAutoCam, 200);
+  document.body.append(opener, root, autoCam);
   selectTab(tabs.some((t) => t.id === opts.tab) ? opts.tab! : 'grow');
   setOpen(opts.open ?? !matchMedia('(max-width: 700px)').matches);
   refresh();
