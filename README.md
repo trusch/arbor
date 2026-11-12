@@ -102,7 +102,8 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 - Light: every 0.5 s leafy nodes are binned into a voxel grid (4 × segment length). Each node's `light` is the mean transmittance up (weight 2) and along ±X/±Z. Side chains of order ≥ 2 whose best light stays below `selfPrune` for 4 evaluations are pruned. Pruned chains and their descendants are not drawn and add nothing to the pipe model. Leaf colour uses `light` as ambient occlusion.
 - Radii: pipe model `r^n = Σ child r^n` (default n = 1.9), eased toward the target and never shrinking (secondary growth keeps the girth of pruned wood). The renderer adds a root flare with buttress lobes (`rootFlare`).
 - Leaves: clusters of 4 per node, spiralled at golden-angle steps near the node end, with a petiole gap. Deep green, darker inside the crown, lighter and yellower when young. A translucency term in the fragment shader makes backlit leaves glow in the sun colour.
-- Sag: per-node bend toward −Y ∝ gravity × sag × subtree length × segment length × horizontality / r², accumulated down the hierarchy. Growth decisions use the unsagged rest geometry.
+- Sag: per-node bend toward −Y ∝ gravity × sag × subtree length × segment length × horizontality / r². A segment inherits its parent's sag fading over 3 m of wood (new wood rights itself), so droop stays local to the loaded stretch; a weeping habit (`growth.weeping` ≥ 1) has no righting and the sag sums down the whole path. Growth decisions use the unsagged rest geometry.
+- Shoots do not plunge: without a weeping habit the direction a shoot aims for is never steeper than about 17° below the horizontal (unit dy ≥ −0.3).
 - Low gravity stretches the crown envelope upward and weakens gravitropism and sag.
 
 ## Known weaknesses

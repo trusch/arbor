@@ -91,7 +91,7 @@ export interface WindLike { base: number; dirX: number; dirZ: number; gust(x: nu
 const A_LEAF = 0.012, C_WOOD = 1, G_W = 0.08;
 /**
  * Strength scale: `params.breakage.strength` 1 = this sigma, the 98th percentile of u at gust 1.0 on the t = 90 default
- * oak (scripts/breakcalib.mjs): a 120 s full-strength storm (wind.base 1.0) takes about 4 twigs and 1 small limb.
+ * oak (scripts/breakcalib.mjs): a 120 s full-strength storm (wind.base 1.0) takes about 5 twigs (4 twigs and 1 small limb before the sag-righting change, p98 now 0.94).
  */
 export const SIGMA_REF = 9.94e6;
 
