@@ -163,6 +163,8 @@ const diagRawLeafMap = typeof location !== 'undefined' && new URLSearchParams(lo
 
 const GROW_TIME = 3; // seconds for a leaf to unfold
 const LEAF_D = 9; // floats per instance placement record (see `Leaves.place`)
+const FOLLOW_EPS = 0.0015; // node travel (world units; leaf ≈ 0.1) below which its leaves are not re-placed
+const FOLLOW_EPS_R = 0.0002; // same for the node radius (drives the fade on thickening wood)
 
 /** Instanced leaves attached to young segments, with vertex-shader wind sway. */
 export class Leaves {
@@ -216,6 +218,16 @@ export class Leaves {
   private backNode = new Int32Array(0);
   private frontD = new Float32Array(0);
   private frontNode = new Int32Array(0);
+  /**
+   * Per-node state at its last "moved" verdict (10 floats: own and parent position, direction, radius) and the verdict
+   * of the sweep in flight. A budgeted `follow` only re-places leaves on nodes that moved more than `FOLLOW_EPS`.
+   */
+  private nodeRef = new Float32Array(0);
+  private nodeMoved = new Uint8Array(0);
+  /** Camera position and crown height of the last unconditional placement (size LOD inputs). */
+  private lodX = 0; private lodY = 0; private lodZ = 0; private lodH = 0; private lodShape = NaN; private lodFade = NaN;
+  /** Instances actually re-placed by the last `follow`. */
+  followPlaced = 0;
   /** False until a pass has completed on the current tree (front records would point into a discarded node list). */
   private followOk = false;
   /** Wall time of the last `follow` (ms) and its maximum. */
@@ -441,8 +453,9 @@ export class Leaves {
    * `o`). The only code that turns a leaf record into a matrix: the pass uses it for the bake normal/position and
    * `follow` for the drawn matrices, so the two cannot disagree.
    */
-  private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array, o: number) {
+  private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array, o: number, moved: Uint8Array | null = null): number {
     const nodes = sim.nodes, lp = p.leaves, now = sim.time;
+    let placed = 0, mv = true;
     const H = Math.max(2, sim.bboxMax[1]);
     const sh = lp.shape, kx = sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh, ky = sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh;
     const f0 = lp.maxBranchRadius * 0.7, f1 = lp.maxBranchRadius, l0 = 0.9 * H, l1 = 2.6 * H;
@@ -454,6 +467,7 @@ export class Leaves {
         last = id;
         const nd = nodes[id], pn = nd && nodes[nd.parent];
         ok = !!pn;
+        mv = moved === null || moved[id] === 1;
         if (pn) {
           dx = nd.wdx; dy = nd.wdy; dz = nd.wdz; rad = nd.radius;
           // Radial frame around the branch (ry = 0).
@@ -465,6 +479,9 @@ export class Leaves {
       }
       if (!ok) continue;
       const k = i * LEAF_D;
+      // Node at rest: only a leaf that is still unfolding changes.
+      if (!mv && now - D[k + 8] > GROW_TIME + 1) continue;
+      placed++;
       const t = D[k], ca = D[k + 1], sa = D[k + 2], ct = D[k + 3], st = D[k + 4], cr = D[k + 5], sr = D[k + 6];
       // Position along the segment, offset to the bark surface.
       const ox = rx * ca + bx * sa, oy = by * sa, oz = rz * ca + bz * sa;
@@ -491,31 +508,66 @@ export class Leaves {
       out[o + 8] = rzx * s; out[o + 9] = rzy * s; out[o + 10] = rzz * s; out[o + 11] = 0;
       out[o + 12] = x; out[o + 13] = y; out[o + 14] = z; out[o + 15] = 1;
     }
+    return placed;
+  }
+
+  /** Per-node moved verdict for one follow sweep: 1 when the node left its reference state by more than the epsilons. */
+  private markMoved(sim: TreeSim) {
+    const nodes = sim.nodes, N = nodes.length;
+    if (this.nodeMoved.length < N) {
+      const cap = Math.ceil(N * 1.5) + 256, r = new Float32Array(cap * 10).fill(NaN);
+      r.set(this.nodeRef);
+      this.nodeRef = r; this.nodeMoved = new Uint8Array(cap);
+    }
+    const R = this.nodeRef, mvd = this.nodeMoved, E = FOLLOW_EPS, abs = Math.abs;
+    for (let i = 0, o = 0; i < N; i++, o += 10) {
+      const nd = nodes[i], pn = nodes[nd.parent];
+      if (!pn) { mvd[i] = 0; continue; }
+      if (abs(R[o] - nd.wx) < E && abs(R[o + 1] - nd.wy) < E && abs(R[o + 2] - nd.wz) < E
+        && abs(R[o + 3] - pn.wx) < E && abs(R[o + 4] - pn.wy) < E && abs(R[o + 5] - pn.wz) < E
+        && abs(R[o + 6] - nd.wdx) < 0.01 && abs(R[o + 7] - nd.wdy) < 0.01 && abs(R[o + 8] - nd.wdz) < 0.01
+        && abs(R[o + 9] - nd.radius) < FOLLOW_EPS_R) { mvd[i] = 0; continue; }
+      mvd[i] = 1;
+      R[o] = nd.wx; R[o + 1] = nd.wy; R[o + 2] = nd.wz; R[o + 3] = pn.wx; R[o + 4] = pn.wy; R[o + 5] = pn.wz;
+      R[o + 6] = nd.wdx; R[o + 7] = nd.wdy; R[o + 8] = nd.wdz; R[o + 9] = nd.radius;
+    }
   }
 
   /**
    * Re-place every drawn instance on its node's current transform and upload the matrices (colours stay those of the
    * last completed pass; same instance order). Cheap enough to run on every branch rebuild. `cam` drives the size LOD.
    */
-  follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3, budgetMs = Infinity): boolean {
+  follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3, budgetMs = Infinity, from = 0): boolean {
     const n = this.mesh.count;
     if (!this.followOk || n === 0) return false;
     const t0 = performance.now();
     const M = this.mesh.instanceMatrix, arr = M.array as Float32Array;
     M.clearUpdateRanges();
-    // Round-robin in chunks of 1024 instances until the budget is spent (a whole sweep when it fits); only the
-    // touched ranges are uploaded. Leaves so move in small staggered steps, never the whole crown at once.
-    let at = this.followAt >= n ? 0 : this.followAt, left = n;
-    while (left > 0) {
-      const to = Math.min(n, at + 1024);
-      this.place(this.frontD, this.frontNode, at, to, sim, p, cam.x, cam.y, cam.z, arr, at * 16);
-      M.addUpdateRange(at * 16, (to - at) * 16);
-      left -= to - at;
-      at = to >= n ? 0 : to;
-      if (performance.now() - t0 >= budgetMs) break;
+    let done = 0;
+    if (budgetMs === Infinity) {
+      // Unconditional placement of [from, n) (new instance set, forced redraw).
+      if (from < n) {
+        done = this.place(this.frontD, this.frontNode, from, n, sim, p, cam.x, cam.y, cam.z, arr, from * 16);
+        M.addUpdateRange(from * 16, (n - from) * 16);
+      }
+      if (from === 0) { this.lodX = cam.x; this.lodY = cam.y; this.lodZ = cam.z; this.lodH = Math.max(2, sim.bboxMax[1]); this.lodShape = p.leaves.shape; this.lodFade = p.leaves.maxBranchRadius; }
+    } else {
+      // Round-robin in chunks of 1024 instances until the budget is spent (a whole sweep when it fits). Each sweep
+      // starts with a per-node moved verdict; leaves on nodes at rest are skipped, only touched chunks are uploaded.
+      let at = this.followAt >= n ? 0 : this.followAt, left = n;
+      while (left > 0) {
+        if (at === 0) this.markMoved(sim);
+        const to = Math.min(n, at + 1024);
+        const c = this.place(this.frontD, this.frontNode, at, to, sim, p, cam.x, cam.y, cam.z, arr, at * 16, this.nodeMoved);
+        if (c > 0) { M.addUpdateRange(at * 16, (to - at) * 16); done += c; }
+        left -= to - at;
+        at = to >= n ? 0 : to;
+        if (performance.now() - t0 >= budgetMs) break;
+      }
+      this.followAt = at;
     }
-    this.followAt = at;
-    M.needsUpdate = true;
+    if (done > 0) M.needsUpdate = true;
+    this.followPlaced = done;
     this.followMs = performance.now() - t0;
     if (this.followMs > this.followMaxMs) this.followMaxMs = this.followMs;
     this.follows++;
@@ -547,6 +599,7 @@ export class Leaves {
     const camX = Lt.cam.x, camY = Lt.cam.y, camZ = Lt.cam.z;
     const end = Math.min(this.passEnd, sim.leaves.length);
     let li = this.passLi;
+    const li0 = li;
     for (; li < end; li++) {
       if ((li & 255) === 255 && performance.now() - t0 >= budgetMs) break;
       const lf = sim.leaves[li];
@@ -646,11 +699,25 @@ export class Leaves {
     this.passLi = li; this.passN = n; this.passCand = cand;
     this.passAcc += performance.now() - t0;
     if (li < end) return false;
+    // The swap (which may re-place the whole set) gets a frame of its own instead of riding on a full slice.
+    if (budgetMs !== Infinity && li > li0 && performance.now() - t0 > 1) return false;
     this.passOpen = false;
     this.passes++;
     const C = this.mesh.instanceColor!;
     // Swap the record sets together with the colours, then place the new set on the nodes as they are now (the pass
     // ran over many frames, so matrices computed during it would be stale and uneven).
+    // Instances whose record is unchanged at the same index (the usual case on a tree that only sags and thickens)
+    // keep their matrices, which `follow` has kept on the nodes; only the tail behind the first difference is placed.
+    let same = 0;
+    const H = Math.max(2, sim.bboxMax[1]);
+    if (this.followOk && budgetMs !== Infinity && lp.shape === this.lodShape && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
+      && Math.hypot(cam.x - this.lodX, cam.y - this.lodY, cam.z - this.lodZ) < 0.05 * H) {
+      const oD = this.frontD, oN = this.frontNode, m = Math.min(n, this.mesh.count);
+      for (let k = 0; same < m; same++, k += LEAF_D) {
+        if (oN[same] !== ND[same] || oD[k] !== D[k] || oD[k + 1] !== D[k + 1] || oD[k + 3] !== D[k + 3] || oD[k + 5] !== D[k + 5]
+          || oD[k + 7] !== D[k + 7] || oD[k + 8] !== D[k + 8]) break;
+      }
+    }
     this.backD = this.frontD; this.frontD = D;
     this.backNode = this.frontNode; this.frontNode = ND;
     this.followOk = true;
@@ -659,7 +726,7 @@ export class Leaves {
     this.lastN = n;
     // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next pass draws ≤ maxInstances.
     this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
-    this.follow(sim, p, cam);
+    this.follow(sim, p, cam, Infinity, same);
     C.clearUpdateRanges();
     C.addUpdateRange(0, n * 3);
     C.needsUpdate = true;
