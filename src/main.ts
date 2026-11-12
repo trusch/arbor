@@ -15,6 +15,7 @@ import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
 import { weather, type WeatherEvent } from './weather';
 import { Rain } from './render/rain';
+import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
@@ -171,6 +172,9 @@ const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: n
 /** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */
 const rain = diag.rain ? new Rain(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
 if (rain) stage.scene.add(rain.group);
+/** Sun glow, moon, star detail: P-DECAL clones like the rain (`?celestial=0` turns the planes and star detail off). */
+const celestial = query.get('celestial') !== '0' ? new Celestial(canopy.mesh.material as THREE.MeshBasicMaterial, stage.atmo.stars) : null;
+if (celestial) stage.scene.add(celestial.group);
 {
   const qw = query.get('weather');
   if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
@@ -191,6 +195,7 @@ function weatherRender(dt: number) {
   tel.phase('weather', true);
   stage.applyFlash();
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
+  celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
   // PowerVR rule: on Low the rain/bolt planes only draw once the canopy decal (their program donor) has been drawn,
@@ -386,7 +391,7 @@ function redraw(time: number, dt: number, force = false) {
     branches.mesh.castShadow = !decal;
     if (decal) {
       tel.phase('canopy shadow');
-      canopy.update(sim, sunDirTmp, Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
+      canopy.update(sim, sunDirTmp, Math.min(1, S.intensity * 6) * Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
       tel.phase('leaves rebuild');
     } else canopy.mesh.visible = false;
     const repl = leaves.beginPass(sim, time);
@@ -581,6 +586,7 @@ requestAnimationFrame(loop);
   wind,
   weather,
   rain,
+  sky: celestial,
   debris,
   sway,
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),

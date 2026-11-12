@@ -336,7 +336,7 @@ export class Stage {
     if (dir.y < 0.14) dir.setY(0.14).normalize();
     this.sun.color.copy(A.keyColor);
     this.sun.intensity = A.keyIntensity;
-    this.sun.shadow.radius = night > 0.5 ? 9 : 4 + 4 * (1 - Math.min(1, A.sunH * 2));
+    this.sun.shadow.radius = 4 + 4 * (1 - Math.min(1, Math.max(0, A.sunH) * 2)) + night; // moonlight: softest
     this.sun.position.copy(c).addScaledVector(dir, ext * 4);
     this.sun.target.position.copy(c);
     this.sun2.color.copy(A.sun2Color);
@@ -374,7 +374,8 @@ export class Stage {
     const day = 1 - night;
     this.hemi.color.copy(A.fogColor).lerp(new THREE.Color(0.55, 0.7, 1.0), 0.4);
     this.hemi.groundColor.setRGB(0.22, 0.2, 0.12).multiplyScalar(0.3 + 0.7 * day);
-    this.hemi.intensity = 0.15 + 0.35 * day;
+    // Night ambient follows the moon: 0.1 starlit, 0.19 under a full moon (it was a flat 0.15).
+    this.hemi.intensity = 0.15 + 0.35 * day + night * (0.09 * A.moonLight - 0.05 * (1 - A.moonLight));
     this.scene.environmentIntensity = 0.25 + 0.3 * day;
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
     this.applyWeather(night);

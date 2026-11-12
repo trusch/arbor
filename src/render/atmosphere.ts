@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { tel } from '../tel';
 import type { ArborParams } from '../params';
+import { moonDirection, moonIllum, MOON_MONTH } from './celestial';
 
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -55,9 +56,12 @@ void main() {`,
 export class Atmosphere {
   sky = new Sky();
   stars: THREE.Points;
-  moon: THREE.Mesh;
   sunDir = new THREE.Vector3(0, 1, 0);
   moonDir = new THREE.Vector3();
+  /** Moon phase this frame (0 new, 0.5 full), calm sun colour, and how much the moon lights the night (0..1). */
+  moonPhase = 0.5;
+  sunColor = new THREE.Color();
+  moonLight = 0;
   /** 0 = full day, 1 = deep night. */
   night = 0;
   /** Sun elevation, sine (−1..1). */
@@ -127,19 +131,17 @@ export class Atmosphere {
     this.stars.renderOrder = -1;
     scene.add(this.stars);
 
-    this.moon = new THREE.Mesh(
-      new THREE.SphereGeometry(70, 24, 16),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.3, 2.5), fog: false, transparent: true }),
-    );
-    scene.add(this.moon);
+    // The moon is drawn by `Celestial` (celestial.ts): a decal-clone plane with a painted, phased map.
 
   }
 
   update(p: ArborParams, dt: number, camPos: THREE.Vector3) {
     const k = p.sky;
     sunDirection(k.timeOfDay, k.latitude, k.sunYaw, this.sunDir);
-    // Moon roughly opposite the sun, tilted so it rides higher.
-    sunDirection((k.timeOfDay + 12) % 24, k.latitude - 15, k.sunYaw + 20, this.moonDir);
+    // Moon: trails the sun by its phase; the phase advances one synodic month per MOON_MONTH days of the cycle.
+    if (k.cycle && k.dayLength > 0) k.moonPhase = (((k.moonPhase ?? 0.5) + dt / k.dayLength / MOON_MONTH) % 1 + 1) % 1;
+    const phase = (this.moonPhase = Math.min(1, Math.max(0, k.moonPhase ?? 0.5)));
+    moonDirection(k.timeOfDay, k.latitude, k.sunYaw, phase, this.moonDir);
     const h = (this.sunH = this.sunDir.y);
     const night = (this.night = 1 - smooth(-0.16, 0.02, h));
 
@@ -154,14 +156,13 @@ export class Atmosphere {
     u.time.value += dt;
     this.sky.position.copy(camPos);
     this.stars.position.copy(camPos);
-    const starA = smooth(0.0, -0.18, h) * k.stars;
+    // Moonlight on the scene: lit fraction, moon above the horizon, sun well down.
+    const moonUp = smooth(-0.02, 0.14, this.moonDir.y);
+    const moonLight = (this.moonLight = Math.pow(moonIllum(phase), 1.3) * moonUp * smooth(-0.04, -0.16, h));
+    const starA = smooth(0.0, -0.18, h) * k.stars * (1 - 0.45 * moonLight);
     (this.stars.material as THREE.PointsMaterial).opacity = starA;
     this.stars.visible = starA > 0.01;
-    this.stars.rotation.y = k.timeOfDay * 0.06;
-    this.moon.position.copy(camPos).addScaledVector(this.moonDir, 3800);
-    (this.moon.material as THREE.MeshBasicMaterial).opacity = smooth(-0.15, 0.1, this.moonDir.y) * (0.25 + 0.75 * night);
-    this.moon.visible = this.moonDir.y > -0.05;
-
+    this.stars.rotation.y = (k.timeOfDay / 24) * Math.PI * 2;
     // Key light colour by sun height: white noon → gold → deep orange → off.
     const noon = new THREE.Color(1.0, 0.96, 0.9);
     const gold = new THREE.Color(1.0, 0.72, 0.42);
@@ -169,14 +170,17 @@ export class Atmosphere {
     const sunCol = h > 0.25 ? lerpC(gold, noon, smooth(0.25, 0.6, h)) : lerpC(ember, gold, smooth(0.0, 0.25, h));
     if (k.sunTint > 0) sunCol.lerp(new THREE.Color().setHSL(k.sunHue, 0.85, 0.6), Math.min(1, k.sunTint));
     const sunI = 3.2 * smooth(-0.04, 0.12, h) * (0.55 + 0.45 * smooth(0.1, 0.6, h));
-    const moonI = 0.35 * night * smooth(0.0, 0.2, this.moonDir.y);
-    if (sunI >= moonI * 1.5 || h > -0.02) {
+    this.sunColor.copy(sunCol);
+    // The key light changes hands at h = -0.04, where the sun's intensity is exactly 0 and the moon's has not begun:
+    // no pop in direction or brightness. Moon down or new moon: no key light at all (a dark starlit night).
+    const moonI = 0.32 * moonLight;
+    if (h > -0.04) {
       this.keyDir.copy(this.sunDir);
       this.keyColor.copy(sunCol);
       this.keyIntensity = sunI;
     } else {
       this.keyDir.copy(this.moonDir);
-      this.keyColor.setRGB(0.62, 0.74, 1.0);
+      this.keyColor.setRGB(0.56, 0.7, 1.0).lerp(new THREE.Color(1.0, 0.72, 0.48), 0.6 * (1 - smooth(0.0, 0.3, this.moonDir.y)));
       this.keyIntensity = moonI;
     }
 
@@ -184,7 +188,7 @@ export class Atmosphere {
     const dayFog = new THREE.Color(0.7, 0.79, 0.9);
     const duskFog = new THREE.Color(0.93, 0.62, 0.42);
     const blueHour = new THREE.Color(0.12, 0.15, 0.29);
-    const nightFog = new THREE.Color(0.018, 0.026, 0.05);
+    const nightFog = new THREE.Color(0.012, 0.018, 0.036).lerp(new THREE.Color(0.036, 0.052, 0.095), moonLight);
     if (h > 0.02) this.fogColor.copy(lerpC(duskFog, dayFog, smooth(0.02, 0.35, h)));
     else this.fogColor.copy(h > -0.1 ? lerpC(blueHour, duskFog, smooth(-0.1, 0.02, h)) : lerpC(nightFog, blueHour, smooth(-0.22, -0.1, h)));
 
@@ -200,8 +204,13 @@ export class Atmosphere {
     // Sun discs drawn in the sky shader (HDR core; bloom gives the halo). Companion star sits off in yaw, a bit lower.
     const sunVis = smooth(-0.06, 0.02, h);
     this.skyUniforms.disc1Dir.value.copy(this.sunDir);
-    this.skyUniforms.disc1Col.value.copy(sunCol).multiplyScalar(sunVis * (0.6 + 0.6 * smooth(0.0, 0.5, h)));
-    this.skyUniforms.discSize.value = k.sunSize;
+    // Small white-hot core at noon (about 0.3 degrees radius), dimmer and red through the thick air at the horizon
+    // (extinction is squared so the ember colour stays saturated under the tone mapper). Glow: `Celestial.sunGlow`.
+    const ext = smooth(0.0, 0.3, h);
+    this.skyUniforms.disc1Col.value.copy(sunCol).multiplyScalar(sunVis * (0.4 + 3.6 * ext));
+    this.skyUniforms.disc1Col.value.g *= 0.55 + 0.45 * ext;
+    this.skyUniforms.disc1Col.value.b *= 0.3 + 0.7 * ext;
+    this.skyUniforms.discSize.value = k.sunSize * 0.42;
     sunDirection(k.timeOfDay - 1.2, k.latitude + 8, k.sunYaw + k.sun2Yaw, this.sun2Dir);
     const h2 = this.sun2Dir.y;
     this.sun2Color.setHSL(k.sun2Hue, 0.8, 0.62);
