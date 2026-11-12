@@ -1,11 +1,60 @@
 # Arbor
 
-Real-time tree growth simulation rendered with three.js. Vite + TypeScript, own DOM controls panel.
+Watch a tree grow. Arbor simulates one tree from seedling to full crown in a meadow, in real time in the browser, through
+days, nights, weather and seasons.
+
+**Live: https://trusch.github.io/arbor/**
+
+![An oak in the meadow at golden hour](docs/img/golden.jpg)
+
+| Noon | Autumn | Moonrise |
+|---|---|---|
+| ![Noon](docs/img/noon.jpg) | ![Autumn colour](docs/img/autumn.jpg) | ![Moonlit night](docs/img/night.jpg) |
+
+## What it does
+
+- **Growth simulation.** The tree is grown, not modelled: shoots compete for space and light (space colonisation with a
+  light grid that shades out interior branches), wood thickens by the pipe model, limbs sag under their own weight, and a
+  seedling goes through a leafy juvenile phase before the crown forms. Every seed gives a different tree.
+- **Shape it while it grows.** Gravity, reach for light, branchiness, branch angle, twist, droop, crown shape, leaf size
+  and amount are live sliders. Presets range from an oak, a weeping willow and a windswept cypress to low-gravity and
+  crimson alien trees; a "journey" morphs the parameters as the tree ages.
+- **Ten leaf forms**, painted procedurally: oak, willow, birch, maple, ginkgo, a round leaf, a conifer spray and three
+  invented ones.
+- **Day and night.** A physical sky, a sun with glow, a moon with phases that lights the night, twinkling stars.
+- **Seasons.** Spring flush, summer green, autumn colour leaf by leaf, leaf fall, a bare winter crown. One year takes
+  five minutes; the date can be scrubbed or held.
+- **Weather.** Wind gusts travel through the grass and the crown, storms bring dark skies, rain and lightning, leaves
+  are torn off and collect as litter, and overloaded limbs break and fall.
+- **A living meadow** of grass tufts and wildflowers, rolling hills, hedgerows and woods to the horizon.
+- **Runs on phones.** A separate low-end render path keeps to a small, fixed set of shader programs and bakes leaf
+  lighting on the CPU, with adaptive resolution.
+
+## Using it
+
+Open the page and watch; the camera frames the tree by itself. Drag or scroll to take the camera, and tap the pill at the
+top left to hand it back. The controls panel (side panel on desktop, "Controls" bottom sheet on phones) has tabs for
+growing, shape, leaves, sky, seasons and everything else. Keys: **H** hides the interface, **C** toggles the cinematic
+camera, **D** shows a debug line. Most settings can also be given in the URL, for example
+[`?preset=Weeping willow`](https://trusch.github.io/arbor/?preset=Weeping%20willow) or
+[`?t=90&season.date=0.62&season.hold=true`](https://trusch.github.io/arbor/?t=90&season.date=0.62&season.hold=true)
+(a grown tree held in mid autumn).
+
+## Status
+
+A work in progress. Not built yet: blossom, seasons in the meadow and the background trees, snow, growth tied to the
+year. Known weak spots are listed under "Known weaknesses" below.
+
+## Development
+
+Vite + TypeScript + three.js, own DOM controls panel, no other runtime dependencies. The rest of this file is the
+working documentation.
 
 ```
 npm install
 npm run dev            # http://localhost:5173  (?t=60 fast-forwards, ?gravity=0.2 etc. override params)
-npm run deploy         # build + restart the `arbor` systemd user unit -> http://10.77.0.2:8050/ (VPN)
+npm run deploy         # build + restart the `arbor` systemd user unit (self-hosted copy, see deploy/)
+scripts/publish-pages.sh   # build the committed HEAD and publish it to GitHub Pages (branch gh-pages)
 npm run smoke          # headless chromium interaction smoke test (presets, drift, journey, hand-set values, H/C, cinema)
 PORT=5300 node scripts/panelshots.mjs   # controls-panel screenshots (phone 411x777 + desktop) -> shots/panel-*.png
 npm run shots          # headless chromium proof shots -> shots/ (growth stages + morning/noon/golden/bluehour/night)

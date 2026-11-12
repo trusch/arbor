@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { TreeSim } from '../sim/tree';
 import { Rng } from '../sim/rng';
 import { wind } from '../wind';
-import { cleanLeafTexture } from './leaves';
+import { cleanLeafTexture, NIGHT_DESAT, NIGHT_GREY } from './leaves';
 import { makeTuftTexture, makeFlowerTexture, makeTreeTexture, type FlowerKind } from './textures';
 import { plantScenery } from './backdrop';
 
@@ -30,6 +30,18 @@ const R_BACK = 64, FAR_GRASS = 4, FAR_GRASS_MAX = 20000, FAR_FLOWER_MAX = 900;
 const KINDS: FlowerKind[] = ['daisy', 'buttercup', 'poppy', 'clover'];
 /** Floats per instance: x, z, rot, width, height, hashA, hashB, r. */
 const STRIDE = 8;
+
+/** Mean linear RGB of the opaque texels of a canvas map (the night grade works on instance colour x this). */
+function mapMean(map: THREE.Texture): number[] {
+  const img = map.image as HTMLCanvasElement, d = img.getContext('2d')!.getImageData(0, 0, img.width, img.height).data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 16) if (d[i + 3] >= 128) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+  const c = new THREE.Color(0.5, 0.6, 0.4);
+  if (n) c.setRGB(r / n / 255, g / n / 255, b / n / 255, THREE.SRGBColorSpace);
+  return [Math.max(0.02, c.r), Math.max(0.02, c.g), Math.max(0.02, c.b)];
+}
+/** Moonlit dim per kind on top of the shared desaturation (grass, flowers, scenery trees), tuned in night screenshots against the crown. */
+const NIGHT_DIM = { grass: 1.1, flower: 0.7, scenery: 0.9 };
 
 export interface MeadowLight {
   /** Toward the key light, world space, normalised. */
@@ -133,6 +145,7 @@ export class Meadow {
       // Full leaf path (desktop): no live safe material exists, so build the same configuration (safe leaf V0).
       else m = new THREE.MeshLambertMaterial({ side: THREE.FrontSide, map: tex, alphaTest: 0.5 });
       m.map = tex;
+      m.userData.mean = mapMean(map);
       // GTAO g-buffer material with the alpha cut-out (High only; never compiled on Low). See Post.
       const gb = new THREE.MeshNormalMaterial({ side: THREE.FrontSide, blending: THREE.NoBlending });
       gb.allowOverride = false;
@@ -267,7 +280,7 @@ export class Meadow {
     if (sim.lightVersion !== this.lightVersion && time - this.lightKeyT > 3) { this.lightVersion = sim.lightVersion; this.lightKeyT = time; }
     const s = L.sunDir, lum = (c: THREE.Color) => (c.r + c.g + c.b).toFixed(1);
     const shKey = `${s.x.toFixed(2)},${s.y.toFixed(2)},${s.z.toFixed(2)}|${this.lightVersion}`;
-    const key = `${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}`;
+    const key = `${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}${L.night > 0 ? 'n' : 'd'}${L.night < 1 ? '' : 'N'}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}`;
     const trunkKey = (sim.nodes[0]?.radius ?? 0).toFixed(2);
     this.L = L;
     if (shKey !== this.shKey && this.fillRow < 0) {
@@ -345,7 +358,8 @@ export class Meadow {
     }
     this.blurStage = 0;
     this.fillRow = -1;
-    this.dirty = this.neverBaked ? this.patches.map((_, i) => i) : this.nearPatches();
+    // Keep patches still waiting from a light change (the far ones are not in `nearPatches`; dropping them left far tufts in stale colours).
+    this.dirty = this.neverBaked ? this.patches.map((_, i) => i) : [...new Set([...this.dirty, ...this.nearPatches()])];
   }
 
   /** Bilinear sample of a shade field at a ground point. */
@@ -394,6 +408,13 @@ export class Meadow {
     const sun = L.sunCol, hemi = L.hemi, ly = Math.max(0, L.sunDir.y);
     const tc = this.tintCol.setHSL(L.tintHue, 0.55, 0.4);
     const open = 1 - L.night; // flowers close at night
+    // Night grade (exactly off by day): the drawn colour (instance x map mean) loses chroma to the cool grey of the leaf bake.
+    const ng = L.night, mmn = (mesh.material as THREE.Material).userData.mean as number[], nS = NIGHT_DESAT * ng;
+    const nK = 1 + ((pt.scenery ? NIGHT_DIM.scenery : pt.flower ? NIGHT_DIM.flower : NIGHT_DIM.grass) - 1) * ng;
+    const grade = (j: number) => {
+      const r = C[j] * mmn[0], g = C[j + 1] * mmn[1], b = C[j + 2] * mmn[2], Lm = 0.3 * r + 0.59 * g + 0.11 * b;
+      C[j] = ((r + (Lm * NIGHT_GREY[0] - r) * nS) * nK) / mmn[0]; C[j + 1] = ((g + (Lm * NIGHT_GREY[1] - g) * nS) * nK) / mmn[1]; C[j + 2] = ((b + (Lm * NIGHT_GREY[2] - b) * nS) * nK) / mmn[2];
+    };
     for (let i = 0; i < n; i++) {
       const o = i * STRIDE, x = data[o], z = data[o + 1], rot = data[o + 2], hA = data[o + 5], hB = data[o + 6];
       let w = data[o + 3], h = data[o + 4];
@@ -413,6 +434,10 @@ export class Meadow {
         if (!near && hA > 0.4 + 0.6 * up) show = false;
         h *= near ? 0.8 + 0.5 * hB : 0.55 + 0.45 * up;
         if (near) w *= 0.75;
+        // Clearing at the foot of the tree: grass is short within about half a metre of the trunk (down to 40 %),
+        // so a seedling of a few centimetres is not hidden behind 0.3 m tufts.
+        const cl = Math.min(1, Math.max(0, (rt - tR * 1.3) / 0.55));
+        h *= 0.4 + 0.6 * cl * cl * (3 - 2 * cl);
       }
       const c = Math.cos(rot), s = Math.sin(rot), q = i * 16;
       if (!show) w = h = 0;
@@ -441,8 +466,9 @@ export class Meadow {
       const side = ly + 0.4 * (1 - ly) * (1 - ly);
       const f = (hc: number, sc: number) => Math.min(4, (hc * amb + sc * side * ts + 1e-4) / (hc + sc * ly + 1e-4));
       // Backdrop trees are lit like a crown, not like blades: the low-sun lift is capped so they never outshine the oak.
-      if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; continue; }
+      if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; if (ng > 0) grade(i * 3); continue; }
       C[i * 3] = col.r * f(hemi.r, sun.r); C[i * 3 + 1] = col.g * f(hemi.g, sun.g); C[i * 3 + 2] = col.b * f(hemi.b, sun.b);
+      if (ng > 0) grade(i * 3);
     }
     if (pt.far) this.neverBaked = false;
     mesh.count = n;

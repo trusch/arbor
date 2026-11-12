@@ -121,8 +121,6 @@ const DOWN_MAX = 0.3;
  */
 const JUV_H = 1.5, JUV_MIN = 0.2, JUV_SPEED = 0.16, JUV_RADIUS = 0.3, JUV_LEAF = 0.6;
 const JUV_BUDS = 0.75, JUV_BREAK = 3, JUV_SEGS = [3, 6], JUV_SHED = [3.2, 6.4];
-/** Leaves on the leader and on juvenile shoots are born this many seconds 'old' (they unfold in 1 s instead of 3), so the growing tip is not a bare whip. */
-const JUV_UNFOLD = 2;
 
 export class TreeSim {
   nodes: TreeNode[] = [];
@@ -351,7 +349,7 @@ export class TreeSim {
       // nodes, 4 further up), so leaf mass per metre of stem stays about that of an adult twig.
       const ls = n.juv < 1 ? JUV_LEAF + (1 - JUV_LEAF) * (n.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
       const nPrim = n.juv < 0.3 ? 2 : 4, nFill = n.juv < 0.5 ? 0 : 4;
-      const born = juvenile && (ch.order === 0 || ch.juv !== undefined) ? this.time - JUV_UNFOLD : this.time;
+      const born = this.time;
       // A cluster at the node: leaves spiral around the twig at golden-angle steps.
       const a0 = n.phyllo + this.rng.range(0, 1);
       for (let k = 0; k < nPrim; k++) {

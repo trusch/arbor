@@ -15,7 +15,9 @@
   var page = location.pathname.split('/').pop() || 'index.html';
   var ms = function () { return Math.round(performance.now()); };
 
+  var noServer = /\.github\.io$/.test(location.hostname); // static hosting: there is no /log endpoint
   function send(type, data) {
+    if (noServer) return;
     var rec = { sid: sid, seq: seq++, t: ms(), type: type, page: page, phase: curPhase };
     if (data) for (var k in data) rec[k] = data[k];
     var body;

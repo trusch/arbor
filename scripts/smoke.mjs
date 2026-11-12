@@ -424,7 +424,15 @@ try {
     const ev = await mp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && { nodes: e.nodeIds.length, leaves: e.leaves }; });
     await mp.waitForTimeout(500);
     const flight = await st();
-    await mp.evaluate(() => { window.__arbor.breakTwig(); });
+    // The twig is picked here, not by `breakTwig()`: that hook takes a random order >= 2 chain of <= 10 nodes, and when
+    // the chain carries side chains the detached subtree reaches `TWIG_NODES` 12 and becomes a second limb (stats
+    // limbs 2 / twigs 0, "rest phases 2,2"). On the t = 60 oak 1 of the 136 candidates is such a chain, on every build.
+    await mp.evaluate(() => {
+      const A = window.__arbor, N = A.sim.nodes, sub = new Int32Array(N.length).fill(1);
+      for (let i = N.length - 1; i > 0; i--) if (N[i].parent >= 0) sub[N[i].parent] += sub[i];
+      const ch = A.sim.chains.find((c) => !c.pruned && c.order >= 2 && c.nodes.length >= 4 && c.nodes.length <= 10 && N[c.nodes[1]].subLen < 3 && sub[c.nodes[1]] < 11);
+      A.breakLimb(ch.nodes[1]);
+    });
     await mp.waitForTimeout(8000);
     const rest = await st();
     check('phone: limb break adds no shader program (before / in flight / at rest), limb comes to rest on the ground',
@@ -457,10 +465,12 @@ try {
   // scrubbing changes the mean leaf colour and the drawn leaf count as a year should; hold freezes them.
   {
     const read = (pg) => pg.evaluate(() => {
-      const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array;
-      let r = 0, g = 0, b = 0, k = 0, red = 0;
-      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; k++; if (c[i * 3] > 1.5 * c[i * 3 + 1]) red++; }
-      return { programs: A.stage.renderer.info.programs.length, n: k, red: k ? +(red / k).toFixed(3) : 0, rg: k ? +(r / g).toFixed(3) : 0, lum: k ? +((r + g + b) / k).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
+      const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array, D = A.leaves.frontD, now = A.sim.time;
+      let r = 0, g = 0, b = 0, k = 0, kc = 0, red = 0;
+      // Colour is read from leaves that have finished emerging (the tree is paused mid-growth at t = 60, a third of its
+      // leaves are under 7 s old and an emerging leaf is yellower on purpose); the count takes every drawn leaf.
+      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; k++; if (c[i * 3] > 1.5 * c[i * 3 + 1]) red++; if (now - D[i * 11 + 8] < 6) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; kc++; }
+      return { programs: A.stage.renderer.info.programs.length, n: k, red: k ? +(red / k).toFixed(3) : 0, rg: kc ? +(r / g).toFixed(3) : 0, lum: kc ? +((r + g + b) / kc).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
     });
     // A reading is taken once the leaf pass the scrub started has completed (a pass in flight finishes first), not after a fixed delay.
     const settle = async (k) => {
@@ -568,6 +578,33 @@ try {
     const dk = await run(dp, derr);
     await dctx.close();
     check('desktop High: switching through every leaf form adds no shader program (full leaves + GTAO cut-out), no errors', dk.ok && dk.before.gb, dk.detail + (derr.length ? ' ' + derr.join(' | ') : ''));
+  }
+  // Leaf emergence: no leaf may be first seen at a noticeable size. Per frame, the card length of every drawn instance
+  // is tracked from a fresh seedling; the first length above 0 is compared with the largest the instance reaches.
+  for (const sp of [1, 5]) {
+    const { ctx, mp, merr } = await phone('?speed=0&weather=calm&autoRotate=false');
+    await mp.waitForTimeout(1500);
+    const r = await mp.evaluate((speed) => new Promise((done) => {
+      const A = window.__arbor, m = new Map(), END = 13;
+      const tick = () => {
+        const L = A.leaves, mesh = L.mesh, n = mesh.count, D = L.frontD, ND = L.frontNode, arr = mesh.instanceMatrix.array, now = A.sim.time;
+        for (let i = 0; i < n; i++) {
+          const key = ND[i] * 4096 + Math.round(D[i * 11] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
+          let e = m.get(key);
+          if (!e) m.set(key, (e = { at: now, sv: 0, max: 0 }));
+          if (e.sv === 0 && s > 0) e.sv = s;
+          if (s > e.max) e.max = s;
+        }
+        if (now < END) return requestAnimationFrame(tick);
+        const fr = [...m.values()].filter((e) => e.at < END - 7.5 && e.max > 0).map((e) => e.sv / e.max);
+        fr.sort((x, y) => x - y);
+        done({ leaves: fr.length, max: +Math.max(0, ...fr).toFixed(3), median: +(fr[fr.length >> 1] ?? 1).toFixed(3), fe: A.frameErrors() });
+      };
+      A.params.time.speed = speed; requestAnimationFrame(tick);
+    }), sp);
+    await ctx.close();
+    // One slow frame at 5x is 0.4 s of sim time (11 % of the length by the emergence curve), hence median and a looser max.
+    check(`phone: leaves emerge from nothing at ${sp}x (first visible size: median <= 10 %, max <= 35 % of final)`, r.leaves >= 10 && r.median <= 0.1 && r.max <= 0.35 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
   }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
