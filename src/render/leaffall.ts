@@ -43,6 +43,8 @@ export interface LeafFallEnv {
   /** Param multipliers. */
   rate: number;
   litter: number;
+  /** Seasons: share of the litter still lying (1 = all; falls to 0 over winter). Slots above it (hash) are removed. */
+  keep?: number;
 }
 
 const m16 = new Float32Array(16), c3 = new Float32Array(3), bm = new Float32Array(16), bc = new Float32Array(3);
@@ -201,7 +203,7 @@ export class LeafFall {
     }
 
     this.stepAir(dt, wind, v, H, cx, cz, litCap);
-    this.stepLitter(dt, wind, litCap, airCap);
+    this.stepLitter(dt, wind, litCap, airCap, e.keep ?? 1);
 
     this.stats.air = this.n;
     if (this.n > this.stats.airPeak) this.stats.airPeak = this.n;
@@ -329,7 +331,7 @@ export class LeafFall {
   }
 
   /** Round-robin over the litter (a full scan per SCAN_S): browning, strong gusts lift lying leaves into a short hop. */
-  private stepLitter(dt: number, wind: Wind, cap: number, airCap: number) {
+  private stepLitter(dt: number, wind: Wind, cap: number, airCap: number, keep = 1) {
     const L = this.lit, hw = L.count;
     if (hw === 0) return;
     const la = L.instanceMatrix.array as Float32Array;
@@ -340,7 +342,7 @@ export class LeafFall {
       if (this.scan >= hw) this.scan = 0;
       const i = this.scan++;
       if (this.lAge[i] < 0) continue;
-      if (i >= cap) { this.hide(i); continue; } // cap went down (quality, pixel ratio)
+      if (i >= cap || (keep < 1 && ((i * 2246822519) >>> 8 & 1023) / 1023 >= keep)) { this.hide(i); continue; } // cap went down (quality, pixel ratio), or the winter took it
       this.lAge[i] += SCAN_S;
       const x = la[i * 16 + 12], z = la[i * 16 + 14];
       // Half of the leaves are lodged in the grass and never move.

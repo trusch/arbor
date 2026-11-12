@@ -1,3 +1,4 @@
+import type { SeasonParams } from './season';
 /**
  * Single typed parameter object. Every field is read live by the simulation
  * and renderer each frame, so it can be driven by UI or by automation.
@@ -163,6 +164,8 @@ export interface ArborParams {
     litter: number;
   };
   /** Weather (`src/weather.ts`): 'auto' = storms on a slow random schedule, 'calm' = never, 'storm' = held storm. */
+  /** Seasons (`src/season.ts`). Own group; excluded from `paramsSignature` (the date moves every frame) and preset loads. */
+  season: SeasonParams;
   weather: {
     event: 'auto' | 'calm' | 'storm';
     /** Lightning flashes and bolts (off = none at all: photosensitivity). */
@@ -204,6 +207,7 @@ export function defaultParams(): ArborParams {
     leaffall: { enabled: true, rate: 1, litter: 1 },
     weather: { event: 'auto', lightning: true },
     sway: { amount: 1 },
+    season: { on: true, yearLength: 300, date: 0, hold: false },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },
@@ -223,7 +227,7 @@ export function paramsSignature(p: ArborParams): number {
   const groups = p as unknown as Record<string, Record<string, unknown>>;
   let sig = 0, i = 1;
   for (const g in groups) {
-    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather' || g === 'leaffall') continue;
+    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather' || g === 'leaffall' || g === 'season') continue;
     const grp = groups[g];
     for (const f in grp) {
       const v = grp[f];
