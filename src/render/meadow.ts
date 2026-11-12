@@ -3,7 +3,8 @@ import type { TreeSim } from '../sim/tree';
 import { Rng } from '../sim/rng';
 import { wind } from '../wind';
 import { cleanLeafTexture } from './leaves';
-import { makeTuftTexture, makeFlowerTexture, type FlowerKind } from './textures';
+import { makeTuftTexture, makeFlowerTexture, makeTreeTexture, type FlowerKind } from './textures';
+import { plantScenery } from './backdrop';
 
 /**
  * Living meadow (audit WP3): grass tufts and wildflowers around the tree, rippling in travelling gusts.
@@ -21,6 +22,11 @@ const R_DISC = 14, R_FAR = 26;
 /** Shade field resolution and half extent (m); ms of bake work per frame. */
 const SG = 112, SE = R_FAR + 1, FRAME_BUDGET_MS = 1;
 const GRASS_MAX = 26000, FLOWER_MAX = 800;
+/** Far meadow (backdrop): larger, sparser tufts and flower clumps from R_NEAR_FAR out to R_BACK, where they have shrunk
+ *  into the ground. All of it lies inside the flat radius of the terrain (`R_FLAT` in backdrop.ts), so y = 0 holds. */
+/** Instance colour gain of the backdrop trees (tuned in screenshots against the oak and the ground). */
+const SCENE_GAIN = [0.8, 0.72, 1.0];
+const R_BACK = 64, FAR_GRASS = 4, FAR_GRASS_MAX = 15000, FAR_FLOWER_MAX = 900;
 const KINDS: FlowerKind[] = ['daisy', 'buttercup', 'poppy', 'clover'];
 /** Floats per instance: x, z, rot, width, height, hashA, hashB, r. */
 const STRIDE = 8;
@@ -44,6 +50,10 @@ interface Patch {
   data: Float32Array;
   n: number;
   flower: boolean;
+  /** Far-meadow patch: no crown shade, rim colours. */
+  far: boolean;
+  /** Trees and bushes of the backdrop: static (no wind shear), always all drawn, slot 7 holds the ground height. */
+  scenery: boolean;
   /** Phase slot whose shear this patch uses. */
   phase: number;
 }
@@ -109,7 +119,7 @@ export class Meadow {
   stats = { lastMs: 0, maxMs: 0, bakes: 0, sliceMaxMs: 0 };
 
   /** `leafMaterial`: the live leaf material. When it is the safe Lambert/basic one it is cloned (same program). */
-  constructor(leafMaterial: THREE.Material, seed = 7) {
+  constructor(leafMaterial: THREE.Material, seed = 7, far = true) {
     const safe = (leafMaterial as THREE.MeshLambertMaterial).isMeshLambertMaterial || (leafMaterial as THREE.MeshBasicMaterial).isMeshBasicMaterial;
     const material = (map: THREE.Texture) => {
       const tex = cleanLeafTexture(map);
@@ -173,13 +183,47 @@ export class Meadow {
         left -= n;
       }
     });
+    // Far meadow: its own rng, so the near placement is the same with and without it. Density falls off about
+    // exponentially from the edge of the near disc, clump width grows with distance to hold the coverage at a glancing
+    // angle, and the last 16 m shrink into the ground like the near rim does.
+    const NEAR = PHASES + KINDS.length * 2;
+    if (far) {
+      const r2 = new Rng(seed + 101);
+      const put = (li: number, x: number, z: number, w: number, h: number) => {
+        (lists[li] ??= []).push(x, z, r2.next() * Math.PI, w, h, r2.next(), r2.next(), Math.hypot(x, z));
+      };
+      for (let i = 0; i < FAR_GRASS_MAX; i++) {
+        let r: number;
+        do r = 13 + (R_BACK - 13) * r2.next(); while (r2.next() > (r / 30) * Math.exp(-(r - 13) / 15) * smooth(12, 21, r) * 1.9);
+        const a = r2.next() * Math.PI * 2, edge = 1 - 0.8 * smooth(R_BACK - 18, R_BACK, r);
+        const tall = r2.next() < 0.2, grow = 1 + (r - 13) / 16;
+        put(NEAR + (i % FAR_GRASS), Math.cos(a) * r, Math.sin(a) * r, r2.range(0.6, 1.1) * grow * (0.5 + 0.5 * edge), (tall ? r2.range(0.4, 0.6) : r2.range(0.2, 0.36)) * (1 + r / 45) * edge);
+      }
+      // Flower clumps as specks of colour: daisies, buttercups, a few poppies.
+      for (let s = 0; s < 3; s++) {
+        let left = Math.round(FAR_FLOWER_MAX * [0.45, 0.4, 0.15][s]);
+        while (left > 0) {
+          const cr = 13 + 40 * Math.pow(r2.next(), 1.5), ca = r2.next() * Math.PI * 2, spread = r2.range(1, 3.5);
+          const n = Math.min(left, 4 + Math.floor(r2.next() * r2.next() * 30));
+          for (let i = 0; i < n; i++) {
+            const x = Math.cos(ca) * cr + (r2.next() + r2.next() - 1) * spread * 1.6, z = Math.sin(ca) * cr + (r2.next() + r2.next() - 1) * spread;
+            const h = r2.range(0.3, 0.46) * (1 + Math.hypot(x, z) / 40);
+            put(NEAR + FAR_GRASS + s, x, z, h * 1.1, h);
+          }
+          left -= n;
+        }
+      }
+    }
+    const SCN = NEAR + FAR_GRASS + 3;
+    if (far) for (const p of plantScenery()) (lists[SCN + (p.bush ? 2 : p.hash < 0.5 ? 0 : 1)] ??= []).push(p.x, p.z, p.hash * Math.PI, p.w, p.h, p.hash, (p.hash * 7.31) % 1, p.y);
     const tuft = [material(makeTuftTexture(5)), material(makeTuftTexture(9))];
+    const sceneMat = far ? [material(makeTreeTexture(3, false)), material(makeTreeTexture(8, false)), material(makeTreeTexture(5, true))] : [];
     const flowerMat = KINDS.map((k) => material(makeFlowerTexture(k)));
-    for (let li = 0; li < PHASES + KINDS.length * 2; li++) {
+    for (let li = 0; li < NEAR + (far ? FAR_GRASS + 6 : 0); li++) {
       const data = new Float32Array(lists[li] ?? []);
       const n = data.length / STRIDE;
-      const flower = li >= PHASES;
-      const mm = flower ? flowerMat[(li - PHASES) >> 1] : tuft[li % 2];
+      const scenery = li >= SCN, isFar = li >= NEAR, flower = scenery ? false : isFar ? li >= NEAR + FAR_GRASS : li >= PHASES;
+      const mm = scenery ? sceneMat[li - SCN] : isFar ? (flower ? flowerMat[li - NEAR - FAR_GRASS] : tuft[li % 2]) : flower ? flowerMat[(li - PHASES) >> 1] : tuft[li % 2];
       const mesh = new THREE.InstancedMesh(geo, mm.m, Math.max(1, n));
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 3), 3);
       mesh.castShadow = false;
@@ -190,7 +234,7 @@ export class Meadow {
       mesh.count = 0;
       this.group.add(mesh);
       // Flower patches copy the shear of a mid-field grass phase with the same fast-ripple phase.
-      this.patches.push({ mesh, data, n, flower, phase: flower ? ((li - PHASES) % 2 ? 16 : 13) : li });
+      this.patches.push({ mesh, data, n, flower, far: isFar, scenery, phase: isFar ? ((li - NEAR) * 5 + 2) % PHASES : flower ? ((li - PHASES) % 2 ? 16 : 13) : li });
     }
     this.counts.meshes = this.patches.length;
   }
@@ -209,6 +253,7 @@ export class Meadow {
       this.kz[p] = wind.dirZ * along + wind.dirX * across;
     }
     for (const pt of this.patches) {
+      if (pt.scenery) continue;
       const e = pt.mesh.matrix.elements;
       e[4] = this.kx[pt.phase]; e[6] = this.kz[pt.phase];
       pt.mesh.matrixWorldNeedsUpdate = true;
@@ -334,7 +379,7 @@ export class Meadow {
     if (!L) return;
     const t0 = performance.now();
     const pt = this.patches[pi], { data, mesh } = pt;
-    const n = Math.min(pt.n, Math.ceil(pt.n * L.frac));
+    const n = pt.scenery ? pt.n : Math.min(pt.n, Math.ceil(pt.n * L.frac));
     const M = mesh.instanceMatrix.array as Float32Array, C = mesh.instanceColor!.array as Float32Array;
     const n0 = sim.nodes[0], tx = n0?.wx ?? 0, tz = n0?.wz ?? 0, tR = Math.max(0.03, n0?.radius ?? 0.05);
     const sun = L.sunCol, hemi = L.hemi, ly = Math.max(0, L.sunDir.y);
@@ -346,10 +391,11 @@ export class Meadow {
       const rt = Math.hypot(x - tx, z - tz);
       // Crown shade: straight up decides how the plant grows, toward the sun decides how it is lit right now.
       // Both come from the blurred shade field, so neighbouring tufts get neighbouring values (a gradient, not squares).
-      const up = this.shade(this.shUp, x, z);
-      const ts = (0.38 + 0.34 * L.night) + (0.62 - 0.34 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
+      const up = pt.far ? 1 : this.shade(this.shUp, x, z);
+      const ts = pt.far ? 1 : (0.38 + 0.34 * L.night) + (0.62 - 0.34 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
-      if (pt.flower) {
+      if (pt.scenery) show = true;
+      else if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
         h *= 1 - 0.2 * L.night;
       } else {
@@ -364,14 +410,15 @@ export class Meadow {
       M[q] = c * w; M[q + 1] = 0; M[q + 2] = -s * w; M[q + 3] = 0;
       M[q + 4] = (hB - 0.5) * 0.3 * h; M[q + 5] = h; M[q + 6] = (hA - 0.5) * 0.3 * h; M[q + 7] = 0; // slight static lean per tuft
       M[q + 8] = s * w; M[q + 9] = 0; M[q + 10] = c * w; M[q + 11] = 0;
-      M[q + 12] = x; M[q + 13] = -0.03 * h; M[q + 14] = z; M[q + 15] = 1;
+      M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h; M[q + 14] = z; M[q + 15] = 1;
       // Colour: tint variation (macro drifts of lush / dry, per-tuft jitter) x shade.
       const col = this.col;
-      if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
+      if (pt.scenery) col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.78 + 0.36 * hA);
+      else if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
       else {
         const macro = vnoise(x * 0.23 + 3.1, z * 0.23 - 1.7), fine = vnoise(x * 1.3, z * 1.3);
         // Toward the rim the tufts stand alone on the ground texture: less straw and a little darker there, so they read as grass, not clumps.
-        const rim = smooth(9, 22, data[o + 7]);
+        const rim = pt.scenery ? 1 : smooth(9, 22, data[o + 7]);
         const dry = smooth(0.5, 0.8, macro * 0.7 + fine * 0.2 + hB * 0.25) * (1 - 0.7 * rim);
         const v = (0.72 + 0.34 * hA + 0.14 * (fine - 0.5)) * (1 - 0.16 * rim);
         // Channel gains measured against the ground in screenshots (the ground also gets sky fill from the env map).

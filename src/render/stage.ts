@@ -5,12 +5,18 @@ import type { TreeSim } from '../sim/tree';
 import { makeGrassTexture } from './textures';
 import { Atmosphere } from './atmosphere';
 import { Post } from './post';
+import { makeTerrainGeometry } from './backdrop';
 import { tel } from '../tel';
 
 /** Seconds the camera takes to ease from a hand-set view back into the automatic camera. */
 const EASE_S = 3;
 
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
+/** Linear ground colour factor with the backdrop on (the old 0xdcdcb4 is 0.72, 0.72, 0.46). */
+const GROUND_GAIN = [0.9, 0.93, 0.55];
+/** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (12 % at 250 m, 40 % at 500 m, 80 % at 900 m). */
+const HAZE = 0.45;
+
 export class Stage {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -33,6 +39,8 @@ export class Stage {
   /** True between webglcontextlost and the reload on webglcontextrestored. */
   contextLost = false;
   fog: THREE.FogExp2;
+  /** False with ?backdrop=0 (old level disc, hill ring and fog density). */
+  private backdrop = true;
   private groundU = { trunk: { value: new THREE.Vector3(0, 0, 0.1) }, tint: { value: new THREE.Vector4(0, 0, 0, 0) } };
   /** Companion-star fill light (no shadows). */
   sun2: THREE.DirectionalLight;
@@ -52,7 +60,7 @@ export class Stage {
   private dist = 6;
   private sunUv = new THREE.Vector3();
 
-  constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean; onContextLost?: () => boolean } = {}) {
+  constructor(container: HTMLElement, opts: { antialias?: boolean; shadows?: boolean; backdrop?: boolean; onContextLost?: () => boolean } = {}) {
     const r = (this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? true, powerPreference: 'high-performance', alpha: false }));
     r.setPixelRatio(1);
     r.setSize(window.innerWidth, window.innerHeight);
@@ -70,6 +78,7 @@ export class Stage {
     this.controls.autoRotateSpeed = 0.35;
     this.controls.maxPolarAngle = Math.PI * 0.495;
 
+    this.backdrop = opts.backdrop ?? true;
     this.fog = new THREE.FogExp2(0xb8c7d6, 0.006);
     this.scene.fog = this.fog;
     this.atmo = new Atmosphere(r, this.scene);
@@ -86,7 +95,7 @@ export class Stage {
     this.sun2 = new THREE.DirectionalLight(0xffffff, 0);
     this.scene.add(this.sun2, this.sun2.target);
 
-    this.scene.add(this.makeGround(), this.makeHills());
+    this.scene.add(this.makeGround(opts.backdrop ?? true), this.makeHills(opts.backdrop ?? true));
 
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -211,8 +220,11 @@ export class Stage {
   }
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
-  private makeGround() {
+  private makeGround(backdrop: boolean) {
     const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.96, color: 0xdcdcb4 });
+    // Backdrop: the ground carries the far meadow on its own, so its colour is lifted to the mean of the lit tufts
+    // (uniform only; same program). ?backdrop=0 keeps the old darker value.
+    if (backdrop) mat.color.setRGB(GROUND_GAIN[0], GROUND_GAIN[1], GROUND_GAIN[2]);
     const gu = this.groundU;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTrunk = gu.trunk;
@@ -244,13 +256,16 @@ export class Stage {
           }`,
         );
     };
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(3000, 96).rotateX(-Math.PI / 2), mat);
+    // Backdrop: rolling terrain (flat within R_FLAT of the tree) instead of the level disc; same material, same attributes.
+    const ground = new THREE.Mesh(backdrop ? makeTerrainGeometry() : new THREE.CircleGeometry(3000, 96).rotateX(-Math.PI / 2), mat);
     ground.receiveShadow = true;
     return ground;
   }
 
   /** Low distant hill silhouette ring; fog turns it into soft layered atmosphere. */
-  private makeHills() {
+  private makeHills(backdrop: boolean) {
+    // Backdrop: the terrain carries the ridges and the meadow draws the trees; the ring (and its program) is gone.
+    if (backdrop) return new THREE.Group();
     const g = new THREE.CylinderGeometry(900, 900, 1, 256, 1, true);
     const pos = g.attributes.position;
     for (let i = 0; i < pos.count; i++) {
@@ -289,7 +304,7 @@ export class Stage {
     const A = this.atmo;
     const night = A.night;
     this.fog.color.copy(A.fogColor);
-    this.fog.density = k.fog * 0.004;
+    this.fog.density = k.fog * 0.004 * (this.backdrop ? HAZE : 1);
 
     const mn = sim.bboxMin, mx = sim.bboxMax;
     const c = new THREE.Vector3((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);

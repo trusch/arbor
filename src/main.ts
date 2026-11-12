@@ -71,7 +71,7 @@ function lowEndDevice() {
 tel.phase('init stage');
 let stageOrNull: Stage | null = null;
 try {
-  stageOrNull = new Stage(document.body, { antialias: diag.antialias, shadows: diag.shadows, onContextLost: contextLost });
+  stageOrNull = new Stage(document.body, { antialias: diag.antialias, backdrop: diag.backdrop, shadows: diag.shadows, onContextLost: contextLost });
 } catch (e) {
   // Chrome blocks WebGL for the site after a GPU reset: "Error creating WebGL context."
   tel.log('webgl_create_failed', { msg: String((e as Error)?.message ?? e) });
@@ -165,7 +165,7 @@ if (diag.leaves) stage.scene.add(leaves.mesh);
 const canopy = new CanopyShadow();
 stage.scene.add(canopy.mesh);
 /** Living meadow (WP3): P-LEAF clones of the live leaf material; ?meadow=0 or the Meadow switch turns it off. */
-const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material) : null;
+const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material, 7, diag.backdrop) : null;
 if (meadow) stage.scene.add(meadow.group);
 const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
 /** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */

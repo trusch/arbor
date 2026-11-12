@@ -35,6 +35,8 @@ export function diagSwitches(q: URLSearchParams) {
     sway: !off('sway'),
     /** ?leaffall=0: no falling leaves and no leaf litter. */
     leaffall: !off('leaffall'),
+    /** ?backdrop=0: the old background (level ground disc, single hill ring, meadow ending at 26 m). */
+    backdrop: !off('backdrop'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),

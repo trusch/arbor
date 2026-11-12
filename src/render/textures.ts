@@ -621,6 +621,51 @@ export function makeTuftTexture(seed = 5): THREE.Texture {
   return t;
 }
 
+/** Backdrop tree / bush map: a crown of leaf-clump dabs over a trunk (bush: a low mound, no trunk), lit from above
+ *  with dark gaps inside and a ragged outline. Alpha is 0/1 after cleanLeafTexture. */
+export function makeTreeTexture(seed = 3, bush = false): THREE.Texture {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const rng = new Rng(seed * 31 + (bush ? 7 : 0));
+  if (!bush) {
+    // Trunk and two limbs.
+    g.strokeStyle = 'rgb(58,46,36)'; g.lineCap = 'round';
+    const tx = S * (0.5 + rng.range(-0.03, 0.03));
+    g.lineWidth = S * 0.05; g.beginPath(); g.moveTo(tx, S); g.lineTo(tx + S * rng.range(-0.02, 0.02), S * 0.55); g.stroke();
+    g.lineWidth = S * 0.028;
+    for (const sgn of [-1, 1]) { g.beginPath(); g.moveTo(tx, S * 0.72); g.lineTo(tx + sgn * S * rng.range(0.1, 0.2), S * rng.range(0.45, 0.55)); g.stroke(); }
+  }
+  // Lobes: the crown outline is their union.
+  const lobes: number[][] = [];
+  const cy0 = bush ? 0.66 : 0.4, ry0 = bush ? 0.3 : 0.33, nl = bush ? 6 : 9;
+  for (let i = 0; i < nl; i++) {
+    const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * 0.62;
+    lobes.push([0.5 + Math.cos(a) * d * 0.4, cy0 + Math.sin(a) * d * ry0, rng.range(0.13, 0.2) * (bush ? 0.95 : 1)]);
+  }
+  lobes.push([0.5, cy0, 0.22]);
+  const dabs: number[][] = [];
+  for (let k = 0; k < 1500; k++) {
+    const L = lobes[Math.floor(rng.next() * lobes.length)];
+    const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * L[2];
+    const x = L[0] + Math.cos(a) * d, y = L[1] + Math.sin(a) * d * 0.9;
+    if (y > 0.985) continue;
+    // Light: top of its lobe and top of the crown are lit, undersides and the interior are dark.
+    const inLobe = (L[1] - y) / L[2], glob = (cy0 - y) / ry0;
+    dabs.push([x, y, 0.5 + 0.3 * inLobe + 0.16 * glob + rng.range(-0.2, 0.2), rng.range(0.012, 0.028)]);
+  }
+  dabs.sort((p, q) => q[1] - p[1] + (p[2] - q[2]) * 0.2); // lower ones first, so each lobe's lit top overlaps the shade below
+  for (const [x, y, lt, r] of dabs) {
+    const v = Math.min(1, Math.max(0, lt));
+    g.fillStyle = `rgb(${(26 + 78 * v * v) | 0},${(40 + 96 * v) | 0},${(20 + 34 * v * v) | 0})`;
+    g.beginPath(); g.ellipse(x * S, y * S, r * S * 1.25, r * S, rng.range(-0.6, 0.6), 0, Math.PI * 2); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export type FlowerKind = 'daisy' | 'buttercup' | 'poppy' | 'clover';
 /** Wildflower map (WP3): a few stems with side-on flower heads in the upper part, small leaves low down. */
 export function makeFlowerTexture(kind: FlowerKind): THREE.Texture {
