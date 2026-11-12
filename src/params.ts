@@ -105,6 +105,10 @@ export interface ArborParams {
     sunYaw: number;
     exposure: number;
     skyGain: number;
+    /** Wind strength 0..1 (single wind source `src/wind.ts`; halves at night). */
+    wind: number;
+    /** Grass tufts and wildflowers around the tree. */
+    meadow: boolean;
     /** Fog / aerial perspective density multiplier. */
     fog: number;
     stars: number;
@@ -168,7 +172,7 @@ export function defaultParams(): ArborParams {
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
     leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
     light: { azimuth: 35, elevation: 50 },
-    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },
   };

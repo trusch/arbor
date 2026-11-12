@@ -11,6 +11,8 @@ import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
 import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
+import { Meadow, type MeadowLight } from './render/meadow';
+import { wind } from './wind';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -143,6 +145,26 @@ if (diag.leaves) stage.scene.add(leaves.mesh);
 /** CPU canopy shadow decal wherever leaves cannot cast shadow-map shadows (safe path); branches then stop casting. */
 const canopy = new CanopyShadow();
 stage.scene.add(canopy.mesh);
+/** Living meadow (WP3): P-LEAF clones of the live leaf material; ?meadow=0 or the Meadow switch turns it off. */
+const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material) : null;
+if (meadow) stage.scene.add(meadow.group);
+const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
+function meadowFrame(dt: number) {
+  wind.update(dt, params.sky.wind, stage.atmo.night);
+  if (!meadow) return;
+  meadow.group.visible = params.sky.meadow;
+  if (!params.sky.meadow) return;
+  tel.phase('meadow', true);
+  const S = stage.sun, H = stage.hemi, L = meadowLight;
+  L.sunDir.copy(S.position).sub(S.target.position).normalize();
+  L.sunCol.copy(S.color).multiplyScalar(S.intensity);
+  L.hemi.copy(H.color).multiplyScalar(H.intensity);
+  L.night = stage.atmo.night; L.tintHue = params.sky.groundHue; L.tint = Math.min(1, params.sky.groundTint);
+  // 6k tufts on Low, 20k on High; half when the adaptive pixel ratio has stepped down (overdraw relief).
+  const low = params.sky.quality === 'Low';
+  L.frac = low ? (stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.15 : 0.3) : 1;
+  meadow.frame(sim, L, elapsed);
+}
 const sunDirTmp = new THREE.Vector3();
 const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
@@ -301,6 +323,7 @@ function frame(now: number) {
   tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
   redraw(elapsed, dt);
+  meadowFrame(dt);
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -357,6 +380,8 @@ requestAnimationFrame(loop);
   sim,
   leaves,
   canopy,
+  meadow,
+  wind,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {
@@ -365,6 +390,8 @@ requestAnimationFrame(loop);
     stage.frame(sim, params, 0, true);
     meshAge = Infinity;
     redraw(elapsed, 0);
+    meadowFrame(0);
+    meadow?.bakeAll(sim);
     stage.render(params);
     return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time, height: +sim.bboxMax[1].toFixed(2), width: +Math.max(sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]).toFixed(2) };
   },
