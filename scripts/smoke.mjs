@@ -553,7 +553,7 @@ try {
       const tick = () => {
         const L = A.leaves, mesh = L.mesh, n = mesh.count, D = L.frontD, ND = L.frontNode, arr = mesh.instanceMatrix.array, now = A.sim.time;
         for (let i = 0; i < n; i++) {
-          const key = ND[i] * 4096 + Math.round(D[i * 9] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
+          const key = ND[i] * 4096 + Math.round(D[i * 11] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
           let e = m.get(key);
           if (!e) m.set(key, (e = { at: now, sv: 0, max: 0 }));
           if (e.sv === 0 && s > 0) e.sv = s;

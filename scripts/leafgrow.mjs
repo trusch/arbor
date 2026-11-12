@@ -42,9 +42,9 @@ try {
       const L = a.leaves, mesh = L.mesh; if (!mesh) return;
       const n = mesh.count, D = L.frontD, ND = L.frontNode, arr = mesh.instanceMatrix.array, now = a.sim.time;
       for (let i = 0; i < n; i++) {
-        const key = ND[i] * 4096 + Math.round(D[i * 9] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
+        const key = ND[i] * 4096 + Math.round(D[i * 11] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
         let r = T.m.get(key);
-        if (!r) { r = { node: ND[i], born: D[i * 9 + 8], first: now, s0: s, max: s, old }; T.m.set(key, r); }
+        if (!r) { r = { node: ND[i], born: D[i * 11 + 8], first: now, s0: s, max: s, old }; T.m.set(key, r); }
         if (s > r.max) r.max = s;
         if (r.seen === undefined && s > 0) { r.seen = now; r.sv = s; }
       }

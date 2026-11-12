@@ -240,6 +240,9 @@ export class Leaves {
   private passT: Float32Array | null = null;
   private backC = new Float32Array(0);
   private scratch = new Float32Array(16);
+  private scratch2 = new Float32Array(16);
+  /** Bake only: `place` draws the leaf at this emergence age instead of the record's (-1 = off). */
+  private poseAge = -1;
   private followAt = 0;
   /**
    * Per-instance placement record (LEAF_D floats: t, cos/sin around, cos/sin tilt, cos/sin roll, base size, born) and
@@ -580,7 +583,8 @@ export class Leaves {
       // (or passing its bud-break or fall date)
       if (!mv && now - D[k + 8] > GROW_TIME + 1 && !(sOn && ((ph >= D[k + 10] && ph < D[k + 10] + LEAF_EPS) || (ph > D[k + 9] && ph < D[k + 9] + 0.05 + LEAF_EPS)))) continue;
       placed++;
-      const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr) : 1;
+      // (a record inside an open pass carries -1 - stagger in the born slot: a leaf about to emerge, grown this year)
+      const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr || (D[k + 8] < 0 && D[k + 8] >= -2 && spr > -1e8)) : 1;
       if (ks === 0) {
         // Not in leaf (bud, or fallen). A leaf that lets go now is handed to the falling-leaf system as it was drawn.
         if (dropP > 0 && ph >= D[k + 10] && DQ.n < 48 && out[o + 4] * out[o + 4] + out[o + 5] * out[o + 5] + out[o + 6] * out[o + 6] > 1e-8 && Math.random() < dropP) {
@@ -602,7 +606,7 @@ export class Leaves {
       let il = 1 / (Math.sqrt(ayx * ayx + ayy * ayy + ayz * ayz) || 1);
       ayx *= il; ayy *= il; ayz *= il;
       // Emergence: short, narrow and lying along the shoot at first, then it lengthens, broadens and swings out.
-      const age = now - D[k + 8];
+      const age = this.poseAge >= 0 ? this.poseAge : now - D[k + 8];
       let gl = 1, gw = 1;
       if (age < GROW_TIME) {
         const op = leafOpen(age), sw = op.swing;
@@ -848,6 +852,14 @@ export class Leaves {
       ND[n] = lf.node;
       // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
       this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0);
+      // Safe path, emerging leaf: the bake wants the light of the GROWN pose (`e2`) and compensates the Lambert term of
+      // the pose it is drawn in (`e`, taken at least 0.2 s into the emergence: at scale 0 there is no normal).
+      const emg = bakeAll && age < GROW_TIME, e2 = this.scratch2;
+      if (emg) {
+        this.poseAge = GROW_TIME; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e2, 0);
+        if (sim.time - D[k + 8] < 0.2 || em < 0) { this.poseAge = 0.2; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0); }
+        this.poseAge = -1;
+      }
       this.pos.set(e[12], e[13], e[14]);
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
       // An emerging leaf is paler and yellower still (`flush`), and darkens as it opens.
@@ -899,9 +911,37 @@ export class Leaves {
         const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
         const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
         const sd = Math.abs(ndl) * vis;
+        const fl = emg ? Math.hypot(e2[8], e2[9], e2[10]) : 0;
+        if (fl > 0) {
+          // Emerging: the card is narrow (folded), and the instance normal transform fans the cupped blade's normals
+          // out by 1 / width (about 45 degrees to either side at 35 % width, 20 when grown), while the leaf lies along
+          // the shoot with its middle normal level and often turned away from the sun. E_lambert of the middle normal
+          // is then the hemisphere term alone, the ratio runs to 5..8, and the half of the blade whose normals do see
+          // the sun is drawn 5 to 8 times too bright: a cream-white leaf. So: wanted light = that of the GROWN pose
+          // (no jump when it gets there), E_lambert = the brightest normal anywhere on the blade of the
+          // drawn pose plus a margin (a colour baked a few frames before the leaf swings further cannot overshoot).
+          // Both corrections fade out over the last 40 % of the emergence, where the poses meet: the lit half of a
+          // young leaf gets what a grown leaf gets, the other half is darker, nothing is brighter.
+          let fx = e2[8] / fl, fy = e2[9] / fl, fz = e2[10] / fl;
+          if (fx * vx + fy * vy + fz * vz < 0) { fx = -fx; fy = -fy; fz = -fz; }
+          const ndF = fx * L.x + fy * L.y + fz * L.z, hwF = 0.5 * fy + 0.5;
+          const glF = (0.15 * (ndF < 0 ? 1 : 0.3) + 0.55 * into * into) * vis, sdF = Math.abs(ndF) * vis;
+          const w = 1 - smooth(0.6, 1, age / GROW_TIME), mg = 0.1 * w;
+          // Blade normals in the card frame: (-1.2 x / sx, 0.36 y / sy, 1 / sz), x within +-0.3, y 0.12..1.12.
+          const zl = Math.hypot(e[8], e[9], e[10]), xl = Math.hypot(e[0], e[1], e[2]), yl = Math.hypot(e[4], e[5], e[6]);
+          const fs = nx * e[8] + ny * e[9] + nz * e[10] < 0 ? -1 : 1; // the camera sees the back copy
+          const xL = xl > 0 ? Math.abs(e[0] * L.x + e[1] * L.y + e[2] * L.z) / xl : 0, yL = yl > 0 ? fs * (e[4] * L.x + e[5] * L.y + e[6] * L.z) / yl : 0;
+          const a = xl > 0 ? 0.36 * zl / xl : 0, b = yl > 0 ? (yL > 0 ? 0.4 : 0.043) * zl / yl : 0;
+          const ndE = (ndl + a * xL + b * yL) / Math.sqrt(1 + a * a + b * b), nd0 = Math.max(0, ndl);
+          const ndU = nd0 + (Math.max(nd0, ndE) - nd0) * w;
+          kr = bakeChE(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r, hw, ndU, hwF, occ, sdF, glF, mg);
+          kg = bakeChE(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g, hw, ndU, hwF, occ, sdF, glF, mg);
+          kb = bakeChE(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b, hw, ndU, hwF, occ, sdF, glF, mg);
+        } else {
         kr = bakeCh(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r, hw, ndl, occ, sd, glow);
         kg = bakeCh(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g, hw, ndl, occ, sd, glow);
         kb = bakeCh(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b, hw, ndl, occ, sd, glow);
+        }
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
@@ -968,6 +1008,13 @@ function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, h
   const hemi = gr + (sky - gr) * hw;
   const El = hemi + sun * Math.max(0, ndl);
   const Ew = hemi * occ + sun * (sd + glow * tint);
+  return Math.min(8, Ew / Math.max(0.02, El)) / i;
+}
+
+/** `bakeCh` for an emerging leaf: E_lambert of the drawn pose (`hw`, `ndl`, plus `mg` x sun), E_wanted of the grown pose (`hwF`, `sd`, `glow`). */
+function bakeChE(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, hwF: number, occ: number, sd: number, glow: number, mg: number) {
+  const El = gr + (sky - gr) * hw + sun * (Math.max(0, ndl) + mg);
+  const Ew = (gr + (sky - gr) * hwF) * occ + sun * (sd + glow * tint);
   return Math.min(8, Ew / Math.max(0.02, El)) / i;
 }
 
