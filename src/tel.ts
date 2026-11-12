@@ -31,6 +31,8 @@ export function diagSwitches(q: URLSearchParams) {
     rain: !off('rain'),
     /** ?breakage=0: no wind breakage (limbs never snap; dev hooks still work). */
     breakage: !off('breakage'),
+    /** ?sway=0: wood and leaves do not move with the wind (rest pose). */
+    sway: !off('sway'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),

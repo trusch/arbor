@@ -55,7 +55,8 @@ export class BranchMesh {
     return 5;
   }
 
-  update(sim: TreeSim, flare = 1) {
+  /** `off`: optional per-node offsets (3 floats per node id, `Sway.D`) added to the rest positions. */
+  update(sim: TreeSim, flare = 1, off: Float32Array | null = null) {
     const nodes = sim.nodes;
     const chains = sim.chains;
     // Count.
@@ -117,8 +118,14 @@ export class BranchMesh {
         let cx = nd.wx, cy = nd.wy, cz = nd.wz;
         let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
         // Tangent: central difference, one-sided at ends.
-        const a = nodes[ids[Math.max(0, kk - 1)]], b = nodes[ids[Math.min(m - 1, kk + 1)]];
+        const ia = ids[Math.max(0, kk - 1)], ib = ids[Math.min(m - 1, kk + 1)];
+        const a = nodes[ia], b = nodes[ib];
         let tx = b.wx - a.wx, ty = b.wy - a.wy, tz = b.wz - a.wz;
+        if (off) {
+          const oc = ids[kk] * 3, oa = ia * 3, ob = ib * 3;
+          cx += off[oc]; cy += off[oc + 1]; cz += off[oc + 2];
+          tx += off[ob] - off[oa]; ty += off[ob + 1] - off[oa + 1]; tz += off[ob + 2] - off[oa + 2];
+        }
         let tl = Math.hypot(tx, ty, tz);
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
         tx /= tl; ty /= tl; tz /= tl;

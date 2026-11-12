@@ -131,6 +131,11 @@ export interface ArborParams {
     groundTint: number;
     quality: 'High' | 'Low';
   };
+  /** Wind motion of limbs and leaves (`src/render/sway.ts`). Own group so it merges cleanly. */
+  sway: {
+    /** Motion amount: 0 = rigid tree, 1 = default. */
+    amount: number;
+  };
   /** Wind breakage (WP10). Own group so it merges cleanly next to `weather`. */
   breakage: {
     /** Limbs and twigs can snap in storm-strength wind. */
@@ -187,6 +192,7 @@ export function defaultParams(): ArborParams {
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
     weather: { event: 'auto', lightning: true },
+    sway: { amount: 1 },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },

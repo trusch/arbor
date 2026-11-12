@@ -352,6 +352,7 @@ export class Leaves {
       m.count = old.count;
     }
     this.capacity = cap;
+    if (this.restT.length < cap * 3) { const rt = new Float32Array(cap * 3); rt.set(this.restT); this.restT = rt; }
     if (this.backC.length < cap * 3) {
       this.backC = new Float32Array(cap * 3);
       this.backD = new Float32Array(cap * LEAF_D); this.backNode = new Int32Array(cap);
@@ -455,6 +456,8 @@ export class Leaves {
    */
   private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array, o: number, moved: Uint8Array | null = null): number {
     const nodes = sim.nodes, lp = p.leaves, now = sim.time;
+    // Drawn matrices also record their rest translation (wind sway adds its offset to it, see `sway`).
+    const RT = this.mesh && out === this.mesh.instanceMatrix.array ? this.restT : null;
     let placed = 0, mv = true;
     const H = Math.max(2, sim.bboxMax[1]);
     const sh = lp.shape, kx = sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh, ky = sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh;
@@ -507,8 +510,36 @@ export class Leaves {
       out[o + 4] = ayx * sy; out[o + 5] = ayy * sy; out[o + 6] = ayz * sy; out[o + 7] = 0;
       out[o + 8] = rzx * s; out[o + 9] = rzy * s; out[o + 10] = rzz * s; out[o + 11] = 0;
       out[o + 12] = x; out[o + 13] = y; out[o + 14] = z; out[o + 15] = 1;
+      if (RT) { const q = i * 3; RT[q] = x; RT[q + 1] = y; RT[q + 2] = z; }
     }
     return placed;
+  }
+
+  /** Rest translation per drawn instance (written by `place`); `sway` draws rest + offset. */
+  private restT = new Float32Array(0);
+  /**
+   * Wind sway: translation of every drawn instance = its rest translation + the offset of its twig (`D` = 3 floats
+   * per node id, `P` = parent id per node; the leaf's `t` interpolates parent -> node). Derived from rest every
+   * call (no accumulation), translation only, data-only (one `instanceMatrix` upload). Call after `follow` / the
+   * pass step of the frame: both write rest translations.
+   */
+  sway(D: Float32Array, P: Int32Array): void {
+    const n = this.followOk ? this.mesh.count : 0;
+    if (n === 0) return;
+    const M = this.mesh.instanceMatrix, arr = M.array as Float32Array, RT = this.restT, ND = this.frontNode, FD = this.frontD;
+    const N = D.length / 3;
+    for (let i = 0, o = 12, q = 0; i < n; i++, o += 16, q += 3) {
+      const id = ND[i];
+      if (id < 0 || id >= N) continue;
+      const a = id * 3, b = P[id] * 3, t = FD[i * LEAF_D];
+      if (b < 0) continue;
+      arr[o] = RT[q] + D[b] + (D[a] - D[b]) * t;
+      arr[o + 1] = RT[q + 1] + D[b + 1] + (D[a + 1] - D[b + 1]) * t;
+      arr[o + 2] = RT[q + 2] + D[b + 2] + (D[a + 2] - D[b + 2]) * t;
+    }
+    M.clearUpdateRanges();
+    M.addUpdateRange(0, n * 16);
+    M.needsUpdate = true;
   }
 
   /**
@@ -531,6 +562,8 @@ export class Leaves {
       if (id < 0 || id >= N || !inSub[id]) continue;
       const o = i * 16;
       for (let j = 0; j < 16; j++) { matrices[k * 16 + j] = arr[o + j]; arr[o + j] = 0; }
+      // Rest pose, not the swayed one: the debris wood is built from rest geometry.
+      matrices[k * 16 + 12] = this.restT[i * 3]; matrices[k * 16 + 13] = this.restT[i * 3 + 1]; matrices[k * 16 + 14] = this.restT[i * 3 + 2];
       colours[k * 3] = col[i * 3]; colours[k * 3 + 1] = col[i * 3 + 1]; colours[k * 3 + 2] = col[i * 3 + 2];
       ND[i] = -1;
       k++;
