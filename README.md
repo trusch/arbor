@@ -32,18 +32,21 @@ days, nights, weather and seasons.
 
 ## Using it
 
-Open the page and watch; the camera frames the tree by itself. Drag or scroll to take the camera, and tap the pill at the
+Every visit proposes a different tree. The start screen shows it in plain words; pick a leaf from the pictures, adjust
+height, width, droop and leaf colour if you like, tap "Another" for a new proposal, and "Plant this tree" to start (one
+tap is enough). Then watch; the camera frames the tree by itself. Drag or scroll to take the camera, and tap the pill at the
 top left to hand it back. The controls panel (side panel on desktop, "Controls" bottom sheet on phones) has tabs for
 growing, shape, leaves, sky, seasons and everything else. Keys: **H** hides the interface, **C** toggles the cinematic
 camera, **D** shows a debug line. Most settings can also be given in the URL, for example
 [`?preset=Weeping willow`](https://trusch.github.io/arbor/?preset=Weeping%20willow) or
 [`?t=90&season.date=0.62&season.hold=true`](https://trusch.github.io/arbor/?t=90&season.date=0.62&season.hold=true)
-(a grown tree held in mid autumn).
+(a grown tree held in mid autumn). A link that asks for a specific tree or state skips the start
+screen and grows exactly that; `?start=0` skips it for the default oak.
 
 ## Status
 
-A work in progress. Not built yet: blossom, seasons in the meadow and the background trees, snow, growth tied to the
-year. Known weak spots are listed under "Known weaknesses" below.
+A work in progress. Not built yet: snow, growth tied to the year. Known weak spots are listed under
+"Known weaknesses" below.
 
 ## Development
 
@@ -70,7 +73,7 @@ How it is built: each form is painted into the same square leaf map and carries 
 ## Seasons
 
 The tree lives through a year. One year takes 5 minutes at normal growth speed (the growth-speed control scales it; the
-day and night cycle is separate), and a new tree starts in spring.
+day and night cycle is separate), and a new tree starts in mid-spring (date 0.12), when the landscape is already green.
 
 - Spring: the crown flushes over a few weeks, leaves unfolding small and pale yellow-green, then darkening.
 - Summer: full green.
@@ -86,6 +89,14 @@ Every seasonal look is computed from the date alone, so scrubbing to a date show
 Which trees have seasons is decided by the leaf form: oak, willow, birch, maple, ginkgo and the round leaf are
 deciduous; the cypress spray is evergreen; the alien frond turns violet and sheds; the Crimson world ring turns gold
 for the cold months and keeps its leaves; the bioluminescent spiral has no seasons.
+
+The landscape follows the same year. The grass comes up short and fresh green in spring, yellows toward straw in
+autumn and lies short and dull in winter; the ground takes the same colours. Wildflowers bloom species by species from
+spring (daisies first, poppies last) and are gone by mid-autumn. The lone trees, hedgerows and woods on the hills flush
+pale green, turn each at its own time and to its own shade (russet, orange, yellow, dull brown) around the oak's own
+dates, and stand as bare grey-brown crowns through winter; about one in seven is an evergreen and stays dark green.
+All of it is a function of the date, so scrubbing, holding and seasons off behave like the oak. No snow yet.
+`node scripts/bgseasonshots.mjs` shoots the landscape at seven dates, `node scripts/bgseasoncost.mjs` measures the rebake.
 
 ### Blossom
 
@@ -107,8 +118,21 @@ peak; ground after the fall; stats and program count), `node scripts/blossomcost
 
 URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
 winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
-(frame cost summer vs autumn). Not built yet: growth tied to the year, the meadow's seasons, snow, seasonal
+(frame cost summer vs autumn). Not built yet: growth tied to the year, snow, seasonal
 weather, sun height by season.
+
+## Start screen
+
+`src/start.ts` + `src/start.css` (DOM and CSS only). A plain visit draws a proposal, applies it to the live params and holds the simulation (`params.time.paused`) at the seed until "Plant this tree"; the camera shows a wide view of the meadow meanwhile (`Stage.intro`) and dollies in to the seedling on start.
+
+| What | How |
+|---|---|
+| When it shows | No query at all, or only link decorations (`utm_*`, `fbclid`, `gclid`, `ref`, `source`). Any other query key (`?preset=`, `?t=`, `?seed=`, a parameter override, `?quality=`, ...) or `?start=0` goes straight to growing with exactly the parameters that URL gave before. `?start=1` forces the screen (query overrides are applied on top of every proposal), `?roll=N` makes the proposal reproducible. `?nogui=1` never shows it. |
+| Proposal (`rollProposal`) | One of ten kinds by weight. Earth, 80 %: Broad (22; oak / maple / round leaf; crown 5.6 to 7.4 m high, radius 3.2 to 4.3), Slender (14; birch / ginkgo; 7.4 to 9.2 high, radius 2.3 to 2.9, light droop 0.15 to 0.45), Weeping willow (13; the preset, weeping 1.25 to 1.7, radius 4 to 5), Columnar cypress (12; the preset, radius 1.35 to 1.9, 8.8 to 10.8 high), Spreading (11; maple / round / ginkgo / oak; crown shape 1.5 to 2, radius 4.7 to 5.7, 4.4 to 5.4 high, branch angle 54 to 66), Young (8; ginkgo / maple / birch; conical shape 0.7 to 1, 7 to 8.8 high). Leaf hue stays in the greens (0.2 to 0.36), saturation 0.33 to 0.62, lightness 0.76 to 1.2. Worlds, 5 % each: Low-gravity alien, Crimson world, Bioluminescent night, Heavy world = the preset with a small jitter on gravity, twist, crown size and hue. Always a new seed. |
+| Hour, season, weather | Earth kinds start at a random hour between 08:30 and 17:50; the worlds keep their preset hour, so only Bioluminescent night (5 % of visits) opens at night. Season (early spring, year 1) and weather (auto) are not randomised. |
+| On the screen | Leaf form (the ten pictures of the panel's picker, `.as-form[data-form]`), Height (`crown.height`), Width (`crown.radius`), Droop (`growth.weeping`), Leaf colour (`leaves.hue`); `input[data-start-param]`. "Another" (`#arbor-start-reroll`) draws a new proposal, "Plant this tree" (`#arbor-start-go`) starts. Everything else stays in the panel, which is hidden while the screen is up. |
+| Plant a new tree | Unchanged: a new seed with the current settings, in place (somebody who tuned the panel keeps their work). "Choose another tree" on the Grow tab returns to the start screen with a new proposal. |
+| Scripts | Shot and probe scripts pass query parameters, so they never see the screen. Smoke's phone helper loads `?start=0` where it used to load the bare URL. `scripts/telcheck.mjs` loads the bare URL and now sits on the start screen. `PORT=5600 node scripts/startshots.mjs [prefix] [screen,rolls,use,trees]` takes the start-screen shots on the real GPU (MODES, ROLLS). |
 
 ## Controls panel
 
@@ -117,7 +141,7 @@ weather, sun height by season.
 | Tab | Contents |
 |---|---|
 | header (always) | state (Growing / Paused / Fully grown, twig count, age), pause/play, collapse. When fully grown a bar offers "Plant a new tree". |
-| Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed), Regrow this one, preset chips |
+| Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed, same settings), Regrow this one, Choose another tree (back to the start screen with a new proposal), preset chips |
 | Shape | Gravity, Reach for light, Branchiness, Branch angle, Twist, Droop, Wildness, Crown width/height/shape, Leaf size, Leaf amount. Each has a one-line explanation, a "new growth" or "instant" tag and a Drift toggle. |
 | Leaves | Leaf shape (ten forms shown as small pictures: oak, willow, birch, maple, ginkgo, round, conifer, and the alien forked, ring and spiral; changes at once on the living tree), Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
 | Sky | Time of day, Day and night cycle, Length of a day |

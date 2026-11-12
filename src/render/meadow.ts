@@ -3,7 +3,9 @@ import type { TreeSim } from '../sim/tree';
 import { Rng } from '../sim/rng';
 import { wind } from '../wind';
 import { cleanLeafTexture, NIGHT_DESAT, NIGHT_GREY } from './leaves';
-import { makeTuftTexture, makeFlowerTexture, makeTreeTexture, type FlowerKind } from './textures';
+import { makeTuftTexture, makeFlowerTexture, makeTreeTexture, makeBareTreeTexture, type FlowerKind } from './textures';
+import { season } from '../season';
+import { landSeason, landKey, bloom, treeSeason, type LandSeason, type TreeSeason } from './landseason';
 import { plantScenery } from './backdrop';
 
 /**
@@ -42,6 +44,13 @@ function mapMean(map: THREE.Texture): number[] {
 }
 /** Moonlit dim per kind on top of the shared desaturation (grass, flowers, scenery trees), tuned in night screenshots against the crown. */
 const NIGHT_DIM = { grass: 1.1, flower: 0.7, scenery: 0.9 };
+/** Seasonal grass targets as linear RGB of unit luminance x a luminance gain: spring flush, autumn straw, winter straw-grey-green. */
+const unitLum = (hex: number, gain: number) => { const c = new THREE.Color(hex), l = (0.3 * c.r + 0.59 * c.g + 0.11 * c.b) / gain; return [c.r / l, c.g / l, c.b / l]; };
+const G_FRESH = unitLum(0x7cc23c, 1.18), G_STRAW = unitLum(0xd8c070, 1.45), G_WINTER = unitLum(0xa39c6e, 0.92);
+/** Bloom order of the species in KINDS (see `bloom`). */
+const BLOOM_K = [0, 0.5, 2, 1];
+/** Instance colour of the bare winter crowns (their map is already grey-brown). */
+const BARE_GAIN = [0.95, 0.86, 0.62];
 
 export interface MeadowLight {
   /** Toward the key light, world space, normalised. */
@@ -68,6 +77,13 @@ interface Patch {
   scenery: boolean;
   /** Phase slot whose shear this patch uses. */
   phase: number;
+  /** Scenery: the bare winter crowns (same instances as the leafed patch three slots before). */
+  bare: boolean;
+  /** Flower species index in KINDS, -1 otherwise. */
+  kind: number;
+  /** Instances shown by the last bake and the sum of their instance colours (reports, smoke). */
+  shown: number;
+  sum: number[];
 }
 
 /** 3 crossed cards, each with a reversed-winding back copy (FrontSide shows both faces); normals straight up. 12 tris. */
@@ -106,6 +122,9 @@ export class Meadow {
   private phaseD = new Float32Array(PHASES);
   private dirty: number[] = [];
   private key = '';
+  private seasonKey = -1;
+  private LS: LandSeason = { fresh: 0, straw: 0, winter: 0, height: 1 };
+  private TS: TreeSeason = { leaf: 1, bare: false, bareSize: 1, evergreen: false, pale: 0, turn: 0, dry: 0, shade: 0, brown: false };
   private trunkKey = '';
   /** Far-meadow and scenery patches depend on the light only, not on the crown shade or the trunk: they are large
    *  (thousands of instances each), so they are rebaked only when the light key changes. */
@@ -133,13 +152,13 @@ export class Meadow {
   /** Drawn instance counts (for reports and tests). */
   counts = { grass: 0, flowers: 0, meshes: 0 };
   /** Bake timings (ms): last patch, max patch, patches baked, longest per-frame slice (shade rows or patches). */
-  stats = { lastMs: 0, maxMs: 0, bakes: 0, sliceMaxMs: 0 };
+  stats = { lastMs: 0, maxMs: 0, bakes: 0, sliceMaxMs: 0, sumMs: 0, seasonRebakes: 0 };
 
   /** `leafMaterial`: the live leaf material. When it is the safe Lambert/basic one it is cloned (same program). */
   constructor(leafMaterial: THREE.Material, seed = 7, far = true) {
     const safe = (leafMaterial as THREE.MeshLambertMaterial).isMeshLambertMaterial || (leafMaterial as THREE.MeshBasicMaterial).isMeshBasicMaterial;
-    const material = (map: THREE.Texture) => {
-      const tex = cleanLeafTexture(map);
+    const material = (map: THREE.Texture, preserve = false) => {
+      const tex = cleanLeafTexture(map, preserve);
       let m: THREE.MeshLambertMaterial;
       if (safe) m = leafMaterial.clone() as THREE.MeshLambertMaterial;
       // Full leaf path (desktop): no live safe material exists, so build the same configuration (safe leaf V0).
@@ -235,9 +254,12 @@ export class Meadow {
     const SCN = NEAR + FAR_GRASS + 3;
     if (far) for (const p of plantScenery()) (lists[SCN + (p.bush ? 2 : p.hash < 0.5 ? 0 : 1)] ??= []).push(p.x, p.z, p.hash * Math.PI, p.w, p.h, p.hash, (p.hash * 7.31) % 1, p.y);
     const tuft = [material(makeTuftTexture(5)), material(makeTuftTexture(9))];
-    const sceneMat = far ? [material(makeTreeTexture(3, false)), material(makeTreeTexture(8, false)), material(makeTreeTexture(5, true))] : [];
+    const sceneMat = far ? [material(makeTreeTexture(3, false)), material(makeTreeTexture(8, false)), material(makeTreeTexture(5, true)),
+      material(makeBareTreeTexture(3, false), true), material(makeBareTreeTexture(8, false), true), material(makeBareTreeTexture(5, true), true)] : [];
+    // Bare winter crowns: the same instances again on the bare maps (drawn only while a tree is out of leaf).
+    if (far) for (let k = 0; k < 3; k++) lists[SCN + 3 + k] = lists[SCN + k] ?? [];
     const flowerMat = KINDS.map((k) => material(makeFlowerTexture(k)));
-    for (let li = 0; li < NEAR + (far ? FAR_GRASS + 6 : 0); li++) {
+    for (let li = 0; li < NEAR + (far ? FAR_GRASS + 9 : 0); li++) {
       const data = new Float32Array(lists[li] ?? []);
       const n = data.length / STRIDE;
       const scenery = li >= SCN, isFar = li >= NEAR, flower = scenery ? false : isFar ? li >= NEAR + FAR_GRASS : li >= PHASES;
@@ -250,11 +272,30 @@ export class Meadow {
       mesh.matrixAutoUpdate = false;
       mesh.userData.gbufferMaterial = mm.gb;
       mesh.count = 0;
+      // Bare crowns draw before the leafed cards they share a plane with, so a crown in leaf covers its own skeleton.
+      if (li >= SCN + 3) mesh.renderOrder = -1;
       this.group.add(mesh);
       // Flower patches copy the shear of a mid-field grass phase with the same fast-ripple phase.
-      this.patches.push({ mesh, data, n, flower, far: isFar, scenery, phase: isFar ? ((li - NEAR) * 5 + 2) % PHASES : flower ? ((li - PHASES) % 2 ? 16 : 13) : li });
+      this.patches.push({ mesh, data, n, flower, far: isFar, scenery, phase: isFar ? ((li - NEAR) * 5 + 2) % PHASES : flower ? ((li - PHASES) % 2 ? 16 : 13) : li,
+        bare: li >= SCN + 3, shown: 0, sum: [0, 0, 0], kind: !flower ? -1 : isFar ? li - NEAR - FAR_GRASS : (li - PHASES) >> 1 });
     }
     this.counts.meshes = this.patches.length;
+    this.bushMat = far ? sceneMat[2].m : null;
+    this.bushBare = far ? sceneMat[5].m : null;
+  }
+  private bushMat: THREE.Material | null = null;
+  private bushBare: THREE.Material | null = null;
+
+  /** Shown instances and mean instance colour per kind as of the last bakes (season reports and the smoke gate). */
+  probe() {
+    const acc = () => ({ n: 0, rgb: [0, 0, 0] });
+    const o = { tufts: acc(), flowers: acc(), trees: acc(), bare: acc() };
+    for (const p of this.patches) {
+      const a = p.bare ? o.bare : p.scenery ? o.trees : p.flower ? o.flowers : o.tufts;
+      a.n += p.shown; for (let k = 0; k < 3; k++) a.rgb[k] += p.sum[k];
+    }
+    for (const a of Object.values(o)) a.rgb = a.rgb.map((v) => +(v / Math.max(1, a.n)).toFixed(4));
+    return o;
   }
 
   /** Per frame: shear every patch from the wind (no buffer uploads), then rebake a couple of patches if lighting changed. */
@@ -294,6 +335,13 @@ export class Meadow {
     } else if (trunkKey !== this.trunkKey) {
       this.trunkKey = trunkKey;
       this.dirty = this.nearPatches();
+    }
+    // Season: the year phase in LAND_STEPS steps (constant through summer and with seasons off). Merged into the pending
+    // list, not replacing it, so the patches at the end of the list are not starved while the year runs fast.
+    const sk = landKey(season.phase);
+    if (sk !== this.seasonKey) {
+      this.seasonKey = sk; this.stats.seasonRebakes++;
+      if (this.dirty.length < this.patches.length) this.dirty = [...new Set([...this.dirty, ...this.patches.map((_, i) => i)])];
     }
     // Time-sliced: shade field rows first (patches wait for it, so a tuft is never baked twice for one change), then
     // patches, both inside one small budget per frame.
@@ -411,6 +459,10 @@ export class Meadow {
     // Night grade (exactly off by day): the drawn colour (instance x map mean) loses chroma to the cool grey of the leaf bake.
     const ng = L.night, mmn = (mesh.material as THREE.Material).userData.mean as number[], nS = NIGHT_DESAT * ng;
     const nK = 1 + ((pt.scenery ? NIGHT_DIM.scenery : pt.flower ? NIGHT_DIM.flower : NIGHT_DIM.grass) - 1) * ng;
+    // Season (pure function of the year phase; exactly the summer values in summer and with seasons off).
+    const ph = season.phase, LS = landSeason(ph, this.LS), TS = this.TS, seasonal = landKey(ph) !== -1;
+    const blm = pt.flower ? bloom(ph, BLOOM_K[pt.kind] ?? 0) : 1;
+    let shown = 0, sr = 0, sg = 0, sb = 0;
     const grade = (j: number) => {
       const r = C[j] * mmn[0], g = C[j + 1] * mmn[1], b = C[j + 2] * mmn[2], Lm = 0.3 * r + 0.59 * g + 0.11 * b;
       C[j] = ((r + (Lm * NIGHT_GREY[0] - r) * nS) * nK) / mmn[0]; C[j + 1] = ((g + (Lm * NIGHT_GREY[1] - g) * nS) * nK) / mmn[1]; C[j + 2] = ((b + (Lm * NIGHT_GREY[2] - b) * nS) * nK) / mmn[2];
@@ -419,14 +471,18 @@ export class Meadow {
       const o = i * STRIDE, x = data[o], z = data[o + 1], rot = data[o + 2], hA = data[o + 5], hB = data[o + 6];
       let w = data[o + 3], h = data[o + 4];
       const rt = Math.hypot(x - tx, z - tz);
+      if (seasonal && !pt.scenery && !pt.flower) h *= LS.height;
+      const bushy = pt.mesh.material === this.bushMat || pt.mesh.material === this.bushBare;
+      if (pt.scenery) treeSeason(ph, hA, hB, vnoise(x / 130 + 2.2, z / 130 - 4.1), bushy, TS);
       // Crown shade: straight up decides how the plant grows, toward the sun decides how it is lit right now.
       // Both come from the blurred shade field, so neighbouring tufts get neighbouring values (a gradient, not squares).
       const up = pt.far ? 1 : this.shade(this.shUp, x, z);
       const ts = pt.far ? 1 : (0.38 + 0.34 * L.night) + (0.62 - 0.34 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
-      if (pt.scenery) show = true;
+      if (pt.scenery) { show = pt.bare ? TS.bare : TS.leaf > 0; const k = pt.bare ? TS.bareSize : TS.leaf; w *= k; h *= k; }
       else if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
+        if (blm < 1 && (hB * 17.3) % 1 >= blm) show = false; // not in bloom at this time of year
         h *= 1 - 0.2 * L.night;
       } else {
         // Shorter and sparser under the crown; the ring right at the trunk stays, it hides the trunk/ground line.
@@ -439,15 +495,30 @@ export class Meadow {
         const cl = Math.min(1, Math.max(0, (rt - tR * 1.3) / 0.55));
         h *= 0.4 + 0.6 * cl * cl * (3 - 2 * cl);
       }
+      // A turned tree's trunk would take the crown's autumn gain (red): the leafed card sinks by its trunk and the bare card behind it shows the wood.
+      const sink = pt.scenery && !pt.bare && !bushy ? 0.2 * TS.turn : 0;
       const c = Math.cos(rot), s = Math.sin(rot), q = i * 16;
       if (!show) w = h = 0;
       M[q] = c * w; M[q + 1] = 0; M[q + 2] = -s * w; M[q + 3] = 0;
       M[q + 4] = (hB - 0.5) * 0.3 * h; M[q + 5] = h; M[q + 6] = (hA - 0.5) * 0.3 * h; M[q + 7] = 0; // slight static lean per tuft
       M[q + 8] = s * w; M[q + 9] = 0; M[q + 10] = c * w; M[q + 11] = 0;
-      M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h; M[q + 14] = z; M[q + 15] = 1;
+      M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h - sink * h; M[q + 14] = z; M[q + 15] = 1;
       // Colour: tint variation (macro drifts of lush / dry, per-tuft jitter) x shade.
       const col = this.col;
-      if (pt.scenery) col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.7 + 0.5 * hA).multiply(this.tintCol.setRGB(1 + 0.25 * (hB - 0.5), 1, 1 - 0.3 * (hB - 0.5)));
+      if (pt.bare) col.setRGB(BARE_GAIN[0], BARE_GAIN[1], BARE_GAIN[2]).multiplyScalar(0.72 + 0.4 * hA);
+      else if (pt.scenery) {
+        col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.7 + 0.5 * hA).multiply(this.tintCol.setRGB(1 + 0.25 * (hB - 0.5), 1, 1 - 0.3 * (hB - 0.5)));
+        // Evergreens keep their leaves and read darker against the bare and turned woods (exactly the summer colour in summer).
+        if (TS.evergreen && seasonal) col.multiplyScalar(1 - 0.42 * Math.max(LS.winter, LS.straw, 0.6 * LS.fresh));
+        if (TS.pale > 0) { col.r *= 1 + 0.5 * TS.pale; col.g *= 1 + 0.3 * TS.pale; col.b *= 1 - 0.3 * TS.pale; }
+        if (TS.turn > 0) {
+          // Autumn: the drawn colour (instance x map mean) goes to this tree's own shade (russet .. orange .. yellow, a share dull brown), then dries.
+          const dr = col.r * mmn[0], dg = col.g * mmn[1], db = col.b * mmn[2], lm = 0.3 * dr + 0.59 * dg + 0.11 * db, u = TS.shade;
+          const a = this.tintCol.setHSL(TS.brown ? 0.075 + 0.03 * u : 0.052 + 0.093 * u, (TS.brown ? 0.38 : 0.55 + 0.3 * u) * (1 - 0.4 * TS.dry), 0.5, THREE.SRGBColorSpace);
+          const k = (lm * (TS.brown ? 0.95 : 1.25 + 1.2 * u) * (1 - 0.25 * TS.dry)) / (0.3 * a.r + 0.59 * a.g + 0.11 * a.b), c = TS.turn;
+          col.r = (dr + (a.r * k - dr) * c) / mmn[0]; col.g = (dg + (a.g * k - dg) * c) / mmn[1]; col.b = (db + (a.b * k - db) * c) / mmn[2];
+        }
+      }
       else if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
       else {
         const macro = vnoise(x * 0.23 + 3.1, z * 0.23 - 1.7), fine = vnoise(x * 1.3, z * 1.3);
@@ -457,6 +528,14 @@ export class Meadow {
         const v = (0.72 + 0.34 * hA + 0.14 * (fine - 0.5)) * (1 - 0.16 * rim);
         // Channel gains measured against the ground in screenshots (the ground also gets sky fill from the env map).
         col.setRGB(v * (0.95 + 0.45 * dry), v * (0.66 + 0.1 * dry), v * (1.7 - 0.5 * dry));
+        if (seasonal) {
+          // Grass through the year on the drawn colour (instance x map mean): spring flush, straw in autumn (each tuft to its own degree), dull in winter.
+          const dr = col.r * mmn[0], dg = col.g * mmn[1], db = col.b * mmn[2], lm = 0.3 * dr + 0.59 * dg + 0.11 * db;
+          const wf = 0.65 * LS.fresh, ws = Math.min(0.92, LS.straw * (0.45 + 0.75 * hB)), ww = LS.winter * (0.7 + 0.25 * hA), k0 = Math.max(0, 1 - wf - ws - ww);
+          col.r = (dr * k0 + lm * (wf * G_FRESH[0] + ws * G_STRAW[0] + ww * G_WINTER[0])) / mmn[0];
+          col.g = (dg * k0 + lm * (wf * G_FRESH[1] + ws * G_STRAW[1] + ww * G_WINTER[1])) / mmn[1];
+          col.b = (db * k0 + lm * (wf * G_FRESH[2] + ws * G_STRAW[2] + ww * G_WINTER[2])) / mmn[2];
+        }
         if (L.tint > 0) { const lumc = (col.r * 0.3 + col.g * 0.59 + col.b * 0.11) * 2.0; col.r += (tc.r * lumc - col.r) * L.tint; col.g += (tc.g * lumc - col.g) * L.tint; col.b += (tc.b * lumc - col.b) * L.tint; }
         // Contact darkening at the trunk, like the ground shader.
         col.multiplyScalar(0.72 + 0.28 * smooth(tR * 0.6, tR * 7, rt));
@@ -466,10 +545,13 @@ export class Meadow {
       const side = ly + 0.4 * (1 - ly) * (1 - ly);
       const f = (hc: number, sc: number) => Math.min(4, (hc * amb + sc * side * ts + 1e-4) / (hc + sc * ly + 1e-4));
       // Backdrop trees are lit like a crown, not like blades: the low-sun lift is capped so they never outshine the oak.
-      if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; if (ng > 0) grade(i * 3); continue; }
+      if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; if (ng > 0) grade(i * 3); if (show) { shown++; sr += C[i * 3]; sg += C[i * 3 + 1]; sb += C[i * 3 + 2]; } continue; }
       C[i * 3] = col.r * f(hemi.r, sun.r); C[i * 3 + 1] = col.g * f(hemi.g, sun.g); C[i * 3 + 2] = col.b * f(hemi.b, sun.b);
       if (ng > 0) grade(i * 3);
+      if (show) { shown++; sr += C[i * 3]; sg += C[i * 3 + 1]; sb += C[i * 3 + 2]; }
     }
+    pt.shown = shown; pt.sum[0] = sr; pt.sum[1] = sg; pt.sum[2] = sb;
+    if (pt.bare) mesh.visible = shown > 0;
     if (pt.far) this.neverBaked = false;
     mesh.count = n;
     mesh.instanceMatrix.needsUpdate = true;
@@ -478,6 +560,6 @@ export class Meadow {
     for (const p of this.patches) if (p.flower) fl += p.mesh.count; else g += p.mesh.count;
     this.counts.grass = g; this.counts.flowers = fl;
     const ms = performance.now() - t0;
-    this.stats.lastMs = ms; this.stats.maxMs = Math.max(this.stats.maxMs, ms); this.stats.bakes++;
+    this.stats.sumMs += ms; this.stats.lastMs = ms; this.stats.maxMs = Math.max(this.stats.maxMs, ms); this.stats.bakes++;
   }
 }

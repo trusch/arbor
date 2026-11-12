@@ -22,6 +22,7 @@ import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
 import { Blossom } from './render/blossom';
 import { keepAwake } from './wake';
+import { wantsStartScreen, buildStartScreen } from './start';
 keepAwake();
 
 const query = new URLSearchParams(location.search);
@@ -454,6 +455,12 @@ function redraw(time: number, dt: number, force = false) {
   }
 }
 
+/** Start screen (`src/start.ts`): built on first use; a proposal resets the tree to its seed and holds time until the visitor starts. */
+let startUi: ReturnType<typeof buildStartScreen> | null = null;
+const openStart = (roll?: number) => (startUi ??= buildStartScreen(params, automation, {
+  proposed: () => { params.time.paused = true; stage.intro = true; regrow(); if (stage.manual) stage.autoCamera(); },
+  begin: (name) => { presetName = name; params.time.paused = false; stage.intro = false; },
+})).open(roll);
 if (query.get('nogui') !== '1') {
   const qp = query.get('panel');
   buildPanel(params, automation, {
@@ -468,6 +475,7 @@ if (query.get('nogui') !== '1') {
     autoCamera: () => stage.autoCamera(),
     crownChanged: () => sim.rebuildAttractors(),
     preset: (name) => { loadPreset(name); regrow(); stage.autoCamera(); },
+    chooseTree: () => openStart(),
     presetNames: Object.keys(PRESETS),
     currentPreset: () => presetName,
     simTime: () => sim.time,
@@ -586,6 +594,7 @@ function frame(now: number) {
   }
 }
 
+if (wantsStartScreen(query) && query.get('nogui') !== '1') openStart(/^\d+$/.test(query.get('roll') ?? '') ? Number(query.get('roll')) : undefined);
 tel.phase('init regrow');
 regrow();
 const ff = Number(query.get('t') ?? 0);
@@ -632,6 +641,7 @@ requestAnimationFrame(loop);
   blossom,
   season,
   stage,
+  start: () => startUi,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {
     advance(seconds);

@@ -7,6 +7,8 @@ import { Atmosphere } from './atmosphere';
 import { Post } from './post';
 import { makeTerrainGeometry } from './backdrop';
 import { tel } from '../tel';
+import { season } from '../season';
+import { groundSeason } from './landseason';
 
 /** Seconds the camera takes to ease from a hand-set view back into the automatic camera. */
 const EASE_S = 3;
@@ -49,6 +51,8 @@ export class Stage {
   /** True once the user has orbited or zoomed by hand. While set, nothing automatic (cinema, auto-rotate,
    *  auto-frame) writes the camera; only `autoCamera()` clears it. */
   manual = false;
+  /** Start screen is up: the automatic camera holds a calm wide view of the meadow (slow orbit) instead of the seedling close-up. */
+  intro = false;
   /** Ease back into the automatic camera: seconds since `autoCamera()`, and the hand-set view it started from. */
   private easeT = 1e9;
   private easePos = new THREE.Vector3();
@@ -222,6 +226,9 @@ export class Stage {
   }
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
+  private groundMat: THREE.MeshStandardMaterial | null = null;
+  private groundBase = new THREE.Color();
+  private groundK = [1, 1, 1];
   private makeGround(backdrop: boolean) {
     const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(backdrop), roughness: 0.96, color: 0xdcdcb4 });
     // Backdrop: the ground carries the far meadow on its own, so its colour is lifted to the mean of the lit tufts
@@ -261,6 +268,7 @@ export class Stage {
     // Backdrop: rolling terrain (flat within R_FLAT of the tree) instead of the level disc; same material, same attributes.
     const ground = new THREE.Mesh(backdrop ? makeTerrainGeometry() : new THREE.CircleGeometry(3000, 96).rotateX(-Math.PI / 2), mat);
     ground.receiveShadow = true;
+    this.groundMat = mat; this.groundBase = mat.color.clone();
     return ground;
   }
 
@@ -347,6 +355,8 @@ export class Stage {
     this.sun2.intensity = A.sun2Intensity;
     this.sun2.position.copy(c).addScaledVector(A.sun2Dir, ext * 4);
     this.sun2.target.position.copy(c);
+    // Ground through the year: colour uniform only, summer colour x a pure function of the year phase (1, 1, 1 in summer).
+    if (this.groundMat) { const gk = groundSeason(season.phase, this.groundK), b = this.groundBase; this.groundMat.color.setRGB(b.r * gk[0], b.g * gk[1], b.b * gk[2]); }
     if (k.groundTint > 0) {
       const gc = new THREE.Color().setHSL(k.groundHue, 0.55, 0.4);
       this.groundU.tint.value.set(gc.r, gc.g, gc.b, Math.min(1, k.groundTint));
@@ -408,7 +418,7 @@ export class Stage {
     this.prevCinema = p.camera.cinema;
     this.prevAutoFrame = p.camera.autoFrame;
     const auto = !this.manual;
-    const cine = p.camera.cinema && auto;
+    const cine = p.camera.cinema && auto && !this.intro;
     if (cine && !this.cineOn) {
       // Resume from the current view: no jump.
       const off = this.camera.position.clone().sub(this.controls.target);
@@ -416,8 +426,16 @@ export class Stage {
       p.camera.autoFrame = true;
     }
     this.cineOn = cine;
-    this.controls.autoRotate = p.camera.autoRotate && !cine && auto;
-    if (cine) {
+    this.controls.autoRotate = p.camera.autoRotate && !cine && auto && !this.intro;
+    if (this.intro && auto) {
+      // Start screen: horizon in the upper third (the card covers the lower part), eye above the grass, slow orbit.
+      const kk = snap ? 1 : 1 - Math.exp(-dt * 2);
+      this.cineYaw += dt * 0.025;
+      this.center.lerp(new THREE.Vector3(c.x, 1.9, c.z), kk);
+      this.dist += (8 - this.dist) * kk;
+      this.controls.target.copy(this.center);
+      this.camera.position.set(this.center.x + Math.sin(this.cineYaw) * this.dist, this.center.y + 0.05 * this.dist, this.center.z + Math.cos(this.cineYaw) * this.dist);
+    } else if (cine) {
       // Cinematic dolly: slow orbit, breathing height, occasional slow push-ins; always frames the tree.
       this.cineT += dt;
       const t = this.cineT;

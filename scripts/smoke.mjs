@@ -236,7 +236,7 @@ try {
     const merr = [];
     mp.on('pageerror', (e) => merr.push(e.message));
     const t0 = Date.now();
-    await mp.goto(url + q, { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
+    await mp.goto(url + (q || '?start=0'), { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
     await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
     return { ctx, mp, merr, loadMs: Date.now() - t0 };
   };
@@ -483,12 +483,13 @@ try {
     const on = await phone('?speed=0&weather=calm'), off = await phone('?speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
-    const st = {}, offP = [];
+    const st = {}, offP = [], land = {};
     for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
       await on.mp.evaluate((dd) => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
       await settle(1);
       st[name] = await read(on.mp);
       offP.push((await read(off.mp)).programs);
+      land[name] = await on.mp.evaluate(() => window.__arbor.meadow.probe());
     }
     const o0 = await read(off.mp);
     // Hold: time runs, the date does not. Then released: the year moves on.
@@ -504,6 +505,15 @@ try {
     check('phone: seasons add no shader program in any season (vs seasons off at the same moments)',
       progs.every((p, i) => p === offP[i]) && Object.values(st).every((r) => r.fe === 0) && on.merr.length === 0 && off.merr.length === 0,
       `on ${progs.join('/')} off ${offP.join('/')} errs ${on.merr.length}+${off.merr.length}`);
+    // Landscape (far trees, hedgerows, woods, tufts, flowers) follows the same year, data-only (programs are covered by the gate above).
+    {
+      const near = (a, b) => a.rgb.every((v, i) => Math.abs(v - b.rgb[i]) < 0.02 * Math.max(v, b.rgb[i]) + 1e-3), rg = (a) => a.rgb[0] / a.rgb[1], S = land.summer, P = land.peak, W = land.winter;
+      check('phone: the landscape follows the year (far trees turn and stand bare, grass yellows and dulls, flowers come and go) and returns to the same summer',
+        S.bare.n === 0 && S.trees.n > 3000 && S.flowers.n > 100 && rg(P.trees) > 1.5 * rg(S.trees) && P.trees.n > 1000 && W.bare.n > 3000 && W.trees.n > 100 && W.trees.n < 0.3 * S.trees.n && W.flowers.n === 0
+          && rg(P.tufts) > 1.2 * rg(S.tufts) && !near(W.tufts, S.tufts) && !near(W.tufts, P.tufts) && land.flush.flowers.n < S.flowers.n
+          && near(land.summer2.trees, S.trees) && near(land.summer2.tufts, S.tufts) && land.summer2.bare.n === 0 && land.summer2.trees.n === S.trees.n,
+        `trees r/g summer ${rg(S.trees).toFixed(2)} peak ${rg(P.trees).toFixed(2)} winter leafed ${W.trees.n} bare ${W.bare.n} of ${S.trees.n}; tufts summer ${S.tufts.rgb} peak ${P.tufts.rgb} winter ${W.tufts.rgb} summer2 ${land.summer2.tufts.rgb}; flowers ${land.flush.flowers.n}/${S.flowers.n}/${P.flowers.n}/${W.flowers.n}`);
+    }
     check('phone: scrubbing the year changes leaf colour and drawn leaves (flush, green, turning, peak, thinning, bare, flush again) and returns to the same summer',
       st.summer.n > 5000 && Math.abs(st.summer.n - o0.n) < 0.02 * o0.n && st.flush.n < 0.9 * st.summer.n && st.flush.n > 0 && st.flush.lum > st.summer.lum
         && st.summer.rg < 0.8 && st.turning.rg > st.summer.rg && st.peak.rg > 1.5 && st.peak.rg > st.turning.rg && st.peak.n < st.summer.n
@@ -662,6 +672,47 @@ try {
     const after2 = await mp.evaluate(() => ({ page: !!document.getElementById('ctxlost'), nav: performance.getEntriesByType('navigation')[0]?.type, n: sessionStorage.getItem('arbor.ctxLost') }));
     check('context loss 2: no reload, safe-mode links shown', after2.page && after2.n === '2', JSON.stringify(after2));
     await ctx.close();
+  }
+
+  // Start screen (src/start.ts): a plain load proposes a random tree and holds growth; deep links and ?start=0 bypass it.
+  {
+    const sp = await browser.newPage({ viewport: { width: 411, height: 777 } });
+    const serr = [];
+    sp.on('pageerror', (e) => serr.push(e.message));
+    await sp.goto(url, { waitUntil: 'domcontentloaded' });
+    await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await sp.waitForTimeout(2500);
+    const st = () => sp.evaluate(() => { const A = window.__arbor, el = document.getElementById('arbor-start'), P = A.params;
+      return { shown: !!el && !el.hidden && getComputedStyle(el).opacity === '1', t: A.sim.time, nodes: A.sim.nodes.length, paused: P.time.paused, intro: A.stage.intro, name: document.getElementById('arbor-start-name')?.textContent,
+        seed: P.seed.seed, form: P.leaves.form, h: P.crown.height, r: P.crown.radius, hue: P.leaves.hue, want: A.start()?.proposal?.values ?? null, fe: A.frameErrors() }; });
+    const s0 = await st();
+    const box = await sp.evaluate(() => { const c = document.querySelector('.as-card').getBoundingClientRect(), g = document.getElementById('arbor-start-go').getBoundingClientRect(); return { bottom: c.bottom, top: c.top, goH: g.height, goBottom: g.bottom }; });
+    check('start screen: shown on a plain load, nothing grows behind it, fits a 411x777 phone', s0.shown && s0.t === 0 && s0.nodes <= 2 && s0.paused && s0.intro && s0.fe === 0 && serr.length === 0 && box.top > 60 && box.bottom <= 777 && box.goH >= 48,
+      `${s0.name} t=${s0.t} nodes=${s0.nodes} card ${box.top.toFixed(0)}..${box.bottom.toFixed(0)} go ${box.goH}px`);
+    const seen = new Set([JSON.stringify(s0.want)]);
+    for (let i = 0; i < 3; i++) { await sp.click('#arbor-start-reroll'); await sp.waitForTimeout(150); seen.add(JSON.stringify((await st()).want)); }
+    const s1 = await st();
+    check('start screen: reroll draws a new proposal each time and still holds growth', seen.size === 4 && s1.seed !== s0.seed && s1.t === 0 && s1.shown, `${seen.size} distinct of 4, now ${s1.name}`);
+    await sp.click('.as-form[data-form="ginkgo"]');
+    await sp.evaluate(() => { const i = document.querySelector('[data-start-param="crown.height"]'); i.value = '9'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+    await sp.click('#arbor-start-go');
+    await sp.waitForTimeout(2500);
+    const s2 = await st();
+    const el = await sp.evaluate(() => ({ hidden: document.getElementById('arbor-start').hidden, pill: [...document.querySelectorAll('.arbor-ui')].some((e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0), starting: document.body.classList.contains('starting') }));
+    check('start screen: start grows the shown tree (proposal + choices), the screen leaves and the panel is back',
+      s2.t > 1 && s2.nodes > s1.nodes && !s2.paused && !s2.intro && el.hidden && el.pill && !el.starting && s2.seed === s1.seed && s2.form === 'ginkgo' && s2.h === 9 && s2.r === s1.r && s2.hue === s1.hue && s2.fe === 0 && serr.length === 0,
+      `t=${s2.t.toFixed(1)} nodes=${s2.nodes} seed=${s2.seed} form=${s2.form} h=${s2.h} ${JSON.stringify(el)} ${serr[0] ?? ''}`);
+    const by = [];
+    for (const q of ['?start=0', '?preset=Weeping%20willow&t=5', '?seed=7', '?gravity=1']) {
+      await sp.goto(url + q, { waitUntil: 'domcontentloaded' });
+      await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+      await sp.waitForTimeout(1200);
+      by.push({ q, ...(await st()), el: await sp.evaluate(() => !!document.getElementById('arbor-start')) });
+    }
+    check('start screen: ?start=0 and deep links go straight to growing with unrandomised parameters',
+      by.every((b) => !b.el && !b.paused && !b.intro && b.t > 0.3 && b.r === (b.q.includes('willow') ? 4.6 : 3.6) && b.hue === (b.q.includes('willow') ? 0.22 : 0.27)) && by[0].seed === 1 && by[0].form === 'oak' && by[0].h === 6.5 && by[1].form === 'willow' && by[1].t >= 5 && by[2].seed === 7,
+      by.map((b) => `${b.q}: el=${b.el} t=${b.t.toFixed(1)} seed=${b.seed} form=${b.form}`).join(' | '));
+    await sp.close();
   }
 
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.

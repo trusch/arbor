@@ -13,6 +13,8 @@ export interface UiActions {
   autoCamera(): void;
   crownChanged(): void;
   preset(name: string): void;
+  /** Back to the start screen with a new proposal. */
+  chooseTree(): void;
   presetNames: string[];
   currentPreset(): string;
   simTime(): number;
@@ -275,6 +277,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   tab('grow', 'Grow',
     slider({ key: 'time.speed', name: 'Growth speed', help: 'How fast time passes for the tree. Works at once, while the tree is still growing.', min: 0.25, max: 20, log: true, big: true, fmt: (v) => `${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2)}x` }),
     h('div', { class: 'ap-actions' }, btn('Plant a new tree', a.newSeed, 'primary', 'arbor-new'), btn('Regrow this one', a.regrow, '', 'arbor-regrow')),
+    h('div', { class: 'ap-actions' }, btn('Choose another tree', a.chooseTree, '', 'arbor-choose')),
     note('A new tree grows differently with the same settings. Regrow replays this exact tree from a seedling.'),
     h('h3', { text: 'Choose a tree' }), chips,
     note('Picking a tree loads its shape, colours and sky, and starts growing from a seedling.'));
