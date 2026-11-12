@@ -1,6 +1,6 @@
 # Arbor audit: frame pacing, visual realism, living surroundings, build plan
 
-Scope: `src/` at the audited commit, read-only. Measurements come from `scripts/profile.mjs` (raw results in `prof/*.json`, gitignored or not, they are reproducible) and screenshots from `scripts/auditshots.mjs` (`shots/audit-*.png`).
+Scope: `src/` at the audited commit, read-only. Measurements come from `scripts/profile.mjs` (raw results in `prof/*.json`, untracked; rerun the script to reproduce) and screenshots from `scripts/auditshots.mjs` (`shots/audit-*.png`).
 
 ## 0. Method and limits
 
@@ -138,7 +138,7 @@ Ranked by how strongly each item breaks the "video of nature" impression:
 
 ### 3.1 Program rule for the phone path
 
-Program identity in three is a cache key computed in JS from the material type, its feature flags (map, alphaTest, vertexColors, emissive presence does not count but emissiveMap does, side, transparent, fog, premultipliedAlpha), the object (instancing, instanceColor, receiveShadow with shadows enabled, skinning, morphs), geometry attributes (tangent, colour when vertexColors) and renderer/scene state (lights, fog type, tone mapping, environment). Texture pixels, uniforms, geometry vertex data, instance data, blending mode and depth flags are not part of it.
+Program identity in three is a cache key computed in JS from the material type, its feature flags (map and other texture slots, alphaTest, vertexColors, side, transparent, fog, premultipliedAlpha), the object (instancing, instanceColor, receiveShadow with shadows enabled, skinning, morphs), geometry attributes (tangent, colour when vertexColors) and renderer/scene state (lights, fog type, tone mapping, environment). Texture pixels, uniforms, geometry vertex data, instance data, blending mode and depth flags are not part of it.
 
 Known-good configurations on the PowerVR phone, as found in the code:
 
