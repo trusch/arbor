@@ -17,10 +17,30 @@ export class Wind {
     this.dirZ = Math.sin(yawRad);
   }
 
-  /** strength = param `sky.wind`; night 0..1. */
-  update(dt: number, strength: number, night = 0) {
-    this.t += dt;
-    this.base = Math.max(0, strength) * (1 - 0.5 * night);
+  /** Storm share 0..1 of the current strength (`Weather.wind`): 0 = the calm setting alone, 1 = gale. */
+  storm = 0;
+
+  /**
+   * strength = param `sky.wind`; night 0..1; storm = `Weather.wind` 0..1. A storm lifts the base toward `STORM_BASE`
+   * (it never lowers a windier setting), is not calmed by night, and runs the gust clock faster (gustier).
+   */
+  update(dt: number, strength: number, night = 0, storm = 0) {
+    this.storm = storm;
+    this.t += dt * (1 + 1.6 * storm);
+    const calm = Math.max(0, strength) * (1 - 0.5 * night);
+    this.base = calm + (Math.max(calm, Wind.STORM_BASE) - calm) * storm;
+  }
+  static readonly STORM_BASE = 1.0;
+  /** Wind speed in m/s for a strength value (0.35 calm = about 4 m/s, 1.0 storm = about 22 m/s gusts). */
+  static speed(strength: number) { return 2 + 20 * strength * strength; }
+
+  /** Wind speed in m/s at a world position right now (gust included). */
+  speedAt(x: number, z: number) { return Wind.speed(this.gust(x, z)); }
+  /** Horizontal wind velocity in m/s at a world position: out = [vx, vz]. */
+  velocityAt(x: number, z: number, out: [number, number] = [0, 0]) {
+    const v = this.speedAt(x, z);
+    out[0] = this.dirX * v; out[1] = this.dirZ * v;
+    return out;
   }
 
   /** Distance of a point along the wind direction (the phase coordinate of the gust wave). */

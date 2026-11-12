@@ -10,6 +10,9 @@ export interface UiActions {
   presetNames: string[];
   currentPreset(): string;
   simTime(): number;
+  /** Start one storm sequence now. */
+  stormNow(): void;
+  weatherPhase(): string;
   /** Tree state for the status line. */
   growth(): { nodes: number; age: number; grown: boolean };
 }
@@ -83,6 +86,9 @@ const TREE: SliderDef[] = [
   { key: 'leaves.size', name: 'Leaf size', help: 'How big each leaf is.', min: 0.03, max: 2.5, log: true, when: 'now', fmt: (v) => `${(v * 100).toFixed(0)} cm` },
   { key: 'leaves.density', name: 'Leaf amount', help: 'How many leaves sit on each twig.', min: 0, max: 4, step: 0.05, when: 'now' },
 ];
+
+/** Weather selector options (value of `weather.event`, label). */
+const WEATHER: [string, string][] = [['auto', 'Changes on its own'], ['calm', 'Always calm'], ['storm', 'Storm (stays)']];
 
 const SKY: SliderDef[] = [
   { key: 'sky.timeOfDay', name: 'Time of day', help: 'Moves the sun. Try sunrise, noon, sunset or night.', min: 0, max: 24, step: 0.05, when: 'now', fmt: (v) => { const hh = Math.floor(v) % 24, mm = Math.floor((v - Math.floor(v)) * 60); return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; } },
@@ -301,12 +307,27 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     colour(tint('Ground tint', 'Tints the grass.', 'ground', 'sky.groundHue', 'sky.groundTint', 0.55)));
 
   // ---- Sky ----
+  const wSel = h('select', { id: 'arbor-weather', 'aria-label': 'Weather', 'data-param': 'weather.event' });
+  for (const [v, t] of WEATHER) wSel.append(h('option', { value: v, text: t }));
+  wSel.addEventListener('change', () => { set('weather.event', wSel.value); refresh(); });
+  const wInfo = h('output', { id: 'arbor-weather-info', class: 'ap-info' });
+  syncers.push(() => {
+    wSel.value = String(get('weather.event'));
+    const ph = a.weatherPhase();
+    wInfo.textContent = ph === 'calm' ? 'Calm now.' : ph === 'breeze' ? 'The wind is picking up.' : ph === 'front' ? 'A storm front is arriving.' : ph === 'rain' ? 'Storm.' : 'Clearing up.';
+  });
+  const weatherRow = h('div', { class: 'ap-weather' },
+    h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-weather', text: 'Weather' }), wSel),
+    h('div', { class: 'ap-row-actions' }, btn('Storm now', () => a.stormNow(), '', 'arbor-storm-now'), wInfo));
   tab('sky', 'Sky',
     slider(SKY[0]),
     toggle('sky.cycle', 'Day and night cycle', 'Let the sun move on its own.'),
     slider(SKY[1]),
     slider(SKY[2]),
-    toggle('sky.meadow', 'Meadow', 'Grass tufts and wildflowers around the tree.'));
+    toggle('sky.meadow', 'Meadow', 'Grass tufts and wildflowers around the tree.'),
+    h('h3', { class: 'ap-sub', text: 'Weather' }),
+    weatherRow,
+    toggle('weather.lightning', 'Lightning', 'Bright flashes during a storm. Turn off if flashing light bothers you.'));
 
   // ---- Advanced ----
   const raw = (key: string, name: string, min: number, max: number, step: number): HTMLElement => {

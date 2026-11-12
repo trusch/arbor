@@ -327,6 +327,7 @@ export class Stage {
     this.hemi.intensity = 0.15 + 0.35 * day;
     this.scene.environmentIntensity = 0.25 + 0.3 * day;
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
+    this.applyWeather(night);
 
     // Post: god rays from the sun screen position at low sun, grade warmth by time of day.
     // Only touch post uniforms on High: the getter would otherwise allocate the post RTs on Low.
@@ -391,6 +392,65 @@ export class Stage {
       this.camera.position.copy(this.center).add(off);
     }
     this.controls.update(dt);
+  }
+
+  /** Storm inputs, written by `main.ts` from `src/weather.ts` each frame: cloud 0..1, flash 0..1. */
+  wx = { cloud: 0, flash: 0 };
+  private wxCool = new THREE.Color(0.5, 0.57, 0.68);
+  private wxFog = new THREE.Color();
+  private wxFlash = new THREE.Color(0.72, 0.82, 1.0);
+  private wxGrey = new THREE.Color(0.4, 0.44, 0.51);
+  /**
+   * Storm look as uniform/intensity changes on top of the values `frame` just computed (so calm returns exactly):
+   * heavier darker cloud, sun x 0.22 and cooler, cool hemisphere, denser greyer fog, darker sky.
+   */
+  private wxFlashGain = 1;
+  private applyWeather(night: number) {
+    this.wxFlashGain = 1 / (1 + 1.6 * night);
+    const c = this.wx.cloud, su = this.atmo.sky.material.uniforms, U = this.atmo.skyUniforms;
+    su.cloudCoverage.value = 0.35 + 0.6 * c;
+    su.cloudDensity.value = 0.35 + 0.6 * c;
+    if (c <= 0) return;
+    const fc = this.fog.color, L = fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11;
+    // Storm haze: grey-blue at the fog's own luminance, darkened (less at night, where it is already dark).
+    this.wxFog.copy(this.wxCool).multiplyScalar(L * (0.4 + 0.4 * night) / 0.57);
+    fc.lerp(this.wxFog, 0.85 * c);
+    U.fogCol.value.copy(fc);
+    U.skyGain.value *= 1 - 0.72 * c;
+    // Overcast: the blue drains out of the sky (tint toward grey at its own luminance) and the sun disc disappears.
+    const t0 = U.skyTint.value, t1 = Math.max(t0, 0.9 * c);
+    if (t1 > 0) U.skyTintCol.value.lerp(this.wxGrey, 1 - t0 / t1);
+    U.skyTint.value = t1;
+    // Stars go behind the cloud deck (opacity is rewritten by the atmosphere every frame).
+    const stars = this.atmo.stars, sm = stars.material as THREE.PointsMaterial;
+    sm.opacity *= 1 - c;
+    stars.visible = sm.opacity > 0.01;
+    U.disc1Col.value.multiplyScalar(1 - c);
+    U.disc2Col.value.multiplyScalar(1 - c);
+    this.fog.density *= 1 + 1.2 * c;
+    this.sun.intensity *= 1 - 0.78 * c;
+    this.sun.color.lerp(this.wxCool, 0.7 * c);
+    this.hemi.color.lerp(this.wxCool, 0.75 * c);
+    this.hemi.groundColor.multiplyScalar(1 - 0.35 * c);
+    this.hemi.intensity *= 1 - 0.3 * c;
+    this.scene.environmentIntensity *= 1 - 0.55 * c;
+  }
+  /** Lightning flash for this frame only (call after everything that bakes from the lights, before `render`). */
+  applyFlash() {
+    const f = this.wx.flash;
+    if (f <= 0) return;
+    const U = this.atmo.skyUniforms;
+    // Night exposure is 2.6x: scale the flash so it lands at the same screen brightness as by day.
+    const e = this.wxFlashGain;
+    this.sun.intensity += 2.2 * f * e;
+    this.sun.color.lerp(this.wxFlash, 0.85 * f);
+    this.hemi.intensity += 1.1 * f * e;
+    this.hemi.color.lerp(this.wxFlash, 0.85 * f);
+    this.hemi.groundColor.lerp(this.wxFlash, 0.35 * f);
+    U.skyGain.value = U.skyGain.value * (1 + 1.5 * f) + 0.12 * f * e;
+    this.fog.color.lerp(this.wxFlash, 0.2 * f).multiplyScalar(1 + 0.5 * f).addScalar(0.1 * f * e);
+    U.fogCol.value.copy(this.fog.color);
+    this.scene.environmentIntensity *= 1 + 0.6 * f;
   }
 
   render(p: ArborParams) {
