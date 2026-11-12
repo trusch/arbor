@@ -353,16 +353,19 @@ try {
     const run = async (q) => {
       const { ctx, mp, merr } = await phone(q);
       await mp.evaluate(() => { window.__arbor.params.sky.timeOfDay = 13; window.__arbor.fastForward(15); });
-      await mp.waitForTimeout(6500);
-      const r = await mp.evaluate(() => new Promise((res) => {
-        const A = window.__arbor, out = { programs: A.stage.renderer.info.programs.length, live: A.sway.live, max: +A.sway.maxOffset.toFixed(3), fe: A.frameErrors(), leaves: A.leaves.mesh.count };
+      await mp.waitForTimeout(3500);
+      // Peak offset over 3 s: one instant can sit in a gust lull (the t = 15 tree is a 3 m sapling since the seedling phase).
+      let peak = 0;
+      for (let i = 0; i < 30; i++) { await mp.waitForTimeout(100); peak = Math.max(peak, await mp.evaluate(() => window.__arbor.sway.maxOffset)); }
+      const r = await mp.evaluate((peak) => new Promise((res) => {
+        const A = window.__arbor, out = { programs: A.stage.renderer.info.programs.length, live: A.sway.live, max: +peak.toFixed(3), fe: A.frameErrors(), leaves: A.leaves.mesh.count };
         A.params.sway.amount = 0;
         setTimeout(() => {
           const L = A.leaves, M = L.mesh.instanceMatrix.array, R = L.restT, ND = L.frontNode; let bad = 0;
           for (let i = 0; i < L.mesh.count; i++) if (ND[i] >= 0 && (M[i * 16 + 12] !== R[i * 3] || M[i * 16 + 13] !== R[i * 3 + 1] || M[i * 16 + 14] !== R[i * 3 + 2])) bad++;
           res({ ...out, restLive: A.sway.live, offRest: bad, nonZero: A.sway.D.some((v) => v !== 0) });
         }, 500);
-      }));
+      }), peak);
       await ctx.close();
       return { ...r, errs: merr.length };
     };
