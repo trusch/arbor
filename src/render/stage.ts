@@ -16,6 +16,8 @@ const EASE_S = 3;
 const GROUND_GAIN = [0.76, 0.9, 0.4];
 /** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (9 % at 250 m, 30 % at 500 m, 76 % at 1000 m). */
 const HAZE = 0.3;
+// Hemisphere added on a moonless night (day for night: the tree stays readable on a dim phone). Full moon adds none.
+const NIGHT_FLOOR = 0.34;
 
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -297,6 +299,8 @@ export class Stage {
   }
 
   /** Per-frame: advance clock, atmosphere, lights, shadow frustum, camera. snap=true jumps instead of easing. */
+  /** 0..1: how much of the night has no moonlight (0 by day, at dusk and under a full moon). Set in `frame`. */
+  nightFloor = 0;
   frame(sim: TreeSim, p: ArborParams, dt: number, snap = false) {
     const k = p.sky;
     if (k.cycle && k.dayLength > 0) k.timeOfDay = (k.timeOfDay + (dt * 24) / k.dayLength) % 24;
@@ -376,6 +380,9 @@ export class Stage {
     this.hemi.groundColor.setRGB(0.22, 0.2, 0.12).multiplyScalar(0.3 + 0.7 * day);
     // Night ambient follows the moon: 0.1 starlit, 0.19 under a full moon (it was a flat 0.15).
     this.hemi.intensity = 0.15 + 0.35 * day + night * (0.09 * A.moonLight - 0.05 * (1 - A.moonLight));
+    // Night floor (day for night): what the moon does not light, the ambient does. 0 until the sun is 3.4 degrees down (dusk unchanged).
+    this.nightFloor = (1 - THREE.MathUtils.smoothstep(A.sunH, -0.16, -0.06)) * (1 - A.moonLight);
+    this.hemi.intensity += NIGHT_FLOOR * this.nightFloor;
     this.scene.environmentIntensity = 0.25 + 0.3 * day;
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
     this.applyWeather(night);

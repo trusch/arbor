@@ -172,7 +172,7 @@ stage.scene.add(canopy.mesh);
 const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material, 7, diag.backdrop) : null;
 if (meadow) stage.scene.add(meadow.group);
 /** Linear bark material colour under the moon on Low (High x 2.2: its day value is white, not the warm tint). */
-const BARK_NIGHT = [0.062, 0.08, 0.1], barkNight = new THREE.Color();
+const BARK_NIGHT = [0.062, 0.08, 0.1], BARK_FLOOR = 14, barkNight = new THREE.Color(); // BARK_FLOOR: lift without moonlight (no key light on the trunk)
 const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
 /** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */
 const rain = diag.rain ? new Rain(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
@@ -411,6 +411,7 @@ function redraw(time: number, dt: number, force = false) {
     leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
     leaves.nightGrade = stage.atmo.night;
+    leaves.nightFloor = stage.nightFloor;
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;
@@ -562,7 +563,7 @@ function frame(now: number) {
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
   // Moonlight: the bark joins the dim, cool range of the crown (lerp from the day value each frame; exactly the day value while night = 0).
   const barkCol = (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
-  if (stage.atmo.night > 0) barkCol.lerp(barkNight.setRGB(BARK_NIGHT[0], BARK_NIGHT[1], BARK_NIGHT[2]).multiplyScalar(params.sky.quality === 'High' ? 2.2 : 1), 1 - Math.pow(1 - stage.atmo.night, 3));
+  if (stage.atmo.night > 0) barkCol.lerp(barkNight.setRGB(BARK_NIGHT[0], BARK_NIGHT[1], BARK_NIGHT[2]).multiplyScalar((params.sky.quality === 'High' ? 2.2 : 1) * (1 + BARK_FLOOR * stage.nightFloor)), 1 - Math.pow(1 - stage.atmo.night, 3));
   weatherRender(dt);
   tel.phase('render', true);
   stage.render(params);
