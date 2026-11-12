@@ -161,7 +161,7 @@ if (rain) stage.scene.add(rain.group);
   if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
   if (qw === 'storm') weather.snapStorm();
 }
-let bakedCloud = 0;
+let bakedCloud = 0, decalSeen = false;
 /** Before `stage.frame`: advance the weather and hand its scalars to the stage. */
 function weatherFrame(dt: number) {
   tel.phase('weather', true);
@@ -178,6 +178,11 @@ function weatherRender(dt: number) {
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
+  // PowerVR rule: on Low the rain/bolt planes only draw once the canopy decal (their program donor) has been drawn,
+  // so the storm can never be the first to compile that program.
+  if (canopy.mesh.visible) decalSeen = true;
+  rain.group.visible = !low || decalSeen;
+  if (!rain.group.visible) return;
   rain.frame(stage.camera, weather, wind, dt, 0.5 * (1 - night) + 0.05, night, low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 2 : 3);
 }
 function meadowFrame(dt: number) {

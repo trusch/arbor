@@ -233,7 +233,7 @@ try {
       for (const [name, hour] of [['noon', 13], ['night', 23.5]]) {
         out[name] = await mp.evaluate(([h, fl]) => { const A = window.__arbor; if (fl) A.weather.holdFlash = true; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true; return 0; }, [hour, flash]).catch(() => 0);
         await mp.waitForTimeout(1500);
-        out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, grass: A.meadow?.counts.grass ?? 0, flowers: A.meadow?.counts.flowers ?? 0, meshes: A.meadow?.counts.meshes ?? 0, leaves: A.leaves.mesh.count, fe: A.frameErrors(), rain: A.rain ? A.rain.sheets.filter((m) => m.visible).length : 0, bolt: !!A.rain?.bolt.visible, cloud: A.weather.cloud }; });
+        out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, grass: A.meadow?.counts.grass ?? 0, flowers: A.meadow?.counts.flowers ?? 0, meshes: A.meadow?.counts.meshes ?? 0, leaves: A.leaves.mesh.count, fe: A.frameErrors(), decal: A.canopy.mesh.visible, rain: A.rain && A.rain.group.visible ? A.rain.sheets.filter((m) => m.visible).length : 0, bolt: !!(A.rain?.group.visible && A.rain.bolt.visible), cloud: A.weather.cloud }; });
       }
       await ctx.close();
       return { ...out, errs: merr.length };
@@ -246,9 +246,9 @@ try {
     // Same gate for the storm (WP9): rain sheets and the bolt are clones of the canopy-shadow decal material, everything
     // else is uniforms and intensities. Forced storm with a held flash (bolt drawn) against the calm run above.
     const storm = await progs('?speed=0&weather=storm', true), dry = await progs('?speed=0&weather=storm&rain=0', true);
-    check('phone: storm adds no shader program (noon and night), rain sheets and bolt drawn',
-      storm.noon.programs === on.noon.programs && storm.night.programs === on.night.programs && storm.noon.rain >= 2 && storm.night.rain >= 2 && storm.noon.bolt && storm.night.bolt
-        && storm.noon.cloud === 1 && on.noon.cloud === 0 && on.noon.rain === 0 && dry.noon.rain === 0 && !dry.noon.bolt && dry.noon.programs === on.noon.programs
+    check('phone: storm adds no shader program (noon and night; fewer is fine: stars hide under cloud), rain sheets and bolt drawn once the decal is',
+      storm.noon.programs <= on.noon.programs && storm.night.programs <= on.night.programs && (!storm.noon.decal || (storm.noon.rain >= 2 && storm.noon.bolt)) && (!storm.night.decal || (storm.night.rain >= 2 && storm.night.bolt))
+        && storm.noon.cloud === 1 && on.noon.cloud === 0 && on.noon.rain === 0 && dry.noon.rain === 0 && !dry.noon.bolt && dry.noon.programs === on.noon.programs && dry.night.programs <= on.night.programs
         && storm.noon.fe === 0 && storm.night.fe === 0 && storm.errs === 0 && dry.errs === 0,
       `storm ${JSON.stringify(storm)} calm ${JSON.stringify(on)} rain=0 ${JSON.stringify(dry)}`);
     // Lightning off means no flash and no bolt at all, even when one is forced.
