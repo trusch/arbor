@@ -1,4 +1,5 @@
 import type { ArborParams } from './params';
+import { bumpParams } from './params';
 
 /**
  * Parameter automation over the tree's life. Two layers, applied every frame
@@ -37,7 +38,8 @@ export function getPath(p: ArborParams, k: string): number {
 }
 export function setPath(p: ArborParams, k: string, v: number) {
   const [g, f] = k.split('.');
-  (p as unknown as Record<string, Record<string, number>>)[g][f] = v;
+  const grp = (p as unknown as Record<string, Record<string, number>>)[g];
+  if (grp[f] !== v) { grp[f] = v; bumpParams(); }
 }
 
 const smooth = (x: number) => x * x * (3 - 2 * x);
@@ -82,6 +84,7 @@ export class Automation {
   userSet(k: string, v: number | boolean | string) {
     const [g, f] = k.split('.');
     (this.p as unknown as Record<string, Record<string, unknown>>)[g][f] = v;
+    bumpParams();
     for (const kf of this.journey) delete kf.values[k];
     this.journey = this.journey.filter((kf) => Object.keys(kf.values).length > 0);
     const d = this.drift[k];

@@ -174,6 +174,29 @@ export function defaultParams(): ArborParams {
   };
 }
 
+/**
+ * Bumps whenever a tree or leaf parameter changes (`Automation.userSet` / `apply` / `setDrift`, preset load, and the
+ * `paramsSignature` safety net in `main.ts`). Renderers rebuild on a paused tree only when this moved.
+ */
+let paramsVer = 0;
+export const paramsVersion = () => paramsVer;
+export const bumpParams = () => ++paramsVer;
+
+/** Allocation-free signature of every param outside sky/camera/time (those have their own dirty sources). */
+export function paramsSignature(p: ArborParams): number {
+  const groups = p as unknown as Record<string, Record<string, unknown>>;
+  let sig = 0, i = 1;
+  for (const g in groups) {
+    if (g === 'sky' || g === 'camera' || g === 'time') continue;
+    const grp = groups[g];
+    for (const f in grp) {
+      const v = grp[f];
+      sig += (typeof v === 'number' ? v : typeof v === 'boolean' ? +v : String(v).length) * (i++ * 0.6180339887 % 1 + 0.5);
+    }
+  }
+  return sig;
+}
+
 /** Apply ?key=value overrides (key = field name, searched in all groups, or group.field). */
 export function applyQueryOverrides(p: ArborParams, search: string): void {
   const q = new URLSearchParams(search);

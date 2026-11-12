@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { defaultParams, applyQueryOverrides } from './params';
+import { defaultParams, applyQueryOverrides, paramsVersion, bumpParams, paramsSignature } from './params';
 import { TreeSim } from './sim/tree';
 import { Stage, showNotice } from './render/stage';
 import { BranchMesh } from './render/branchMesh';
@@ -33,6 +33,7 @@ function loadPreset(name: string) {
   const dst = params as unknown as Record<string, Record<string, unknown>>;
   for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time') Object.assign(dst[g], src[g]);
   params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
+  bumpParams();
   automation.drift = {};
   automation.journey = (PRESETS[name]?.journey ?? []).map((k) => ({ t: k.t, values: { ...k.values } }));
 }
@@ -114,7 +115,8 @@ const sim = new TreeSim(params);
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
-const leaves = new Leaves(makeLeafTexture(), leafMode);
+// Final capacity up front (Low is capped at 32k drawn leaves): no InstancedMesh re-creation while the tree grows.
+const leaves = new Leaves(makeLeafTexture(), leafMode, params.sky.quality === 'Low' ? 32000 : 48000);
 /** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
 function pickLeafMode(): LeafMode {
   const gpu = gpuRenderer(stage.renderer.getContext());
@@ -165,51 +167,85 @@ function regrow() {
   automation.apply(0);
   envKey = envSig();
   sim.reset();
+  invalidate();
 }
 
-let meshAge = Infinity;
+/** WP2 switch: ms of leaf work per frame while a pass is open. */
+const LEAF_BUDGET_MS = Infinity;
+let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
-let leafBakeD = 1, leafBakeT = -1e9;
-let lastTopo = -1;
+let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
+const leafBakeDir = new THREE.Vector3(), camDirTmp = new THREE.Vector3();
+let seenTopo = -1, topoChangedAt = 0;
+let structPV = -1, paramsSig = NaN;
 let rebuilds = 0;
-/** Branch tubes are rebuilt on the CPU; throttle to ~8 Hz (immediately on topology change when paused-ish). */
-function redraw(time: number, dt: number) {
-  meshAge += dt;
-  const growing = !params.time.paused && params.time.speed > 0;
-  const period = diag.rebuildHz > 0 ? 1 / diag.rebuildHz : growing ? 0.12 : 0.25;
-  if (meshAge >= period || (!growing && sim.topology !== lastTopo)) {
+/** Tree was reset: rebuild everything on the next frame, drop an open leaf pass, re-run the paused structure pass. */
+function invalidate() {
+  branchTime = -1; leavesDirty = true; structPV = -1;
+  leaves?.abortPass();
+}
+/**
+ * Scheduling. Branch tubes: rebuilt every frame on High and every second frame on Low, only when sim time, topology or
+ * params moved (a paused tree does nothing). Leaves: their own slower cadence, only when an input changed (see below),
+ * run as a pass of at most LEAF_BUDGET_MS per frame. `force` rebuilds both now and completes the leaf pass.
+ */
+function redraw(time: number, dt: number, force = false) {
+  branchAge += dt;
+  const pv = paramsVersion();
+  const low = params.sky.quality === 'Low';
+  if (sim.topology !== seenTopo) { seenTopo = sim.topology; topoChangedAt = time; }
+  const branchDue = diag.rebuildHz > 0 ? branchAge >= 1 / diag.rebuildHz : !low || (frameCount & 1) === 0;
+  if (force || (branchDue && (sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV))) {
     tel.phase('geometry rebuild');
     branches.update(sim, params.thickness.rootFlare);
     rebuilds++;
-    leavesDirty = true;
-    meshAge = 0;
-    lastTopo = sim.topology;
+    branchAge = 0; branchTime = sim.time; branchTopo = sim.topology; branchPV = pv;
   }
   if (!diag.leaves) return;
-  // Leaf distance LOD + view-dependent bake: rebake when the camera distance to the crown changed by > 25% (≤ 1/s).
-  const camD = stage.camera.position.distanceTo(stage.controls.target);
-  if (!leavesDirty && time - leafBakeT > 1 && Math.abs(camD / leafBakeD - 1) > 0.25) leavesDirty = true;
-  if (!leavesDirty) { leaves.tick(time); return; }
-  leavesDirty = false;
-  leafBakeD = camD; leafBakeT = time;
-  tel.phase('leaves rebuild');
+  leaves.tick(time);
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
-  leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
-    hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
-  leaves.maxInstances = params.sky.quality === 'Low' ? 32000 : 0;
-  const decal = !leaves.mesh.castShadow && S.castShadow;
-  branches.mesh.castShadow = !decal;
-  if (decal) {
-    tel.phase('canopy shadow');
-    canopy.update(sim, sunDirTmp, Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
+  // Leaf pass inputs. Growth: every 0.12 s (diag rebuildHz overrides), 1 s once topology is stable for 5 s. Light grid,
+  // sun direction (2 decimals, as the transmittance cache keys it), params and quality: at once. Camera (≤ 1/s):
+  // distance changed > 25% (size LOD), or on the safe path the view direction turned > 12° (its bake is view-dependent).
+  const sunKey = Math.round(sunDirTmp.x * 100) * 1e6 + Math.round(sunDirTmp.y * 100) * 1e3 + Math.round(sunDirTmp.z * 100);
+  const camD = stage.camera.position.distanceTo(stage.controls.target);
+  const since = time - leafBakeT;
+  if (!leavesDirty) {
+    const period = diag.rebuildHz > 0 ? 1 / diag.rebuildHz : time - topoChangedAt > 5 ? 1 : 0.12;
+    if (sim.time !== leafSimTime && since >= period) leavesDirty = true;
+    else if (sim.lightVersion !== leafLightV || sunKey !== leafSunKey || pv !== leafPV || params.sky.quality !== leafQuality) leavesDirty = true;
+    else if (since > 1) {
+      if (Math.abs(camD / leafBakeD - 1) > 0.25) leavesDirty = true;
+      else if (leaves.variant && camDirTmp.copy(stage.camera.position).sub(stage.controls.target).normalize().dot(leafBakeDir) < 0.978) leavesDirty = true;
+    }
+  }
+  if (force) leavesDirty = true;
+  if (leavesDirty && (force || !leaves.passOpen)) {
+    leavesDirty = false;
+    leafBakeD = camD; leafBakeT = time; leafSimTime = sim.time; leafLightV = sim.lightVersion; leafSunKey = sunKey; leafPV = pv; leafQuality = params.sky.quality;
+    leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
-  } else canopy.mesh.visible = false;
-  const repl = leaves.update(sim, params, time);
-  if (repl) {
-    tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });
-    stage.scene.children.filter((o) => o instanceof THREE.InstancedMesh).forEach((o) => stage.scene.remove(o));
-    stage.scene.add(repl);
+    leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
+      hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
+    leaves.maxInstances = low ? 32000 : 0;
+    const decal = !leaves.mesh.castShadow && S.castShadow;
+    branches.mesh.castShadow = !decal;
+    if (decal) {
+      tel.phase('canopy shadow');
+      canopy.update(sim, sunDirTmp, Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
+      tel.phase('leaves rebuild');
+    } else canopy.mesh.visible = false;
+    const repl = leaves.beginPass(sim, time);
+    if (repl) {
+      tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });
+      stage.scene.children.filter((o) => o instanceof THREE.InstancedMesh).forEach((o) => stage.scene.remove(o));
+      stage.scene.add(repl);
+    }
+  }
+  if (leaves.passOpen) {
+    tel.phase('leaves rebuild', true);
+    leaves.stepPass(sim, params, force || leaves.passes === 0 ? Infinity : LEAF_BUDGET_MS);
   }
 }
 
@@ -296,8 +332,12 @@ function frame(now: number) {
   elapsed += dt;
   frameCount++;
   tel.phase('sim step', true);
+  // Safety net for writers that bypass Automation (scripts, new code): any tree/leaf param change bumps the version.
+  const sig = paramsSignature(params);
+  if (sig !== paramsSig) { paramsSig = sig; bumpParams(); }
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
-  else sim.updateStructure(0);
+  else if (paramsVersion() !== structPV) sim.updateStructure(0); // paused: only after a params edit
+  structPV = paramsVersion();
   tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
   redraw(elapsed, dt);
@@ -335,7 +375,7 @@ tel.setStats(() => {
   const r = stage.renderer;
   return {
     frames: frameCount, fps: +fps.toFixed(1), simT: +sim.time.toFixed(2), nodes: sim.nodes.length, leaves: sim.leaves.length,
-    leafInst: leaves.mesh.count, leafCap: leaves.mesh.instanceMatrix.count, rebuilds, bakes: stage.atmo.bakes, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
+    leafInst: leaves.mesh.count, leafCap: leaves.mesh.instanceMatrix.count, rebuilds, leafPasses: leaves.passes, leafPassMs: +leaves.passMs.toFixed(1), bakes: stage.atmo.bakes, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
     gpuMem: { ...r.info.memory }, calls: r.info.render.calls, tris: r.info.render.triangles, programs: r.info.programs?.length,
     drawBuf: [r.domElement.width, r.domElement.height], pixelRatio: r.getPixelRatio(),
   };
@@ -363,8 +403,7 @@ requestAnimationFrame(loop);
     advance(seconds);
     sim.updateStructure(0);
     stage.frame(sim, params, 0, true);
-    meshAge = Infinity;
-    redraw(elapsed, 0);
+    redraw(elapsed, 0, true);
     stage.render(params);
     return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time, height: +sim.bboxMax[1].toFixed(2), width: +Math.max(sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]).toFixed(2) };
   },

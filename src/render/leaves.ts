@@ -195,6 +195,24 @@ export class Leaves {
   private rankScale = 1;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
+  private q2 = new THREE.Quaternion();
+  /** Resumable leaf pass (see `beginPass` / `stepPass`): cursor, instances written, candidates seen, input snapshot, back buffers. */
+  passOpen = false;
+  private passLi = 0;
+  private passEnd = 0;
+  private passN = 0;
+  private passCand = 0;
+  private passTime = 0;
+  private passRs = 1;
+  private passH = 2;
+  private passT: Float32Array | null = null;
+  private backM = new Float32Array(0);
+  private backC = new Float32Array(0);
+  /** Completed passes, and the wall time of the last one summed over its slices (ms). */
+  passes = 0;
+  passMs = 0;
+  private passAcc = 0;
+  private lastN = 0;
   private col = new THREE.Color();
   private ax = new THREE.Vector3();
   private ay = new THREE.Vector3();
@@ -203,7 +221,7 @@ export class Leaves {
   private scl = new THREE.Vector3();
   private pos = new THREE.Vector3();
 
-  constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }) {
+  constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }, capacity = 1024) {
     this.mode = mode;
     this.mapMean.copy(mapMeanColor(map));
     if (mode.shader !== 'full') {
@@ -221,7 +239,7 @@ export class Leaves {
       if (v.vertexColors) o.vertexColors = true;
       this.material = mode.shader === 'basic' ? new THREE.MeshBasicMaterial(o as THREE.MeshBasicMaterialParameters)
         : new THREE.MeshLambertMaterial(v.emissive ? { ...o, emissive: new THREE.Color(0.05, 0.075, 0.025) } : o);
-      this.mesh = this.makeMesh(1024);
+      this.mesh = this.makeMesh(capacity);
       return;
     }
     const mat = new THREE.MeshStandardMaterial({
@@ -290,7 +308,7 @@ export class Leaves {
         .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (texture2D(leafMap, vLeafUv).a < 0.5) discard;');
     };
     this.gbufferMaterial = gb;
-    this.mesh = this.makeMesh(1024);
+    this.mesh = this.makeMesh(capacity);
   }
 
   private makeMesh(cap: number) {
@@ -306,6 +324,7 @@ export class Leaves {
     if (this.gbufferMaterial) m.userData.gbufferMaterial = this.gbufferMaterial;
     m.count = 0;
     this.capacity = cap;
+    if (this.backM.length < cap * 16) { this.backM = new Float32Array(cap * 16); this.backC = new Float32Array(cap * 3); }
     return m;
   }
 
@@ -361,46 +380,79 @@ export class Leaves {
     if (m.isMeshLambertMaterial && this.variant?.emissive) m.emissive.setRGB(0.05 * day, 0.075 * day, 0.022 * day).add(c);
   }
 
-  /** Returns a replacement mesh when capacity grew (caller swaps it in the scene). */
+  /** Whole pass in one call (first frame, fast-forward, scripts). Returns a replacement mesh when capacity grew. */
   update(sim: TreeSim, p: ArborParams, time: number): THREE.InstancedMesh | null {
+    const repl = this.beginPass(sim, time);
+    this.stepPass(sim, p, Infinity);
+    return repl;
+  }
+
+  /**
+   * Open a leaf pass: snapshot its inputs (lighting was set by `setLighting`, sim time, leaf count, rank thinning, sun
+   * transmittance) and reset the cursor. An open pass is restarted. Returns a replacement mesh when capacity grew
+   * (caller swaps it in the scene); the mesh is created at its final capacity, so this is a fallback.
+   */
+  beginPass(sim: TreeSim, time: number): THREE.InstancedMesh | null {
     this.uniforms.uTime.value = time;
     let replaced: THREE.InstancedMesh | null = null;
-    // Up to 2 instances per sim leaf (outer-shell fill copies).
-    if (sim.leaves.length * 2 > this.capacity) {
+    // Grow only when the last pass came within 10% of the capacity (a pass never writes past it); a capped mesh (Low)
+    // never needs more than its cap.
+    if (this.lastN > this.capacity * 0.9 && sim.leaves.length * 2 > this.capacity && (this.maxInstances <= 0 || this.capacity < this.maxInstances)) {
       const old = this.mesh;
       this.mesh = this.makeMesh(Math.max(sim.leaves.length * 3, this.capacity * 2));
       old.dispose();
       replaced = this.mesh;
     }
+    this.passT = this.variant ? this.sunTransmittance(sim) : null;
+    this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0;
+    this.passTime = sim.time; this.passRs = this.rankScale; this.passH = Math.max(2, sim.bboxMax[1]);
+    this.passAcc = 0;
+    this.passOpen = true;
+    return replaced;
+  }
+
+  /** Drop an open pass without touching the drawn instances (tree was reset). */
+  abortPass() { this.passOpen = false; }
+
+  /**
+   * Run the open pass for at most `budgetMs` (checked every 256 sim leaves) into the back buffers. When the last leaf
+   * is done the back buffers are copied into the instance attributes and uploaded once. Returns true when the pass
+   * completed in this call.
+   */
+  stepPass(sim: TreeSim, p: ArborParams, budgetMs: number): boolean {
+    if (!this.passOpen) return false;
+    const t0 = performance.now();
     const lp = p.leaves;
     const nodes = sim.nodes;
-    const arr = this.mesh.instanceMatrix.array as Float32Array;
-    const carr = this.mesh.instanceColor!.array as Float32Array;
+    const arr = this.backM;
+    const carr = this.backC;
     // Safe (Lambert, no leaf shadows, no translucency): the instance colour carries the whole bake. Full path: the shader
     // does sun, shadows and translucency, so only albedo × sky occlusion is baked.
     const bakeAll = !!this.variant;
-    const T = bakeAll ? this.sunTransmittance(sim) : null;
+    const T = this.passT;
     const G = sim.lightGrid;
     const Lt = this.lit, L = Lt.sun, mm = this.mapMean;
-    const rs = this.rankScale;
-    let n = 0;
-    let cand = 0;
+    const rs = this.passRs, now = this.passTime;
+    let n = this.passN;
+    let cand = this.passCand;
     const cap = this.capacity;
     // Distance LOD: leaves far from the camera (relative to the tree height) grow up to 1.5x so the crown silhouette fills
     // instead of reading as confetti; close-ups keep true size.
-    const H = Math.max(2, sim.bboxMax[1]);
+    const H = this.passH;
     const camX = Lt.cam.x, camY = Lt.cam.y, camZ = Lt.cam.z;
-    for (let li = 0; li < sim.leaves.length; li++) {
+    const end = Math.min(this.passEnd, sim.leaves.length);
+    let li = this.passLi;
+    for (; li < end; li++) {
+      if ((li & 255) === 255 && performance.now() - t0 >= budgetMs) break;
       const lf = sim.leaves[li];
       if (lf.rank * 4 >= lp.density) continue;
       const nd = nodes[lf.node];
-      if (sim.chains[nd.chain].pruned) continue;
+      if (!nd || sim.chains[nd.chain].pruned) continue;
       // No leaf chains on hanging twigs (steeply down-pointing segments read as strands under the crown).
       if (nd.wdy < -0.75) continue;
       // Outer-shell fill: sunlit-shell clumps get up to one extra leaf per sim leaf (8 → ~13 per node), the shaded
       // interior stays sparse. Copies come from a per-leaf hash (render-only; the sim rng and tree shapes are untouched).
-      let h = (li * 2246822519 + lf.node * 3266489917 + 374761393) >>> 0;
-      const hr = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+      hs = (li * 2246822519 + lf.node * 3266489917 + 374761393) >>> 0;
       const shell = smooth(0.06, 0.4, nd.light); // light is mostly 0..0.4 in a grown crown
       const copies = hr() < 0.85 * shell ? 2 : 1;
       for (let cp = 0; cp < copies; cp++) {
@@ -408,7 +460,7 @@ export class Leaves {
       cand++;
       if (rank * 4 >= lp.density * rs || n >= cap) continue;
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
-      const grow = smooth(0, GROW_TIME, sim.time - lf.born);
+      const grow = smooth(0, GROW_TIME, now - lf.born);
       let s = lp.size * lf.size * grow * fade * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
       if (s < 1e-4) continue;
       const pn = nodes[nd.parent];
@@ -439,7 +491,7 @@ export class Leaves {
       this.az.crossVectors(this.ax, this.ay).normalize();
       this.basis.makeBasis(this.ax, this.ay, this.az);
       this.q.setFromRotationMatrix(this.basis);
-      this.q.multiply(new THREE.Quaternion().setFromAxisAngle(this.ay.set(0, 1, 0), roll));
+      this.q.multiply(this.q2.setFromAxisAngle(this.ay.set(0, 1, 0), roll));
       const dc = Math.hypot(this.pos.x - camX, this.pos.y - camY, this.pos.z - camZ);
       s *= 1 + 0.5 * smooth(0.9 * H, 2.6 * H, dc);
       // Blade shape: >0 long and narrow, <0 broad fan.
@@ -448,8 +500,8 @@ export class Leaves {
       this.m.compose(this.pos, this.q, this.scl);
       this.m.toArray(arr, n * 16);
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
-      const young = 1 - smooth(2, 14, sim.time - lf.born);
-      const fresh = Math.max(young, 1 - smooth(10, 50, sim.time - lf.born)) * 0.6 + young * 0.4;
+      const young = 1 - smooth(2, 14, now - lf.born);
+      const fresh = Math.max(young, 1 - smooth(10, 50, now - lf.born)) * 0.6 + young * 0.4;
       if (!bakeAll) {
         // Full path: deep natural greens (the shader adds sun, shadows and translucency glow on top). Effective albedo =
         // instance colour × map; normalise by the map mean to the pale reference map the albedo was tuned against, so
@@ -501,15 +553,9 @@ export class Leaves {
         const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
         const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
         const sd = Math.abs(ndl) * vis;
-        const ch = (sky: number, gr: number, sun: number, tint: number, i: number) => {
-          const hemi = gr + (sky - gr) * hw;
-          const El = hemi + sun * Math.max(0, ndl);
-          const Ew = hemi * occ + sun * (sd + glow * tint);
-          return Math.min(8, Ew / Math.max(0.02, El)) / i;
-        };
-        kr = ch(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r);
-        kg = ch(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g);
-        kb = ch(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b);
+        kr = bakeCh(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r, hw, ndl, occ, sd, glow);
+        kg = bakeCh(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g, hw, ndl, occ, sd, glow);
+        kb = bakeCh(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b, hw, ndl, occ, sd, glow);
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
@@ -517,17 +563,39 @@ export class Leaves {
       n++;
       }
     }
+    this.passLi = li; this.passN = n; this.passCand = cand;
+    this.passAcc += performance.now() - t0;
+    if (li < end) return false;
+    this.passOpen = false;
+    this.passes++;
+    const M = this.mesh.instanceMatrix, C = this.mesh.instanceColor!;
+    (M.array as Float32Array).set(n * 16 === arr.length ? arr : arr.subarray(0, n * 16));
+    (C.array as Float32Array).set(n * 3 === carr.length ? carr : carr.subarray(0, n * 3));
     this.mesh.count = n;
-    // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next rebuild draws ≤ maxInstances.
+    this.lastN = n;
+    // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next pass draws ≤ maxInstances.
     this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
-    this.mesh.instanceMatrix.clearUpdateRanges();
-    this.mesh.instanceMatrix.addUpdateRange(0, n * 16);
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.mesh.instanceColor!.clearUpdateRanges();
-    this.mesh.instanceColor!.addUpdateRange(0, n * 3);
-    this.mesh.instanceColor!.needsUpdate = true;
-    return replaced;
+    M.clearUpdateRanges();
+    M.addUpdateRange(0, n * 16);
+    M.needsUpdate = true;
+    C.clearUpdateRanges();
+    C.addUpdateRange(0, n * 3);
+    C.needsUpdate = true;
+    this.passMs = this.passAcc;
+    return true;
   }
+}
+
+/** Per-leaf hash state for the render-only shell copies (module level: no closure per leaf). */
+let hs = 0;
+function hr() { hs ^= hs << 13; hs >>>= 0; hs ^= hs >>> 17; hs ^= hs << 5; hs >>>= 0; return hs / 4294967296; }
+
+/** One colour channel of the safe-path bake: wanted irradiance over what the Lambert shader will add, over the map mean. */
+function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
+  const hemi = gr + (sky - gr) * hw;
+  const El = hemi + sun * Math.max(0, ndl);
+  const Ew = hemi * occ + sun * (sd + glow * tint);
+  return Math.min(8, Ew / Math.max(0.02, El)) / i;
 }
 
 /** Mean linear colour of the pale pre-painted leaf map the full-path albedo was tuned against. */

@@ -134,6 +134,8 @@ export class Stage {
   private dprPinned = false;
   private dprWinStart = -1;
   private dprWinFrames = 0;
+  /** rAF intervals (ms) of the current window; the decision uses their median, so CPU stalls do not count as GPU load. */
+  private dprIv = new Float32Array(1024);
   private dprLastFrame = 0;
   private dprGoodSince = -1;
   private dprLastDown = -1e9;
@@ -150,13 +152,14 @@ export class Stage {
     }
   }
 
-  /** Called once per rendered frame. 3 s windows (first 3 s and hidden/stalled windows ignored): < 40 fps steps down,
-   *  > 57 fps for 10 s steps up (never above the start value, not within 30 s of a step-down). */
+  /** Called once per rendered frame. 3 s windows (first 3 s and hidden/stalled windows ignored): median frame interval
+   *  > 25 ms steps down, < 17.5 ms for 10 s steps up (never above the start value, not within 30 s of a step-down). */
   private adaptDpr(now: number) {
     if (this.dprPinned) return;
     if (this.dprT0 < 0) this.dprT0 = now;
     // A gap > 2 s means rAF was paused (hidden tab, bfcache) or a hitch such as a fast-forward: drop the window.
-    const stalled = this.dprHiddenSeen || now - this.dprLastFrame > 2000;
+    const iv = now - this.dprLastFrame;
+    const stalled = this.dprHiddenSeen || iv > 2000;
     this.dprHiddenSeen = false;
     this.dprLastFrame = now;
     if (now - this.dprT0 < 3000 || document.visibilityState === 'hidden' || stalled || this.dprWinStart < 0) {
@@ -165,21 +168,24 @@ export class Stage {
       if (stalled || document.visibilityState === 'hidden') this.dprGoodSince = -1;
       return;
     }
+    if (this.dprWinFrames < this.dprIv.length) this.dprIv[this.dprWinFrames] = iv;
     this.dprWinFrames++;
     const span = now - this.dprWinStart;
     if (span < 3000) return;
     const fps = (this.dprWinFrames * 1000) / span;
+    const nIv = Math.min(this.dprWinFrames, this.dprIv.length);
+    const median = this.dprIv.subarray(0, nIv).sort()[nIv >> 1];
     this.dprWinStart = now;
     this.dprWinFrames = 0;
     const cur = this.renderer.getPixelRatio();
     const steps = Stage.DPR_STEPS.filter((s) => s <= this.dprStart + 1e-6);
     if (!steps.length || steps[0] < this.dprStart - 1e-6) steps.unshift(this.dprStart);
     let next = cur;
-    if (fps < 40) {
+    if (median > 25) {
       next = steps.find((s) => s < cur - 1e-6) ?? cur;
       this.dprGoodSince = -1;
       if (next !== cur) this.dprLastDown = now;
-    } else if (fps > 57) {
+    } else if (median < 17.5) {
       if (this.dprGoodSince < 0) this.dprGoodSince = now - span;
       if (now - this.dprGoodSince >= 10000 && now - this.dprLastDown >= 30000) {
         const up = [...steps].reverse().find((s) => s > cur + 1e-6);
@@ -191,7 +197,7 @@ export class Stage {
     }
     if (next !== cur) {
       this.setDpr(next);
-      tel.log('dpr_change', { from: cur, to: next, fps: +fps.toFixed(1), quality: this.quality });
+      tel.log('dpr_change', { from: cur, to: next, fps: +fps.toFixed(1), medianMs: +median.toFixed(1), quality: this.quality });
     }
   }
 
