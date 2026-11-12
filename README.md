@@ -1,20 +1,38 @@
 # Arbor
 
-Real-time tree growth simulation rendered with three.js. Vite + TypeScript + lil-gui.
+Real-time tree growth simulation rendered with three.js. Vite + TypeScript, own DOM controls panel.
 
 ```
 npm install
 npm run dev            # http://localhost:5173  (?t=60 fast-forwards, ?gravity=0.2 etc. override params)
 npm run deploy         # build + restart the `arbor` systemd user unit -> http://10.77.0.2:8050/ (VPN)
-npm run smoke          # headless chromium interaction smoke test (presets, drift, journey, H/C, cinema)
+npm run smoke          # headless chromium interaction smoke test (presets, drift, journey, hand-set values, H/C, cinema)
+PORT=5300 node scripts/panelshots.mjs   # controls-panel screenshots (phone 411x777 + desktop) -> shots/panel-*.png
 npm run shots          # headless chromium proof shots -> shots/ (growth stages + morning/noon/golden/bluehour/night)
 node scripts/screenshot.mjs 30,90 "gravity=0.12&gravitropism=0.05" alien
 ```
 
+## Controls panel
+
+`src/ui.ts` + `src/ui.css` (own DOM, no lil-gui). Desktop: side panel on the right, open by default. Phone (≤ 700 px wide): a "Controls" button opens a bottom sheet (47% of the height) that the chevron collapses again. `?panel=open|closed`, `?tab=grow|shape|colours|sky|more`, `?nogui=1`.
+
+| Tab | Contents |
+|---|---|
+| header (always) | state (Growing / Paused / Fully grown, twig count, age), pause/play, collapse. When fully grown a bar offers "Plant a new tree". |
+| Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed), Regrow this one, preset chips |
+| Shape | Gravity, Reach for light, Branchiness, Branch angle, Twist, Droop, Wildness, Crown width/height/shape, Leaf size, Leaf amount. Each has a one-line explanation, a "new growth" or "instant" tag and a Drift toggle. |
+| Colours | Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
+| Sky | Time of day, Day and night cycle, Length of a day |
+| More | Journey keyframes, drift for any value, every raw parameter by technical name, camera, quality, seed |
+
+Rule: a value set by hand wins. Every control writes through `Automation.userSet(path, value)`, which removes that path from all journey keyframes and turns its drift off, so nothing snaps back. (Before, a journey with two or more keyframes rewrote its keyed params before every sim step, so sliders reset.)
+
+Adding a section: controls are declared as data (`TREE`, `SKY`, `ADVANCED` lists of `SliderDef` / raw rows; `slider()`, `toggle()`, `colour()` builders) and a tab is one `tab(id, label, ...rows)` call in `buildPanel`.
+
 ## Watching
 
-- **Presets** (top of the panel, regrows): Oak meadow, Windswept cypress, Weeping willow, Low-gravity alien, Crimson world, Bioluminescent night, Heavy world, Journey: Earth → alien. URL: `?preset=Crimson%20world`.
-- **Automation** folder: *Journey* keyframes (`Add keyframe (now)` snapshots every numeric param at the current tree age; values smoothstep between keyframes as the tree grows; presets can ship a journey). *Drift*: pick a param, toggle drift, set rate (Hz of sim time) and range (± relative); smooth low-frequency noise around the base value. The sim reads params live, so new growth records the history (bends, colour bands). If gravity/crown changes move the crown envelope, attractors are re-sampled during growth.
+- **Presets** (chips on the Grow tab, regrows): Oak meadow, Windswept cypress, Weeping willow, Low-gravity alien, Crimson world, Bioluminescent night, Heavy world, Journey: Earth → alien. URL: `?preset=Crimson%20world`.
+- **Automation** (More tab): *Journey* keyframes (`Add keyframe (now)` snapshots every numeric param at the current tree age; values smoothstep between keyframes as the tree grows; presets can ship a journey). *Drift*: pick a param, toggle drift, set rate (Hz of sim time) and range (± relative); smooth low-frequency noise around the base value. The sim reads params live, so new growth records the history (bends, colour bands). If gravity/crown changes move the crown envelope, attractors are re-sampled during growth.
 - **Cinema** camera (default on): slow orbit with breathing height and rare slow push-ins, always framing the tree. Any drag pauses it; it resumes after 10 s idle.
 - Keys: **H** hide/show all UI (watch mode, also `?hideui=1`), **C** toggle cinema. A small overlay (preset · age · clock) fades out after 4 s without mouse movement.
 - Alien params: `growth.weeping` (twig downward tropism ∝ gravity), `growth.torsion` (spiral twist per segment), `crown.bole` (clear trunk height), `leaves.shape` (fan ↔ narrow), `leaves.lightness`, `leaves.glow`/`glowHue` (bioluminescence, strongest at night), `sky.skyHue`/`skyTint` (sky+fog tint), `sky.sunHue`/`sunTint`, `sky.sun2`/`sun2Hue`/`sun2Yaw` (companion star: fill light + disc), `sky.sunSize`, `sky.groundHue`/`groundTint`.
@@ -68,7 +86,7 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), hill ring, fog, shadow frustum, camera framing, Low/High render path. |
 | `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
-| `src/ui.ts` | lil-gui panel (presets, automation, all params). |
+| `src/ui.ts`, `src/ui.css` | Controls panel (tabs Grow / Shape / Colours / Sky / More), declarative control lists. |
 | `src/automation.ts` | `Automation`: journey keyframes + per-param drift, applied before every sim step (`main.ts advance`). |
 | `src/presets.ts` | Preset overrides + optional journeys. |
 | `scripts/screenshot.mjs` | Playwright-core + system chromium (SwiftShader) shots; uses `window.__arbor.fastForward(s)`. |

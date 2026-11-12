@@ -6,7 +6,7 @@ import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
 import { CanopyShadow } from './render/canopyShadow';
 import { makeBarkTextures, makeLeafTexture } from './render/textures';
-import { buildGui } from './ui';
+import { buildPanel } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
 import { envelopeDims } from './sim/envelope';
@@ -214,7 +214,8 @@ function redraw(time: number, dt: number) {
 }
 
 if (query.get('nogui') !== '1') {
-  buildGui(params, automation, {
+  const qp = query.get('panel');
+  buildPanel(params, automation, {
     regrow,
     newSeed: () => {
       params.seed.seed = Math.floor(Math.random() * 999999);
@@ -225,7 +226,9 @@ if (query.get('nogui') !== '1') {
     presetNames: Object.keys(PRESETS),
     currentPreset: () => presetName,
     simTime: () => sim.time,
-  });
+    // Fully grown: the node budget is used up, or no tip is alive any more (crown space is filled).
+    growth: () => ({ nodes: sim.nodes.length, age: sim.time, grown: sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive)) }),
+  }, { open: qp === 'open' ? true : qp === 'closed' ? false : undefined, tab: query.get('tab') ?? undefined });
 }
 // Only a real orbit/zoom stops auto-framing: a tap (e.g. to collapse the GUI) used to freeze the camera at the
 // sapling distance, and the crown then grew around it.
@@ -247,10 +250,16 @@ let uiHidden = query.get('hideui') === '1';
 let activity = 0;
 const applyUi = () => document.body.classList.toggle('watch', uiHidden);
 applyUi();
+/** Keys H/C/D stay live on sliders, switches and buttons; only real text entry swallows them. */
+function typing(el: HTMLElement | null) {
+  if (!el) return false;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable) return true;
+  return el.tagName === 'INPUT' && !['range', 'checkbox', 'color', 'button'].includes((el as HTMLInputElement).type);
+}
 // Capture phase: lil-gui stops keydown propagation on its controllers, so H/C would die after any GUI click.
 addEventListener('keydown', (e) => {
   const el = e.target as HTMLElement | null;
-  if (el && (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (typing(el)) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'h' || e.key === 'H') { uiHidden = !uiHidden; applyUi(); activity = 0; }
   if (e.key === 'c' || e.key === 'C') { params.camera.cinema = !params.camera.cinema; stage.idle = 1e9; }
@@ -261,7 +270,7 @@ let hudOn = query.get('hud') === '1';
 const applyHud = () => document.body.classList.toggle('hud', hudOn);
 applyHud();
 addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+  if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target as HTMLElement | null)) return;
   if (e.key === 'd' || e.key === 'D') { hudOn = !hudOn; applyHud(); }
 }, true);
 const glow = new THREE.Color();

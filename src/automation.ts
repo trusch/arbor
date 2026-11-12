@@ -75,6 +75,26 @@ export class Automation {
     d.range = range;
   }
 
+  /**
+   * A value set by hand wins: write it, drop the path from every journey keyframe and stop its drift
+   * (without snapping back to the old drift base). Works for any "group.field", numeric or not.
+   */
+  userSet(k: string, v: number | boolean | string) {
+    const [g, f] = k.split('.');
+    (this.p as unknown as Record<string, Record<string, unknown>>)[g][f] = v;
+    for (const kf of this.journey) delete kf.values[k];
+    this.journey = this.journey.filter((kf) => Object.keys(kf.values).length > 0);
+    const d = this.drift[k];
+    if (d) { d.on = false; d.base = typeof v === 'number' ? v : d.base; }
+  }
+
+  /** True while journey or drift is writing this path every step. */
+  drives(k: string): 'drift' | 'journey' | null {
+    if (this.drift[k]?.on) return 'drift';
+    if (this.journeyOn && this.journey.filter((kf) => k in kf.values).length >= 2) return 'journey';
+    return null;
+  }
+
   /** Journey value for path k at sim time t, or undefined if the journey does not key it. */
   private journeyValue(k: string, t: number): number | undefined {
     const kfs = this.journey.filter((kf) => k in kf.values);
