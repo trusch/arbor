@@ -57,7 +57,7 @@ export interface ArborParams {
     height: number;
     /** Height of crown base above ground. */
     base: number;
-    /** Clear bole: no trunk buds break below this height (m). */
+    /** Clear bole: how high the grown trunk ends up clean (m). Below it the young stem carries leaves and short side shoots that are shed as it thickens; 0 switches the juvenile phase off. */
     bole: number;
     attractors: number;
   };

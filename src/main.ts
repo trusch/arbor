@@ -589,6 +589,8 @@ requestAnimationFrame(loop);
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {
     advance(seconds);
+    // Juvenile shoots shed during a skip are long gone: do not spawn their leaves now.
+    if (seconds > 1) sim.breaks = sim.breaks.filter((e) => !e.shed);
     sim.updateStructure(0);
     stage.frame(sim, params, 0, true);
     redraw(elapsed, 0, true);
