@@ -194,6 +194,8 @@ function regrow() {
 
 /** Leaf work per frame while a pass is open (ms); the pass is uploaded when its last slice ends. */
 const LEAF_BUDGET_MS = 3;
+/** Leaf follow work per branch rebuild (ms): a whole sweep when it fits, else round-robin chunks. */
+const LEAF_FOLLOW_MS = 2.5;
 let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
 let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
@@ -213,6 +215,7 @@ function invalidate() {
  */
 function redraw(time: number, dt: number, force = false) {
   branchAge += dt;
+  let branchMoved = false;
   const pv = paramsVersion();
   const low = params.sky.quality === 'Low';
   if (sim.topology !== seenTopo) { seenTopo = sim.topology; topoChangedAt = time; }
@@ -222,6 +225,7 @@ function redraw(time: number, dt: number, force = false) {
     branches.update(sim, params.thickness.rootFlare);
     rebuilds++;
     branchAge = 0; branchTime = sim.time; branchTopo = sim.topology; branchPV = pv;
+    branchMoved = true;
   }
   if (!diag.leaves) return;
   leaves.tick(time);
@@ -234,7 +238,7 @@ function redraw(time: number, dt: number, force = false) {
   const camD = stage.camera.position.distanceTo(stage.controls.target);
   const since = time - leafBakeT;
   if (!leavesDirty) {
-    const period = diag.rebuildHz > 0 ? 1 / diag.rebuildHz : time - topoChangedAt > 5 ? 1 : 0.12;
+    const period = diag.rebuildHz > 0 ? 1 / diag.rebuildHz : time - topoChangedAt > 5 ? 0.4 : 0.12;
     if (sim.time !== leafSimTime && since >= period) leavesDirty = true;
     else if (sim.lightVersion !== leafLightV || sunKey !== leafSunKey || pv !== leafPV || params.sky.quality !== leafQuality) leavesDirty = true;
     else if (since > 1) {
@@ -265,9 +269,16 @@ function redraw(time: number, dt: number, force = false) {
       stage.scene.add(repl);
     }
   }
-  if (leaves.passOpen) {
+  // Low: the pass slice and the branch rebuild + leaf follow take alternate frames.
+  let placed = false;
+  if (leaves.passOpen && (force || leaves.passes === 0 || !low || !branchMoved)) {
     tel.phase('leaves rebuild', true);
-    leaves.stepPass(sim, params, force || leaves.passes === 0 ? Infinity : LEAF_BUDGET_MS);
+    placed = leaves.stepPass(sim, params, force || leaves.passes === 0 ? Infinity : LEAF_BUDGET_MS, stage.camera.position);
+  }
+  // Leaves ride their branches: whenever the branch mesh was rebuilt, every drawn leaf is re-placed on its node.
+  if (branchMoved && !placed) {
+    tel.phase('leaves follow', true);
+    leaves.follow(sim, params, stage.camera.position, LEAF_FOLLOW_MS);
   }
 }
 
@@ -398,7 +409,7 @@ tel.setStats(() => {
   const r = stage.renderer;
   return {
     frames: frameCount, fps: +fps.toFixed(1), simT: +sim.time.toFixed(2), nodes: sim.nodes.length, leaves: sim.leaves.length,
-    leafInst: leaves.mesh.count, leafCap: leaves.mesh.instanceMatrix.count, rebuilds, leafPasses: leaves.passes, leafPassMs: +leaves.passMs.toFixed(1), bakes: stage.atmo.bakes, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
+    leafInst: leaves.mesh.count, leafCap: leaves.mesh.instanceMatrix.count, rebuilds, leafPasses: leaves.passes, leafPassMs: +leaves.passMs.toFixed(1), leafFollows: leaves.follows, leafFollowMs: +leaves.followMs.toFixed(2), leafFollowMaxMs: +leaves.followMaxMs.toFixed(2), bakes: stage.atmo.bakes, frameErrors, contextLost: stage.contextLost, quality: params.sky.quality,
     gpuMem: { ...r.info.memory }, calls: r.info.render.calls, tris: r.info.render.triangles, programs: r.info.programs?.length,
     drawBuf: [r.domElement.width, r.domElement.height], pixelRatio: r.getPixelRatio(),
   };
