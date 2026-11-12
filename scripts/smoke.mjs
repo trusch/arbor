@@ -412,6 +412,52 @@ try {
         && o.stormOn.spawned > 20 && o.stormOn.ground > 5 && Object.values(o).every((r) => r.fe === 0 && r.errs === 0),
       JSON.stringify(o));
   }
+  // Seasons gate (PowerVR rule): the year is data on the live leaf mesh (instance colours, matrices, count). Program
+  // count in phone emulation is the same in every season as with seasons off (same page age for every reading: both
+  // pages settle 8 s, then each station is read 1.5 s after its scrub, the seasons-off page at the same moments);
+  // scrubbing changes the mean leaf colour and the drawn leaf count as a year should; hold freezes them.
+  {
+    const read = (pg) => pg.evaluate(() => {
+      const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array;
+      let r = 0, g = 0, b = 0, k = 0;
+      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; k++; }
+      return { programs: A.stage.renderer.info.programs.length, n: k, rg: k ? +(r / g).toFixed(3) : 0, lum: k ? +((r + g + b) / k).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
+    });
+    const on = await phone('?speed=0&weather=calm'), off = await phone('?speed=0&weather=calm&season.on=false');
+    for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
+    await on.mp.waitForTimeout(8000);
+    const st = {}, offP = [];
+    for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
+      await on.mp.evaluate((dd) => { const A = window.__arbor; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
+      await on.mp.waitForTimeout(1500);
+      st[name] = await read(on.mp);
+      offP.push((await read(off.mp)).programs);
+    }
+    const o0 = await read(off.mp);
+    // Hold: time runs, the date does not. Then released: the year moves on.
+    await on.mp.evaluate(() => { window.__arbor.automation.userSet('season.date', 0.62); window.__arbor.params.time.speed = 1; });
+    await on.mp.waitForTimeout(1500);
+    const h0 = await read(on.mp);
+    await on.mp.waitForTimeout(3000);
+    const h1 = await read(on.mp);
+    await on.mp.evaluate(() => window.__arbor.automation.userSet('season.hold', false));
+    await on.mp.waitForTimeout(3000);
+    const h2 = await read(on.mp);
+    const progs = Object.values(st).map((r) => r.programs);
+    check('phone: seasons add no shader program in any season (vs seasons off at the same moments)',
+      progs.every((p, i) => p === offP[i]) && Object.values(st).every((r) => r.fe === 0) && on.merr.length === 0 && off.merr.length === 0,
+      `on ${progs.join('/')} off ${offP.join('/')} errs ${on.merr.length}+${off.merr.length}`);
+    check('phone: scrubbing the year changes leaf colour and drawn leaves (flush, green, turning, peak, thinning, bare, flush again) and returns to the same summer',
+      st.summer.n > 5000 && Math.abs(st.summer.n - o0.n) < 0.02 * o0.n && st.flush.n < 0.9 * st.summer.n && st.flush.n > 0 && st.flush.lum > st.summer.lum
+        && st.summer.rg < 0.8 && st.turning.rg > st.summer.rg && st.peak.rg > 1.5 && st.peak.rg > st.turning.rg && st.peak.n < st.summer.n
+        && st.thin.n < 0.5 * st.summer.n && st.thin.n > 0 && st.winter.n === 0 && st.spring2.n > st.flush.n
+        && st.summer2.n === st.summer.n && Math.abs(st.summer2.rg - st.summer.rg) < 0.01 && st.winter.name.includes('winter') && st.flush.name.includes('spring'),
+      JSON.stringify({ ...st, off: o0 }));
+    check('phone: "hold this season" freezes the date, colour and leaf count (within the 1 % the tree grows) while time runs; released, the year moves on',
+      h0.phase === h1.phase && Math.abs(h0.n - h1.n) < 0.01 * h0.n && Math.abs(h0.rg - h1.rg) < 0.02 * h0.rg && h2.phase > h1.phase + 0.003 && h2.n < h1.n,
+      JSON.stringify({ h0, h1, h2 }));
+    await on.ctx.close(); await off.ctx.close();
+  }
   // Leaf form gate (PowerVR rule): switching the leaf form on a living tree is data only. Same program count, same
   // leaf material and map objects (new pixels, version bump), falling-leaf meshes still on the live material, meadow
   // maps untouched; on the phone path (safe leaves) and on desktop High (full leaves, GTAO g-buffer material).

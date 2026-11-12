@@ -1,5 +1,5 @@
 import './ui.css';
-import { seasonName } from './season';
+import { season, seasonName } from './season';
 import type { ArborParams } from './params';
 import { type Automation, numericPaths } from './automation';
 import { LEAF_FORMS, leafFormCanvas } from './render/textures';
@@ -354,7 +354,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   const seasonInfo = h('p', { class: 'ap-note', id: 'arbor-season-info', role: 'status' });
   syncers.push(() => {
     const on = get('season.on') as boolean, d = num('season.date');
-    seasonInfo.textContent = on ? `Now: ${seasonName(d)}${get('season.hold') ? ' (held)' : ''}.` : 'Seasons are off: it is always summer.';
+    seasonInfo.textContent = on ? `Now: ${seasonName(d).toLowerCase()} of year ${season.year}${get('season.hold') ? ', held' : ''}.` : 'Seasons are off: it is always summer.';
   });
   tab('seasons', 'Seasons',
     toggle('season.on', 'Seasons', 'The tree lives through the year: fresh leaves in spring, colour and leaf fall in autumn, bare in winter.'),
@@ -454,7 +454,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     const g = a.growth();
     const state = g.grown ? 'Fully grown' : p.time.paused || p.time.speed <= 0 ? 'Paused' : 'Growing';
     if (stState.textContent !== state) stState.textContent = state;
-    stSub.textContent = `${g.nodes.toLocaleString('en')} twigs · age ${g.age.toFixed(0)} s`;
+    stSub.textContent = `${g.nodes.toLocaleString('en')} twigs · ${get('season.on') ? `${season.name.toLowerCase()}, year ${season.year}` : `age ${g.age.toFixed(0)} s`}`;
     grownBar.hidden = !g.grown;
     root.classList.toggle('grown', g.grown);
     const paused = p.time.paused;
