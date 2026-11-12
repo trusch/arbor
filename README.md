@@ -121,3 +121,7 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 - Branches have no wind sway, only leaves do. Sag does not resolve collisions.
 - Low-gravity alien is tall (~24 m, 2.7× the oak) with sparse huge leaves, but its trunk still reads hair-thin at full-frame distance and the spiral arcs are only faintly visible; the crown is more columnar than arched.
 - Cinema push-ins may crop crown edges briefly; the resting orbit and auto-frame fit the full bounding sphere.
+
+## Meadow and wind
+
+The ground around the tree is a meadow of grass tufts and wildflowers (daisy, buttercup, poppy, clover) that lean and ripple as gusts travel across it. It is thinner and shorter under the crown and fades out with distance. Controls: Sky tab, "Wind" slider and "Meadow" switch (`sky.wind`, `sky.meadow`); `?meadow=0` removes it (also linked on `diag.html`). All wind comes from `src/wind.ts`. On the phone path the meadow reuses the leaf shader program (no new program is compiled; `npm run smoke` checks this). `node scripts/meadowshots.mjs [hour]` takes a trunk-base shot and measures the motion between two frames 0.5 s apart.
