@@ -1,6 +1,7 @@
 import './ui.css';
 import type { ArborParams } from './params';
 import { type Automation, numericPaths } from './automation';
+import { LEAF_FORMS, leafFormCanvas } from './render/textures';
 
 export interface UiActions {
   regrow(): void;
@@ -277,7 +278,30 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     note('Shape controls steer how the tree grows from now on. Branches that already exist keep their form, so plant a new tree to see the full effect. Drift lets a value wander slowly on its own.'),
     ...TREE.map((d) => slider({ when: 'new', drift: true, ...d })));
 
-  // ---- Colours ----
+  // ---- Leaves and colours ----
+  /** Leaf form picker: one button per form with a small painting of it (2D canvas, drawn in idle slices). */
+  const formPicker = (): HTMLElement => {
+    const grid = h('div', { class: 'ap-forms', role: 'group', 'aria-label': 'Leaf shape' });
+    const btns: HTMLButtonElement[] = [];
+    LEAF_FORMS.forEach((f, i) => {
+      const cv = h('canvas', { width: 96, height: 96, 'aria-hidden': 'true' });
+      const b = h('button', { type: 'button', class: 'ap-form', 'data-form': f.id, 'aria-pressed': 'false' }, cv, h('span', { text: f.name }));
+      b.addEventListener('click', () => { set('leaves.form', f.id); refresh(); });
+      btns.push(b);
+      grid.append(b);
+      setTimeout(() => {
+        // Real proportions: the square map is drawn into a box of the form's aspect, tip up.
+        const src = leafFormCanvas(f.id, f.paint ? 192 : 512), g = cv.getContext('2d')!;
+        const hgt = 90 * Math.min(1, 1 / f.aspect), w = hgt * f.aspect;
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(src, (96 - w) / 2, (96 - hgt) / 2, w, hgt);
+      }, 60 + i * 30);
+    });
+    syncers.push(() => { const cur = get('leaves.form'); for (const b of btns) b.setAttribute('aria-pressed', String(b.dataset.form === cur)); });
+    return h('div', { class: 'ap-row' },
+      h('div', { class: 'ap-head' }, h('span', { class: 'ap-sw-name', text: 'Leaf shape' })),
+      grid, h('p', { class: 'ap-help', text: 'What kind of leaf the tree wears. Changes at once, on the tree you are watching.' }));
+  };
   const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
   const surprise = () => {
     // One base hue; sky and sun sit at a harmonic offset (complementary, triadic or analogous), ground stays near the leaves.
@@ -292,7 +316,8 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     set('leaves.hue', 0.27); set('leaves.saturation', 0.55); set('leaves.lightness', 1); set('leaves.glow', 0);
     set('sky.skyTint', 0); set('sky.sunTint', 0); set('sky.groundTint', 0);
   };
-  tab('colours', 'Colours',
+  tab('colours', 'Leaves',
+    formPicker(),
     h('div', { class: 'ap-actions' }, btn('Surprise me', surprise, 'primary', 'arbor-surprise'), btn('Natural colours', natural, '', 'arbor-natural')),
     note('Colours change at once, on the tree you are watching. Tap the round colour button for any colour, or pick a suggestion.'),
     colour({ name: 'Leaf colour', help: 'The colour of the leaves.', id: 'leaf',

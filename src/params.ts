@@ -82,6 +82,8 @@ export interface ArborParams {
     shape: number;
     /** Lightness multiplier. */
     lightness: number;
+    /** Leaf form id (`LEAF_FORMS` in render/textures.ts); applied live by `applyLeafForm` in main.ts. */
+    form: string;
     /** Emissive glow strength (bioluminescence), scaled up at night. */
     glow: number;
     /** Glow hue 0..1. */
@@ -196,7 +198,7 @@ export function defaultParams(): ArborParams {
     },
     crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, bole: 1.7, attractors: 4000 },
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
-    leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5 },
+    leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5, form: 'oak' },
     light: { azimuth: 35, elevation: 50 },
     sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
     leaffall: { enabled: true, rate: 1, litter: 1 },

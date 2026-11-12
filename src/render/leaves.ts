@@ -48,7 +48,7 @@ function doubledLeafGeometry(vertexColors = false): THREE.BufferGeometry {
  * colour into the transparent area, and every mip level is built by hand with its alpha re-thresholded at 0.5, so a
  * texel is either leaf (alpha 1) or nothing (alpha 0) at every distance. Same shader features as the canvas map.
  */
-export function cleanLeafTexture(src: THREE.Texture): THREE.Texture {
+export function cleanLeafTexture(src: THREE.Texture, preserve = false): THREE.Texture {
   const img = src.image as HTMLCanvasElement;
   const S = img.width;
   const d = img.getContext('2d')!.getImageData(0, 0, S, S).data;
@@ -62,9 +62,19 @@ export function cleanLeafTexture(src: THREE.Texture): THREE.Texture {
     for (let c = 0; c < 3; c++) lvl[i * 4 + c] = a >= 0.5 ? d[i * 4 + c] : fill[c];
     lvl[i * 4 + 3] = a >= 0.5 ? 1 : 0;
   }
+  // `preserve` (thin leaf forms: needles, tendrils): each mip's alpha threshold is lowered until the level covers as
+  // much of the card as level 0, so a spray does not thin out and vanish with distance. Alpha stays 0/1.
+  const cover = n / (S * S);
   const toBytes = (f: Float32Array) => {
+    let thr = 0.5;
+    if (preserve && f.length < S * S * 4 && f.length >= 16) {
+      const a = new Float32Array(f.length / 4);
+      for (let i = 0; i < a.length; i++) a[i] = f[i * 4 + 3];
+      a.sort();
+      thr = Math.min(0.5, Math.max(0.1, a[Math.max(0, Math.min(a.length - 1, Math.round(a.length * (1 - cover))))]));
+    }
     const u = new Uint8Array(f.length);
-    for (let i = 0; i < f.length; i += 4) { u[i] = f[i]; u[i + 1] = f[i + 1]; u[i + 2] = f[i + 2]; u[i + 3] = f[i + 3] >= 0.5 ? 255 : 0; }
+    for (let i = 0; i < f.length; i += 4) { u[i] = f[i]; u[i + 1] = f[i + 1]; u[i + 2] = f[i + 2]; u[i + 3] = f[i + 3] >= thr ? 255 : 0; }
     return u;
   };
   const mipmaps: { data: Uint8Array; width: number; height: number }[] = [{ data: toBytes(lvl), width: S, height: S }];
@@ -225,7 +235,13 @@ export class Leaves {
   private nodeRef = new Float32Array(0);
   private nodeMoved = new Uint8Array(0);
   /** Camera position and crown height of the last unconditional placement (size LOD inputs). */
-  private lodX = 0; private lodY = 0; private lodZ = 0; private lodH = 0; private lodShape = NaN; private lodFade = NaN;
+  private lodX = 0; private lodY = 0; private lodZ = 0; private lodH = 0; private lodShape = NaN; private lodFade = NaN; private lodForm = '';
+  /** Leaf form (`LEAF_FORMS` in textures.ts): id and card stretch on top of `leaves.shape`. Changed by `setForm` only. */
+  formId = 'oak';
+  private formKx = 1;
+  private formKy = 1;
+  /** The canvas-backed map the constructor got (full path and `?leafmap=raw`: the drawn map; `setForm` swaps its image). */
+  private srcMap: THREE.Texture;
   /** Instances actually re-placed by the last `follow`. */
   followPlaced = 0;
   /** False until a pass has completed on the current tree (front records would point into a discarded node list). */
@@ -244,12 +260,15 @@ export class Leaves {
 
   constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }, capacity = 1024) {
     this.mode = mode;
+    this.srcMap = map;
+    const form = map.userData.form as LeafFormInfo | undefined;
+    if (form) { this.formId = form.id; this.formKx = form.kx; this.formKy = form.ky; }
     this.mapMean.copy(mapMeanColor(map));
     if (mode.shader !== 'full') {
       const v = this.variant = LEAF_VARIANTS[mode.variant ?? 0] ?? LEAF_VARIANTS[0];
       let tex: THREE.Texture | null = null;
       if (v.map === 'leaf') {
-        tex = diagRawLeafMap ? map : cleanLeafTexture(map);
+        tex = diagRawLeafMap ? map : cleanLeafTexture(map, !!form?.preserve);
         if (diagRawLeafMap) { map.anisotropy = 1; map.generateMipmaps = true; map.minFilter = THREE.LinearMipmapLinearFilter; }
       } else if (v.map === 'white') {
         tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
@@ -363,6 +382,32 @@ export class Leaves {
     return m;
   }
 
+  /**
+   * Change the leaf form on the living tree. Data only (PowerVR rule): the pixels of the map the material already
+   * has are replaced (safe path: the hand-built mip chain of the `cleanLeafTexture` DataTexture is overwritten level
+   * by level; full path and `?leafmap=raw`: the canvas texture gets the new canvas as its image), the mean colour the
+   * bake divides by is recomputed and the card stretch is updated for `place`. Same material instance, same flags,
+   * same geometry, so falling leaves, litter and debris (which share both) and the GTAO g-buffer material (which
+   * samples the same texture object) follow. The caller re-places the instances and starts a leaf pass (colours).
+   */
+  setForm(map: THREE.Texture): void {
+    const form = map.userData.form as LeafFormInfo | undefined;
+    if (form) { this.formId = form.id; this.formKx = form.kx; this.formKy = form.ky; }
+    const live = (this.material as THREE.MeshLambertMaterial).map as THREE.Texture | null;
+    if (!this.variant || (this.variant.map === 'leaf' && diagRawLeafMap)) {
+      this.srcMap.image = map.image;
+      this.srcMap.needsUpdate = true;
+    } else if (this.variant.map === 'leaf' && live) {
+      const fresh = cleanLeafTexture(map, !!form?.preserve);
+      const dst = live.mipmaps as unknown as { data: Uint8Array }[], src = fresh.mipmaps as unknown as { data: Uint8Array }[];
+      for (let i = 0; i < dst.length && i < src.length; i++) dst[i].data.set(src[i].data);
+      live.needsUpdate = true;
+      fresh.dispose();
+    } else { map.dispose(); return; } // V3/V4 dev variants draw no leaf map
+    this.mapMean.copy(mapMeanColor(map));
+    map.dispose();
+  }
+
   tick(time: number) {
     this.uniforms.uTime.value = time;
   }
@@ -460,7 +505,7 @@ export class Leaves {
     const RT = this.mesh && out === this.mesh.instanceMatrix.array ? this.restT : null;
     let placed = 0, mv = true;
     const H = Math.max(2, sim.bboxMax[1]);
-    const sh = lp.shape, kx = sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh, ky = sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh;
+    const sh = lp.shape, kx = (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh) * this.formKx, ky = (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh) * this.formKy;
     const f0 = lp.maxBranchRadius * 0.7, f1 = lp.maxBranchRadius, l0 = 0.9 * H, l1 = 2.6 * H;
     let last = -1, ok = false;
     let dx = 0, dy = 1, dz = 0, rx = 1, rz = 0, bx = 0, by = 0, bz = 0, px = 0, py = 0, pz = 0, ex = 0, ey = 0, ez = 0, rad = 0, fade = 1;
@@ -627,7 +672,7 @@ export class Leaves {
         done = this.place(this.frontD, this.frontNode, from, n, sim, p, cam.x, cam.y, cam.z, arr, from * 16);
         M.addUpdateRange(from * 16, (n - from) * 16);
       }
-      if (from === 0) { this.lodX = cam.x; this.lodY = cam.y; this.lodZ = cam.z; this.lodH = Math.max(2, sim.bboxMax[1]); this.lodShape = p.leaves.shape; this.lodFade = p.leaves.maxBranchRadius; }
+      if (from === 0) { this.lodX = cam.x; this.lodY = cam.y; this.lodZ = cam.z; this.lodH = Math.max(2, sim.bboxMax[1]); this.lodShape = p.leaves.shape; this.lodFade = p.leaves.maxBranchRadius; this.lodForm = this.formId; }
     } else {
       // Round-robin in chunks of 1024 instances until the budget is spent (a whole sweep when it fits). Each sweep
       // starts with a per-node moved verdict; leaves on nodes at rest are skipped, only touched chunks are uploaded.
@@ -787,7 +832,7 @@ export class Leaves {
     // keep their matrices, which `follow` has kept on the nodes; only the tail behind the first difference is placed.
     let same = 0;
     const H = Math.max(2, sim.bboxMax[1]);
-    if (this.followOk && budgetMs !== Infinity && lp.shape === this.lodShape && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
+    if (this.followOk && budgetMs !== Infinity && lp.shape === this.lodShape && this.formId === this.lodForm && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
       && Math.hypot(cam.x - this.lodX, cam.y - this.lodY, cam.z - this.lodZ) < 0.05 * H) {
       const oD = this.frontD, oN = this.frontNode, m = Math.min(n, this.mesh.count);
       for (let k = 0; same < m; same++, k += LEAF_D) {
@@ -811,6 +856,8 @@ export class Leaves {
     return true;
   }
 }
+
+interface LeafFormInfo { id: string; kx: number; ky: number; preserve: boolean }
 
 /** Per-leaf hash state for the render-only shell copies (module level: no closure per leaf). */
 let hs = 0;

@@ -133,3 +133,9 @@ body.panel-open #overlay { display: none; }
 .ap-fold summary::-webkit-details-marker { display: none; }
 .ap-fold summary::after { content: ''; width: 9px; height: 9px; margin-right: 6px; border-right: 2px solid var(--mute); border-bottom: 2px solid var(--mute); transform: rotate(45deg); }
 .ap-fold[open] summary::after { transform: rotate(-135deg); }
+
+.ap-forms { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin: 4px 0; }
+.ap-form { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 44px; padding: 6px 2px 5px; border: 2px solid transparent; border-radius: 12px; background: rgba(255, 255, 255, 0.07); color: inherit; font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; }
+.ap-form canvas { width: 60px; height: 60px; }
+.ap-form:hover { background: rgba(255, 255, 255, 0.13); }
+.ap-form[aria-pressed='true'] { border-color: var(--accent); background: rgba(255, 255, 255, 0.16); }
