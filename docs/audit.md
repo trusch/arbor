@@ -199,9 +199,44 @@ Phone totals with everything on: about 75 extra draw calls, about 95k extra tria
 | Crickets | 4.5 kHz sine, amplitude gated by a 30 Hz pulse train in bursts of 3 per second, two detuned voices | night factor |
 | Bees | Sawtooth at 190 Hz through a low-pass, gain by distance of the nearest bee to the camera | bees |
 
+### 3.5 Weather events and branch breakage
+
+**Weather state.** `src/weather.ts` (no three import) holds one state machine: calm → breeze → storm front → rain → clearing, either on a slow random schedule or forced by `params.weather.event`. It outputs scalars that existing systems already consume: `wind.base` (0.35 calm, 1.0 storm) and gust frequency, cloud coverage and density (the sky shader uniforms `cloudCoverage`/`cloudDensity`, 0.35 → 0.95), sun intensity x 0.25, cooler hemisphere colour, fog density x 2, `rain` 0 to 1, `flash` 0 to 1. All of these are uniform or intensity values.
+
+**Wind-driven bending, desktop (shader path).** Hierarchical vertex bending, two levels plus the existing leaf flutter:
+
+- `BranchMesh.update` writes one extra per-vertex attribute `aLimb = (baseX, baseY, baseZ, flex)`: the base node of the vertex's order-1 limb (the trunk uses its own root) and a flexibility `flex = clamp(distAlongLimb² / (k · rBase), 0, 1)`. `Leaves.update` writes the same four floats per instance (`InstancedBufferAttribute`).
+- The vertex patch (bark material, leaf material, and their depth/g-buffer variants so shadows and GTAO follow) rotates `position - base` about the axis `cross(up, windDir)` by `flex · A_limb · gust(base, t)` and adds a trunk term `A_trunk · (y / H)² · gust(root, t)`. `gust` is the GLSL twin of `Wind.gust`. Leaves use the same function with their own `aLimb`, so they stay attached.
+- Cost: no CPU work per frame; 4 floats per branch vertex (144k floats at 36k vertices, written in the existing rebuild) and per leaf instance.
+
+**Wind-driven bending, phone (data-only path).** Per-frame CPU bending of the node graph is not affordable (structure pass + branch rebuild + leaf pass = 110 ms at 4x throttle). Rigid limb groups instead:
+
+- The tree is partitioned by order-1 limb into 8 to 12 groups. Each group is a `THREE.Group` holding one branch `Mesh` (its own geometry, the shared bark material: P-BARK) and its leaf `InstancedMesh`es (P-LEAF, the WP7 split). The trunk stays in the static mesh.
+- Per frame each group matrix is `T(base) · R(axis ⟂ wind, angle) · T(-base)`, `angle = A · gust(base, t)` with A up to 1.5° in a breeze and 7° in a storm, plus a slower lateral term. Limbs sway rigidly about their junction; the joint is hidden inside the trunk radius. The hash-group flutter of WP7 rides on top.
+- Cost: one matrix per group per frame, zero buffer uploads, about 12 extra draw calls for the split branch mesh. `BranchMesh.update` writes into per-group buffers (same total vertex count).
+
+**Breakage rule (`src/sim/tree.ts`).** The bottom-up pass in `updateStructure` already accumulates `pipe` and `subLen` using the id ordering (children have larger ids than parents). It gains two more accumulators per node: `subLeaf` (leaf count downstream) and a weighted centroid sum (`subW`, `subCx/y/z`, from the previous frame's world positions, weight = leaf area + c · len · radius).
+
+- Load: wind force on the subtree `F = q · (a_leaf · subLeaf + c_wood · subLen · 2r̄)` with `q ∝ gust²` at the node; lever arm `d` = distance from the node to the subtree centroid, measured perpendicular to the wind; bending moment `M = F · d` plus the gravity moment `g · subW · d_horizontal` (a limb already near its sag limit breaks first).
+- Strength: section modulus, `S = σ · r³` (`params.weather.breakStrength` = σ).
+- Rule: `u = M / S`. Evaluated only at chain base nodes (`ch.nodes[1]`, the junction, where limbs fail and where no chain split is needed) with order ≥ 1, at 4 Hz, only while `wind.base > 0.6`. Damage accumulates: `nd.damage += dt · max(0, u - 1)`; the limb breaks when `damage > 1`, so a single gust peak makes it creak and a sustained overload snaps it. Calibration: log the distribution of `u` on the t = 90 oak at gust 1.0 and set σ at its 99th percentile, so a storm takes a few twigs and at most one or two limbs.
+- Detach, `breakAt(i)`: one forward scan `j > i` marks `inSub[j] = inSub[parent[j]]` (valid because of the id ordering). Every chain whose first own node is in the set gets `pruned = true, alive = false`; buds on those nodes are dropped; `topology++`. Renderers already skip pruned chains and the pipe model ignores them; radii never shrink, so a stub with the old girth remains, which is how a snapped limb looks. The event `{ root: i, nodeIds, time }` is pushed to `sim.breaks` for the renderer. Cost: O(N) per evaluation, below 1 ms.
+
+**Falling limb (`src/render/debris.ts`).** On a break event, before the main meshes rebuild:
+
+- Geometry: the tube builder of `BranchMesh.update` is factored into a function that takes a chain filter and target arrays; it builds the subtree's tubes relative to the break point into a new `Mesh` with the shared bark material (P-BARK). The subtree's leaves are copied from the last leaf bake (matrices re-expressed relative to the break point, colours as baked) into a small `InstancedMesh` with the leaf material (P-LEAF). Both sit in one `Group`.
+- Motion, CPU, one matrix per frame: (1) hinge phase, 0.3 to 0.6 s: rotation about the break point with angular acceleration `1.5 · g · sin θ / L` plus the wind torque, until 50°; (2) free flight: linear velocity from the hinge tip speed, gravity, wind drag proportional to leaf count, angular velocity kept; (3) ground contact, tested on 6 sample points (tips and centroid): restitution 0.15, friction, angular damping, then rest. Leaves on a resting limb fade to brown through instance colours over 60 s. At most 3 limbs are kept; older ones scale to 0.
+- Cost: one build per event (a 300-node limb with 2k leaves: about 3 ms unthrottled, sliced through the WP2 budget), then 2 draw calls and one matrix per frame per limb. The main branch mesh and leaf pass rebuild once (existing topology path). Twig-sized breaks skip the mesh and spawn falling leaves only.
+
+**Rain.** Desktop: 6k instanced streak quads in a 12 m box that follows the camera, a `ShaderMaterial` whose vertex shader advances and wraps each streak by time and slants it by the wind; splash rings on the ground; wetness as lower ground roughness and darker bark (uniforms). Phone: 3 camera-facing planes at different depths with a painted streak sheet (P-DECAL, cloned material), scrolled through `texture.offset` (a uniform) along the slanted rain direction: 3 draw calls, zero uploads, at the cost of 3 blended full-screen layers (drop to 2 layers when the pixel ratio has stepped down).
+
+**Lightning and thunder.** Flash: `flash` multiplies sun and hemisphere intensity and sky gain for 2 to 3 frames, 1 to 3 pulses per strike. The phone's leaf lighting is baked into instance colours, so the flash there multiplies the leaf and grass material `color` uniform instead of rebaking. Bolt: desktop, a jagged quad strip with an additive basic material at 300 to 800 m (bloom does the glow); phone, one P-DECAL plane with one of 3 pre-painted bolt textures, visible for 3 frames. Thunder in `audio.ts`: a noise burst through a falling low-pass, delayed by distance / 343 m/s. Strikes are at least 4 s apart and `params.weather.lightning` turns them off (photosensitivity).
+
+**Storm cost.** Phone: about 12 + 3 + 1 extra draw calls, one matrix per limb group per frame, breakage evaluation below 1 ms at 4 Hz, no new programs. Desktop: one more vertex attribute and a 6k-instance rain mesh.
+
 ## 4. Build plan
 
-Ordered by user-visible gain per effort. Each package is one worker, about 20 minutes.
+Ordered by user-visible gain per effort. Each package is one worker, about 20 minutes. WP9 and WP10 (weather and breakage) come last because they depend on the wind and fluidity packages.
 
 ### WP1: Stop redundant rebuilds, continuous branch growth
 
@@ -273,9 +308,28 @@ Ordered by user-visible gain per effort. Each package is one worker, about 20 mi
 - **Verify:** screenshots with a forced flock (`?birds=now` dev switch) and a perched bird; smoke test taps the speaker button in headless chromium and checks `AudioContext.state === 'running'` and no console errors; program count unchanged.
 - **Phone risk:** low for audio (no GL), low for birds (P-LEAF, a few instances).
 
+### WP9: Storm weather (gusty wind, dark sky, rain, lightning, thunder)
+
+- **Depends on:** WP3 (`wind.ts`), WP7 (leaf wind), WP8 (`audio.ts`) for thunder.
+- **Goal:** a storm front arrives, the meadow and crown thrash, rain falls, lightning flashes, then it clears.
+- **Files:** new `src/weather.ts`, new `src/render/rain.ts`, `src/wind.ts`, `src/render/atmosphere.ts` and `src/render/stage.ts` (uniform and intensity hooks only), `src/audio.ts`, `src/params.ts`, `src/ui.ts`, `src/main.ts`.
+- **Approach:** section 3.5 paragraphs "Weather state", "Rain", "Lightning and thunder". `?weather=storm` forces the event for tests.
+- **Verify:** screenshots with `?weather=storm` on desktop and phone emulation (dark sky, rain streaks, a forced flash frame through a dev hook); program count unchanged in phone emulation; profiler JS median per frame + 0.3 ms at most.
+- **Phone risk:** medium-low. P-DECAL reuse and uniforms only; the blended rain layers add fill cost that cannot be measured here. `?rain=0` diag switch.
+
+### WP10: Limb sway groups, branch breakage, falling limbs
+
+- **Depends on:** WP1, WP2, WP7, WP9.
+- **Goal:** limbs sway with the gusts on both paths; an overloaded limb snaps, hinges, falls and stays on the ground.
+- **Files:** `src/sim/tree.ts` (accumulators, `damage`, `breakAt`, `breaks`), `src/render/branchMesh.ts` (tube builder as a function, per-group buffers, `aLimb`), `src/render/leaves.ts` (`aLimb`, groups), new `src/render/debris.ts`, `src/main.ts`, `src/params.ts`.
+- **Approach:** section 3.5 paragraphs on bending (both paths), "Breakage rule" and "Falling limb". If the package is too large for one worker, split at the sim boundary: first `tree.ts` rule + `breakAt` + debris with a dev hook `__arbor.sim.breakAt(id)`, then the limb sway groups.
+- **Verify:** unit-style script: grow to t = 90, call `breakAt` on an order-1 chain base, assert that every descendant chain is pruned, no bud references a pruned node and `topology` changed; screenshots 0.2 s, 0.8 s and 3 s after the break (hinging, falling, resting); storm run of 120 s breaks between 1 and 6 limbs with the calibrated σ; profiler shows no frame over 33 ms at the break on desktop.
+- **Phone risk:** medium. No new programs, but more meshes and one-off geometry creation at a break. `?breakage=0` diag switch.
+
 ## 5. Not verified
 
 - Anything on the PowerVR GPU: GPU frame cost of 1.0 M alpha-tested leaf triangles, the cost of the added grass overdraw, and whether 24 to 75 extra draw calls matter there. The program-count gate proves program reuse, not driver stability.
 - The real phone's CPU speed relative to the 4x-throttled laptop core; the phone's `hb` telemetry in `logs/client.jsonl` is the ground truth after WP1 and WP2.
 - GPU cost per post pass (GTAO vs bloom vs god rays separately); only High vs Low totals are measured.
 - The 100x estimate for the canopy bake rewrite is derived from operation counts, not measured.
+- The breakage rule, limb sway groups and weather design (section 3.5) are designs from reading the code; nothing in them is prototyped or measured.
