@@ -31,6 +31,8 @@ export interface TreeNode {
   leafy: boolean;
   /** Estimated sky light 0..1 from the coarse foliage grid. */
   light: number;
+  /** Juvenile scale 0..1 (1 = adult wood): internode length, speed, radius floor and leaf size of seedling wood. */
+  juv: number;
 }
 
 export interface Chain {
@@ -45,6 +47,8 @@ export interface Chain {
   shade: number;
   /** Correlated wander direction (slowly drifting). */
   wx: number; wy: number; wz: number;
+  /** Juvenile side shoot (trunk-borne below `crown.bole`): number of segments it grows; shed when the trunk thickens. */
+  juv?: number;
 }
 
 export interface Bud {
@@ -83,6 +87,8 @@ export interface BreakEvent {
   leaves: number;
   /** Radius at the break. */
   radius: number;
+  /** A juvenile side shoot let go by the tree (`shedJuvenile`), not a wind break. */
+  shed?: boolean;
 }
 
 /** What the breakage rule reads from the wind (`src/wind.ts`; kept structural so the sim stays import-free of it). */
@@ -105,6 +111,16 @@ const UP: [number, number, number] = [0, 1, 0];
 const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
+/**
+ * Seedling / sapling phase (only when `crown.bole` > 0). Wood that grows below JUV_H metres is juvenile: its scale
+ * `juv` runs from JUV_MIN at the soil to 1 at JUV_H and multiplies internode length; speed, radius floor and leaf size
+ * follow it (JUV_SPEED, JUV_RADIUS, JUV_LEAF at the soil). The stem carries leaves from its first node, and trunk buds
+ * below the bole break early into short determinate leafy side shoots (JUV_BUDS of them, JUV_BREAK x the usual rate,
+ * JUV_SEGS[0..1] segments) which the tree sheds again once the trunk at their base is thicker than
+ * JUV_SHED[0..1] x twig radius: that is what leaves the clear bole.
+ */
+const JUV_H = 1.5, JUV_MIN = 0.2, JUV_SPEED = 0.16, JUV_RADIUS = 0.3, JUV_LEAF = 0.42;
+const JUV_BUDS = 0.62, JUV_BREAK = 3, JUV_SEGS = [4, 8], JUV_SHED = [3.2, 6.4];
 
 export class TreeSim {
   nodes: TreeNode[] = [];
@@ -125,6 +141,8 @@ export class TreeSim {
   /** Last load evaluation: ratio u per evaluated chain base (for calibration), and counters. */
   loadStats = { evals: 0, n: 0, max: 0, over: 0, twigs: 0, limbs: 0 };
   private loadTimer = 0;
+  /** Juvenile side shoots: grown, shed so far, and stem/shoot leaves on juvenile wood. */
+  shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
   private ld = { leaf: new Float32Array(0), w: new Float32Array(0), cx: new Float32Array(0), cy: new Float32Array(0), cz: new Float32Array(0) };
   bboxMin = [0, 0, 0];
   bboxMax = [0, 0, 0];
@@ -155,6 +173,7 @@ export class TreeSim {
     this.topology++;
     this.breaks = [];
     this.damage = new Float32Array(0);
+    this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -205,7 +224,7 @@ export class TreeSim {
       phyllo: pn ? pn.phyllo + this.params.growth.phyllotaxis * (Math.PI / 180) : this.rng.range(0, Math.PI * 2),
       born: this.time,
       wx: 0, wy: 0, wz: 0, wdx: dx, wdy: dy, wdz: dz, sag: 0, subLen: 0, pipe: 0,
-      leafy: false, light: 1,
+      leafy: false, light: 1, juv: 1,
     };
     this.nodes.push(n);
     this.topology++;
@@ -219,6 +238,15 @@ export class TreeSim {
     const tip = ch.nodes[ch.nodes.length - 1];
     const id = this.addNode(tip, c, ch.order, dx / l, dy / l, dz / l, this.params.growth.segmentLength * this.rng.range(0.85, 1.15));
     ch.nodes.push(id);
+    if (this.params.crown.bole > 0) {
+      const y = this.nodes[tip].ry;
+      if (y < JUV_H) {
+        const nd = this.nodes[id];
+        nd.juv = JUV_MIN + (1 - JUV_MIN) * Math.max(0, y) / JUV_H;
+        nd.targetLen *= nd.juv;
+        nd.radius *= JUV_RADIUS + (1 - JUV_RADIUS) * nd.juv;
+      }
+    }
   }
 
   /** Average direction toward attractors within the perception cone; returns count. */
@@ -256,7 +284,9 @@ export class TreeSim {
         const tipId = ch.nodes[ch.nodes.length - 1];
         const tip = this.nodes[tipId];
         const vigor = Math.pow(g.vigorDecay, ch.order);
-        tip.len += g.segmentLength * g.growthRate * vigor * dt;
+        // A seedling starts slowly: juvenile wood elongates at JUV_SPEED..1 of the adult rate.
+        const jv = tip.juv < 1 ? JUV_SPEED + (1 - JUV_SPEED) * (tip.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
+        tip.len += g.segmentLength * g.growthRate * vigor * jv * dt;
         if (tip.len >= tip.targetLen) {
           tip.len = tip.targetLen;
           this.updateRest(tipId);
@@ -273,6 +303,7 @@ export class TreeSim {
     this.lightTimer -= dt;
     if (this.lightTimer <= 0) {
       this.lightTimer = 0.5;
+      if (this.shedStats.shoots > this.shedStats.shed) this.shedJuvenile();
       tel.phase('light grid');
       this.updateLight();
       tel.phase('sim step', true);
@@ -299,7 +330,8 @@ export class TreeSim {
     this.grid.query(n.rx, n.ry, n.rz, this.killRadius(), (i) => (this.attrAlive[i] = 0));
 
     // Lateral bud.
-    if (ch.order < g.maxOrder) {
+    const juvenile = p.crown.bole > 0;
+    if (ch.order < g.maxOrder && ch.juv === undefined) {
       const a = (g.branchAngle * Math.PI) / 180;
       const [px, py, pz] = perpendicular(n.dx, n.dy, n.dz, n.phyllo);
       const ca = Math.cos(a), sa = Math.sin(a);
@@ -311,14 +343,18 @@ export class TreeSim {
     }
 
     // Leaves on young wood.
-    if (ch.order >= 1 || n.ry > env.base * 0.8) {
+    if (ch.order >= 1 || n.ry > env.base * 0.8 || juvenile) {
       n.leafy = true;
+      // Juvenile wood: smaller leaves and, on the short internodes, fewer per node (a pair on the seedling's first
+      // nodes, 4 further up), so leaf mass per metre of stem stays about that of an adult twig.
+      const ls = n.juv < 1 ? JUV_LEAF + (1 - JUV_LEAF) * (n.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
+      const nPrim = n.juv < 0.45 ? 2 : 4, nFill = n.juv < 0.7 ? 0 : 4;
       // A cluster at the node: leaves spiral around the twig at golden-angle steps.
       const a0 = n.phyllo + this.rng.range(0, 1);
-      for (let k = 0; k < 4; k++) {
+      for (let k = 0; k < nPrim; k++) {
         this.leaves.push({
-          node: id, t: this.rng.range(0.6, 1), around: a0 + k * 2.4 + this.rng.range(-0.3, 0.3),
-          tilt: this.rng.range(0.3, 0.9), roll: this.rng.range(-0.6, 0.6), size: this.rng.range(0.7, 1.25),
+          node: id, t: this.rng.range(0.6, 1), around: a0 + k * (nPrim === 2 ? Math.PI : 2.4) + this.rng.range(-0.3, 0.3),
+          tilt: this.rng.range(0.3, 0.9), roll: this.rng.range(-0.6, 0.6), size: this.rng.range(0.7, 1.25) * ls,
           rank: (k + this.rng.next()) / 4, born: this.time, tint: this.rng.next(),
         });
       }
@@ -326,10 +362,10 @@ export class TreeSim {
       // tree shapes stay identical). Each shares the rank band of a primary leaf, so a cluster shows 2 × density/4 × 4.
       let h = (id * 2654435761 + 0x9e3779b9) >>> 0;
       const hr = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
-      for (let k = 0; k < 4; k++) {
+      for (let k = 0; k < nFill; k++) {
         this.leaves.push({
           node: id, t: 0.72 + 0.28 * hr(), around: a0 + 1.2 + k * 2.4 + (hr() - 0.5) * 0.8,
-          tilt: 0.35 + 0.6 * hr(), roll: (hr() - 0.5) * 1.4, size: 0.6 + 0.45 * hr(),
+          tilt: 0.35 + 0.6 * hr(), roll: (hr() - 0.5) * 1.4, size: (0.6 + 0.45 * hr()) * ls,
           rank: (k + hr()) / 4, born: this.time, tint: hr(),
         });
       }
@@ -337,9 +373,12 @@ export class TreeSim {
 
     // Choose next direction.
     const pull = this.tmp;
-    const cnt = this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception(), pull);
+    // A juvenile side shoot is determinate: it ignores the crown volume and stops after its `juv` segments.
+    if (ch.juv !== undefined && ch.nodes.length - 1 >= ch.juv) { ch.alive = false; return; }
+    const cnt = ch.juv !== undefined ? 0 : this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception(), pull);
     const inCrownZone = n.ry > env.base * 0.95 || ch.order > 0;
-    if (cnt === 0 && inCrownZone) ch.starve++;
+    if (ch.juv !== undefined) ch.starve = 0;
+    else if (cnt === 0 && inCrownZone) ch.starve++;
     else ch.starve = Math.max(0, ch.starve - 1);
     if (ch.starve > 2 || (ch.order === 0 && cnt === 0 && n.ry > env.base + env.height * 1.05)) {
       ch.alive = false;
@@ -393,6 +432,7 @@ export class TreeSim {
   private budBreak(dt: number) {
     const g = this.params.growth;
     const range = g.apicalDominance * 10;
+    const g_r0 = this.params.thickness.twigRadius;
     const tmp: [number, number, number] = [0, 0, 0];
     for (let i = this.buds.length - 1; i >= 0; i--) {
       const b = this.buds[i];
@@ -408,11 +448,26 @@ export class TreeSim {
         const d = ch.nodes.length - 1 - b.indexInChain;
         release = smoothstep(range, range + 4, d);
       }
+      const n = this.nodes[b.node];
+      // Below `crown.bole` a trunk bud does not make a limb (that is the clear bole of the grown tree). On the young
+      // stem it breaks early into a short leafy side shoot instead, which is shed later (`shedJuvenile`).
+      if (ch.order === 0 && n.ry < this.params.crown.bole) {
+        if (age < 0.5 || n.radius > g_r0 * JUV_SHED[0]) continue;
+        if (this.rng.next() > g.branchingProbability * release * JUV_BREAK * dt) continue;
+        this.buds[i] = this.buds[this.buds.length - 1];
+        this.buds.pop();
+        if (hash01(b.node) > JUV_BUDS) continue;
+        const c = this.chains.length;
+        const jc = this.newChain(b.node, 1);
+        jc.juv = Math.round(JUV_SEGS[0] + (JUV_SEGS[1] - JUV_SEGS[0]) * hash01(b.node + 7919));
+        this.chains.push(jc);
+        this.shedStats.shoots++;
+        // Starts well out from the stem and a little upward.
+        this.extend(c, b.dx, b.dy * 0.6 + 0.25, b.dz);
+        continue;
+      }
       const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
-      const n = this.nodes[b.node];
-      // Clear bole: trunk buds below `crown.bole` metres stay dormant.
-      if (ch.order === 0 && n.ry < this.params.crown.bole) continue;
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
       this.buds.pop();
@@ -482,6 +537,35 @@ export class TreeSim {
       if (L < thr) ch.shade++; else ch.shade = 0;
       if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; }
     }
+  }
+
+  /**
+   * Natural pruning of the juvenile side shoots: one per call (2 Hz of sim time) at most, lowest first, once the trunk
+   * at its base is thicker than the shoot's threshold (JUV_SHED x twig radius, spread per shoot so they go over several
+   * seconds). The shoot becomes a pruned chain (no stub: the bark closes over it) and a `BreakEvent` with `shed` set
+   * lets the renderer drop its leaves through the falling-leaf system.
+   */
+  private shedJuvenile() {
+    const nodes = this.nodes, chains = this.chains, r0 = this.params.thickness.twigRadius;
+    let pick = -1, py = Infinity;
+    for (let c = 1; c < chains.length; c++) {
+      const ch = chains[c];
+      if (ch.juv === undefined || ch.pruned) continue;
+      const b = nodes[ch.nodes[0]];
+      if (b.radius < r0 * (JUV_SHED[0] + (JUV_SHED[1] - JUV_SHED[0]) * hash01(ch.nodes[0] + 104729))) continue;
+      if (b.ry < py) { py = b.ry; pick = c; }
+    }
+    if (pick < 0) return;
+    const ch = chains[pick];
+    ch.pruned = true; ch.alive = false;
+    const nodeIds = ch.nodes.slice(1);
+    const inSub = new Set(nodeIds);
+    let lv = 0;
+    for (const lf of this.leaves) if (inSub.has(lf.node)) lv++;
+    this.shedStats.shed++; this.shedStats.shedLeaves += lv; this.shedStats.lastShedT = this.time;
+    this.topology++;
+    this.breaks.push({ root: nodeIds[0], nodeIds, chains: [pick], time: this.time, leaves: lv, radius: nodes[nodeIds[0]].radius, shed: true });
+    if (this.breaks.length > 16) this.breaks.shift();
   }
 
   /**
@@ -564,7 +648,8 @@ export class TreeSim {
     }
     for (let c = 1; c < chains.length; c++) {
       const ch = chains[c];
-      if (ch.pruned || ch.order < 1 || ch.nodes.length < 2) continue;
+      // Juvenile side shoots are the tree's to shed, not the wind's (their thin wood is outside the calibration).
+      if (ch.pruned || ch.order < 1 || ch.nodes.length < 2 || ch.juv !== undefined) continue;
       const i = ch.nodes[1], nd = nodes[i], W = sw[i];
       if (W <= 0) continue;
       const vx = cx[i] / W - nd.wx, vy = cy[i] / W - nd.wy, vz = cz[i] / W - nd.wz;
@@ -620,11 +705,13 @@ export class TreeSim {
     for (let i = N - 1; i >= 0; i--) {
       const nd = nodes[i];
       let target: number;
+      // Juvenile wood starts thinner than an adult twig (a seedling stem is a few mm) and thickens with what it carries.
+      const rj = nd.juv < 1 ? r0 * (JUV_RADIUS + (1 - JUV_RADIUS) * nd.juv) : r0;
       if (nd.pipe === 0) {
         const f = nd.targetLen > 0 ? nd.len / nd.targetLen : 1;
-        target = r0 * (0.35 + 0.65 * f);
+        target = rj * (0.35 + 0.65 * f);
       } else {
-        target = Math.max(r0, Math.pow(nd.pipe, 1 / n));
+        target = Math.max(rj, Math.pow(nd.pipe, 1 / n));
       }
       // Secondary growth only ever adds wood: radii never shrink (pruned twigs leave their girth behind).
       if (target > nd.radius) nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
@@ -666,6 +753,13 @@ export class TreeSim {
       if (nd.wx > mx[0]) mx[0] = nd.wx; if (nd.wy > mx[1]) mx[1] = nd.wy; if (nd.wz > mx[2]) mx[2] = nd.wz;
     }
   }
+}
+
+/** Per-id hash in [0, 1) (does not consume the sim rng). */
+function hash01(i: number) {
+  let h = (i * 2654435761 + 0x9e3779b9) >>> 0;
+  h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0;
+  return h / 4294967296;
 }
 
 function smoothstep(a: number, b: number, x: number) {

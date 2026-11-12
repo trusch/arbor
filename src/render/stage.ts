@@ -300,11 +300,19 @@ export class Stage {
     // inside the crown. +0.35 m covers leaves that stick out past the node bbox.
     const vf = (this.camera.fov * Math.PI) / 360;
     const hf = Math.atan(Math.tan(vf) * this.camera.aspect);
-    const rxz = Math.hypot(mx[0] - mn[0], mx[2] - mn[2]) / 2 + 0.35;
-    const hh = (mx[1] - mn[1]) / 2 + 0.35;
+    // Seedling: the camera comes close (about 1.1 m from a 10 cm plant) and looks down from above the grass; the
+    // lower bounds below ease into the grown-tree values (identical from about 2.7 m of tree on).
+    const hd = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2;
+    const extCam = Math.max(0.4, Math.min(hd + 0.25, ext));
+    const leafM = Math.min(0.35, Math.max(0.12, 0.12 + 0.2 * mx[1]));
+    const rxz = Math.hypot(mx[0] - mn[0], mx[2] - mn[2]) / 2 + leafM;
+    const hh = (mx[1] - mn[1]) / 2 + leafM;
     const fit = this.camera.aspect < 1
-      ? Math.max(rxz / Math.sin(hf), hh / Math.tan(vf) + rxz, ext * 1.25) * 1.1
-      : (ext / Math.sin(Math.min(vf, hf))) * 1.06; // landscape: bounding sphere to the narrower FOV
+      ? Math.max(rxz / Math.sin(hf), hh / Math.tan(vf) + rxz, extCam * 1.25) * 1.1
+      : (extCam / Math.sin(Math.min(vf, hf))) * 1.06; // landscape: bounding sphere to the narrower FOV
+    const MIN_DIST = 1.1, lowY = Math.min(0.6, Math.max(0.15, mx[1] * 0.6));
+    // Extra camera height while close to a small plant (0 from 2.6 m distance on), so the meadow does not hide it.
+    const lift = (d: number) => 0.8 * Math.min(1, Math.max(0, (2.6 - d) / 1.2));
     const trunkR = sim.nodes.length ? Math.max(0.03, sim.nodes[0].radius ?? 0.05) : 0.05;
     this.groundU.trunk.value.set(sim.nodes[0]?.wx ?? 0, sim.nodes[0]?.wz ?? 0, trunkR);
 
@@ -391,34 +399,36 @@ export class Stage {
       this.cineT += dt;
       const t = this.cineT;
       this.cineYaw += dt * (0.045 + 0.02 * Math.sin(t * 0.031));
-      const want = Math.max(2.5, fit);
+      const want = Math.max(MIN_DIST, fit);
       const push = Math.pow(0.5 + 0.5 * Math.sin(t * 0.021 - 1.2), 3); // rare, slow
       // Push-ins may crop the crown edges a little on landscape (detail shots), never into the crown: in portrait
       // they stay shallow and the distance never drops below the crown sphere plus a margin.
       const depth = this.camera.aspect < 1 ? 0.1 : 0.3;
-      const dist = Math.max(ext * 1.35, want * (1.02 - depth * push + 0.03 * Math.sin(t * 0.07)));
+      const dist = Math.max(extCam * 1.35, want * (1.02 - depth * push + 0.03 * Math.sin(t * 0.07)));
       const elev = 0.06 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.043 + 0.7)) + 0.08 * push;
       const kk = snap ? 1 : 1 - Math.exp(-dt * (dist > this.dist ? 2.5 : 0.8));
-      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y * (0.97 + 0.06 * push)), c.z);
+      const target = new THREE.Vector3(c.x, Math.max(lowY, c.y * (0.97 + 0.06 * push)), c.z);
       this.center.lerp(target, kk);
       this.dist += (dist - this.dist) * kk;
       const ce = Math.cos(elev);
       this.controls.target.copy(this.center);
       this.camera.position.set(
         this.center.x + Math.sin(this.cineYaw) * ce * this.dist,
-        Math.max(0.35, this.center.y + Math.sin(elev) * this.dist - this.center.y * 0.35),
+        Math.max(0.35 + lift(this.dist), this.center.y + Math.sin(elev) * this.dist - this.center.y * 0.35),
         this.center.z + Math.cos(this.cineYaw) * ce * this.dist,
       );
     } else if (p.camera.autoFrame && auto) {
-      const want = Math.max(2.5, fit);
+      const want = Math.max(MIN_DIST, fit);
       // Pull back faster than we push in so a growing crown never outruns the frame.
       const kk = snap ? 1 : 1 - Math.exp(-dt * (want > this.dist ? 2.5 : 1.0));
-      const target = new THREE.Vector3(c.x, Math.max(0.6, c.y), c.z);
+      const target = new THREE.Vector3(c.x, Math.max(lowY, c.y), c.z);
       this.center.lerp(target, kk);
       this.dist += (want - this.dist) * kk;
       const off = this.camera.position.clone().sub(this.controls.target);
       off.setLength(this.dist);
       if (snap) off.y = this.dist * 0.08;
+      const up = lift(this.dist) - this.center.y;
+      if (off.y < up) { off.y = up; off.setLength(this.dist); }
       this.controls.target.copy(this.center);
       this.camera.position.copy(this.center).add(off);
     }
