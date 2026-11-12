@@ -263,6 +263,33 @@ try {
       check('phone: lightning off gives no flash and no bolt', r.lightning === false && r.flash === 0 && !r.bolt && !r.vis, JSON.stringify(r));
     }
   }
+  // Wind sway gate (PowerVR rule): moving limbs and leaves is data only (branch positions, leaf instance matrices), so
+  // the phone program count is the same with and without it (?sway=0), in calm and in a storm; read after the page has
+  // settled 6.5 s. Also: the pose moves while the wind blows and returns exactly to rest when the amount goes to 0.
+  {
+    const run = async (q) => {
+      const { ctx, mp, merr } = await phone(q);
+      await mp.evaluate(() => { window.__arbor.params.sky.timeOfDay = 13; window.__arbor.fastForward(15); });
+      await mp.waitForTimeout(6500);
+      const r = await mp.evaluate(() => new Promise((res) => {
+        const A = window.__arbor, out = { programs: A.stage.renderer.info.programs.length, live: A.sway.live, max: +A.sway.maxOffset.toFixed(3), fe: A.frameErrors(), leaves: A.leaves.mesh.count };
+        A.params.sway.amount = 0;
+        setTimeout(() => {
+          const L = A.leaves, M = L.mesh.instanceMatrix.array, R = L.restT, ND = L.frontNode; let bad = 0;
+          for (let i = 0; i < L.mesh.count; i++) if (ND[i] >= 0 && (M[i * 16 + 12] !== R[i * 3] || M[i * 16 + 13] !== R[i * 3 + 1] || M[i * 16 + 14] !== R[i * 3 + 2])) bad++;
+          res({ ...out, restLive: A.sway.live, offRest: bad, nonZero: A.sway.D.some((v) => v !== 0) });
+        }, 500);
+      }));
+      await ctx.close();
+      return { ...r, errs: merr.length };
+    };
+    const calm = await run('?speed=0&weather=calm'), calm0 = await run('?speed=0&weather=calm&sway=0');
+    const storm = await run('?speed=0&weather=storm&lightning=0'), storm0 = await run('?speed=0&weather=storm&lightning=0&sway=0');
+    check('phone: wind sway adds no shader program (calm and storm), moves, and returns exactly to rest',
+      calm.programs === calm0.programs && storm.programs === storm0.programs && calm.live && storm.live && !calm0.live && !storm0.live
+        && calm.max > 0.005 && storm.max > calm.max && [calm, storm].every((r) => !r.restLive && r.offRest === 0 && !r.nonZero && r.fe === 0 && r.errs === 0 && r.leaves > 0),
+      `calm ${JSON.stringify(calm)} sway=0 ${JSON.stringify(calm0)} storm ${JSON.stringify(storm)} sway=0 ${JSON.stringify(storm0)}`);
+  }
   // Breakage program gate (WP10, PowerVR rule): a falling limb reuses the live bark and leaf programs. The count is read
   // once the page has settled (three re-keys the bark program by itself a few seconds after the first frames), then in
   // flight and at rest; a twig break (leaf fall) on top must not add one either.

@@ -114,13 +114,21 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 
 - The branch mesh and leaf matrices are rebuilt on the CPU at about 8 Hz while growing (4 Hz when paused), not every frame. Leaf sway runs in the shader. Headless SwiftShader at t=90 (about 5k nodes, 10k drawn leaves) runs at 26 fps; it ran at 12–17 fps before the throttle. Incremental (dirty-subtree) rebuilds are not done yet.
 - Pruned twigs disappear at once instead of withering. The light grid ignores the actual sun direction.
-- The bark texture is unchanged: no deep fissures, no moss. Branches do not sway.
+- The bark texture is unchanged: no deep fissures, no moss.
 - Low-gravity alien preset grows a wide low bush on a thin spiralling stalk rather than the intended very tall tree (leader wander/turn too high); needs a retune.
 - Noon foliage is green now (leaf envMapIntensity 0.3, more saturation) but still reads dark from below.
 - Journey/drift changes to crown params only take effect via attractor re-sampling; cinema camera is not tested headless (shots disable it). Journey end shot (m3-journey-day-16.8-end) crops the crown top: framing lags the late upward growth after attractor re-sampling. Heavy world reads squat and buttressed but the crown is a dense flat mat.
-- Branches have no wind sway, only leaves do. Sag does not resolve collisions.
+- Sag does not resolve collisions.
 - Low-gravity alien is tall (~24 m, 2.7× the oak) with sparse huge leaves, but its trunk still reads hair-thin at full-frame distance and the spiral arcs are only faintly visible; the crown is more columnar than arched.
 - Cinema push-ins may crop crown edges briefly; the resting orbit and auto-frame fit the full bounding sphere.
+
+## Limbs in the wind
+
+Limbs, twigs and their leaves move with the wind. In a breeze the outer twigs stir and limbs sway a little, each following the gust that crosses the meadow; in a storm limbs lean downwind and whip back between gusts, thin wood far more than thick wood, neighbouring limbs out of phase. When the wind drops the tree is back in exactly its rest pose. Controls: Sky tab "Branch sway" (`sway.amount`, 0 = still), `?sway=0` (also on `diag.html`).
+
+How it is built: `src/render/sway.ts` computes an offset for every node from the rest pose, the wind and the wind clock each time (nothing accumulates, the simulation never sees it). The branch mesh adds the offset of each ring's node to its rest positions and every leaf adds the offset of its twig to its rest position: one position upload and one instance-matrix upload, every frame on High and every second frame on Low, no new shader program (`npm run smoke` checks the phone program count with and without it, in calm and storm, and that the rest pose returns exactly). `node scripts/swayshots.mjs` measures the cost and takes frame bursts.
+
+Limits: leaves are translated with their twig, they do not rotate with it (on High the leaf shader adds flutter, on the phone path leaves do not flutter on their own); bark shading uses the rest normals; the ground shadow of the crown does not move; a limb that breaks jumps from its swayed pose to its rest pose in that frame.
 
 ## Meadow and wind
 

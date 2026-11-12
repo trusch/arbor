@@ -16,6 +16,10 @@ export class BranchMesh {
   private nrm = new Float32Array(0);
   private uv = new Float32Array(0);
   private idx = new Uint32Array(0);
+  /** Rest positions of the last full `update` and the node id of every vertex (for `applyOffsets`). */
+  private rest = new Float32Array(0);
+  private vNode = new Int32Array(0);
+  private vUsed = 0;
   private lastTopology = -1;
   private ringCache = new Map<number, { c: Float32Array; s: Float32Array }>();
 
@@ -55,7 +59,8 @@ export class BranchMesh {
     return 5;
   }
 
-  update(sim: TreeSim, flare = 1) {
+  /** `off`: optional per-node offsets (3 floats per node id, `Sway.D`) added to the rest positions. */
+  update(sim: TreeSim, flare = 1, off: Float32Array | null = null) {
     const nodes = sim.nodes;
     const chains = sim.chains;
     // Count.
@@ -78,6 +83,8 @@ export class BranchMesh {
       this.pos = new Float32Array(cap * 3);
       this.nrm = new Float32Array(cap * 3);
       this.uv = new Float32Array(cap * 2);
+      this.rest = new Float32Array(cap * 3);
+      this.vNode = new Int32Array(cap);
       realloc = true;
     }
     if (iCount > this.idx.length) {
@@ -95,7 +102,7 @@ export class BranchMesh {
     }
     const writeIndex = sig !== this.lastTopology;
 
-    const P = this.pos, Nn = this.nrm, UV = this.uv, I = this.idx;
+    const P = this.pos, Nn = this.nrm, UV = this.uv, I = this.idx, VN = this.vNode;
     let v = 0, ii = 0;
     let nx = 0, ny = 0, nz = 0; // transported normal
     for (let c = 0; c < chains.length; c++) {
@@ -117,8 +124,14 @@ export class BranchMesh {
         let cx = nd.wx, cy = nd.wy, cz = nd.wz;
         let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
         // Tangent: central difference, one-sided at ends.
-        const a = nodes[ids[Math.max(0, kk - 1)]], b = nodes[ids[Math.min(m - 1, kk + 1)]];
+        const ia = ids[Math.max(0, kk - 1)], ib = ids[Math.min(m - 1, kk + 1)];
+        const a = nodes[ia], b = nodes[ib];
         let tx = b.wx - a.wx, ty = b.wy - a.wy, tz = b.wz - a.wz;
+        if (off) {
+          const oc = ids[kk] * 3, oa = ia * 3, ob = ib * 3;
+          cx += off[oc]; cy += off[oc + 1]; cz += off[oc + 2];
+          tx += off[ob] - off[oa]; ty += off[ob + 1] - off[oa + 1]; tz += off[ob + 2] - off[oa + 2];
+        }
         let tl = Math.hypot(tx, ty, tz);
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
         tx /= tl; ty /= tl; tz /= tl;
@@ -155,6 +168,7 @@ export class BranchMesh {
           P[o3] = cx + ox * rr; P[o3 + 1] = cy + oy * rr; P[o3 + 2] = cz + oz * rr;
           Nn[o3] = ox; Nn[o3 + 1] = oy; Nn[o3 + 2] = oz;
           UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vv;
+          VN[v] = ids[kk];
           v++;
         }
       }
@@ -169,6 +183,8 @@ export class BranchMesh {
         }
       }
     }
+    this.vUsed = off ? 0 : v;
+    if (!off) this.rest.set(P.subarray(0, v * 3));
     const g = this.geo;
     (g.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     (g.attributes.normal as THREE.BufferAttribute).needsUpdate = true;
@@ -186,5 +202,25 @@ export class BranchMesh {
     (g.attributes.uv as THREE.BufferAttribute).clearUpdateRanges();
     (g.attributes.uv as THREE.BufferAttribute).addUpdateRange(0, v * 2);
     g.setDrawRange(0, iCount);
+  }
+
+  /**
+   * Cheap wind pose (Low): every vertex = its rest position + the offset of its ring's node (`Sway.D`). Translation
+   * per ring only (normals and uvs keep their rest values), one position upload, no index work. Needs a full
+   * `update(sim, flare)` without offsets first; returns false when there is none to build on.
+   */
+  applyOffsets(off: Float32Array): boolean {
+    const n = this.vUsed;
+    if (n === 0) return false;
+    const P = this.pos, R = this.rest, VN = this.vNode;
+    for (let v = 0, o = 0; v < n; v++, o += 3) {
+      const q = VN[v] * 3;
+      P[o] = R[o] + off[q]; P[o + 1] = R[o + 1] + off[q + 1]; P[o + 2] = R[o + 2] + off[q + 2];
+    }
+    const a = this.geo.attributes.position as THREE.BufferAttribute;
+    a.clearUpdateRanges();
+    a.addUpdateRange(0, n * 3);
+    a.needsUpdate = true;
+    return true;
   }
 }

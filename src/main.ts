@@ -16,6 +16,7 @@ import { wind } from './wind';
 import { weather, type WeatherEvent } from './weather';
 import { Rain } from './render/rain';
 import { Debris } from './render/debris';
+import { Sway } from './render/sway';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -269,6 +270,9 @@ const leafBakeDir = new THREE.Vector3(), camDirTmp = new THREE.Vector3();
 let seenTopo = -1, topoChangedAt = 0;
 let structPV = -1, paramsSig = NaN;
 let rebuilds = 0;
+let swayLeafMs = 0;
+/** Wind sway (render-side offsets from the rest pose; ?sway=0). */
+const sway = new Sway();
 /** Tree was reset: rebuild everything on the next frame, drop an open leaf pass, re-run the paused structure pass. */
 function invalidate() {
   branchTime = -1; leavesDirty = true; structPV = -1;
@@ -286,9 +290,19 @@ function redraw(time: number, dt: number, force = false) {
   const low = params.sky.quality === 'Low';
   if (sim.topology !== seenTopo) { seenTopo = sim.topology; topoChangedAt = time; }
   const branchDue = diag.rebuildHz > 0 ? branchAge >= 1 / diag.rebuildHz : !low || (frameCount & 1) === 0;
-  if (force || (branchDue && (sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV))) {
+  // Wind sway: new offsets whenever the branch mesh may rebuild; a moving (or just settled) pose forces the rebuild.
+  let swayMoved = false;
+  if (force || branchDue) { tel.phase('sway', true); swayMoved = sway.update(sim, wind, diag.sway ? params.sway.amount : 0); }
+  // The tree itself changed (rest pose): full rebuild. Wind pose on top, both qualities: the cheap per-ring translation
+  // (`applyOffsets`: positions only, no frames/normals/uvs/index); a full rebuild per frame cost +8 ms JS on desktop High
+  // and +13 ms at 4x throttle on the phone path.
+  const treeMoved = sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV;
+  if (!force && branchDue && swayMoved && !treeMoved && branches.applyOffsets(sway.D)) {
+    branchMoved = true;
+  } else if (force || (branchDue && (swayMoved || treeMoved))) {
     tel.phase('geometry rebuild');
     branches.update(sim, params.thickness.rootFlare);
+    if (sway.live) branches.applyOffsets(sway.D);
     rebuilds++;
     branchAge = 0; branchTime = sim.time; branchTopo = sim.topology; branchPV = pv;
     branchMoved = true;
@@ -345,6 +359,13 @@ function redraw(time: number, dt: number, force = false) {
   if (branchMoved && !placed) {
     tel.phase('leaves follow', true);
     leaves.follow(sim, params, stage.camera.position, LEAF_FOLLOW_MS);
+  }
+  // Sway rides on top: follow / the pass write rest translations, this adds the twig offsets (wood and leaves of one frame agree).
+  if (swayMoved || (sway.live && (branchMoved || placed))) {
+    tel.phase('leaves sway', true);
+    const t0 = performance.now();
+    leaves.sway(sway.D, sway.P);
+    swayLeafMs = performance.now() - t0;
   }
 }
 
@@ -508,6 +529,8 @@ requestAnimationFrame(loop);
   weather,
   rain,
   debris,
+  sway,
+  swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {
