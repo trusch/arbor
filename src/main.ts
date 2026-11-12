@@ -13,6 +13,7 @@ import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
+import { Debris } from './render/debris';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -167,6 +168,31 @@ function meadowFrame(dt: number) {
   L.frac = low ? (stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.22 : 0.45) : 1;
   meadow.frame(sim, L, elapsed);
 }
+/** Breakage (WP10): broken limbs and twigs. Shares the live bark and leaf material instances (PowerVR rule); ?breakage=0. */
+const debris = new Debris(branches.mesh.material as THREE.Material, leaves);
+stage.scene.add(debris.group);
+let debrisSimT = 0;
+/** Before `redraw`: a break on a paused tree still needs its structure pass. */
+function breakagePre(_dt: number) {
+  if (sim.breaks.length && (params.time.paused || params.time.speed <= 0)) sim.updateStructure(0);
+}
+/** After `redraw` (the branch mesh has dropped the limb, the leaf follow is done): hand the limb over to the debris. */
+function breakagePost(dt: number) {
+  if (sim.time < debrisSimT) debris.clear(); // tree was reset
+  debrisSimT = sim.time;
+  if (sim.breaks.length) {
+    tel.phase('debris spawn');
+    for (const ev of sim.breaks) {
+      if (diag.leaves) debris.spawn(sim, ev, wind);
+      tel.log('limb_break', { root: ev.root, nodes: ev.nodeIds.length, leaves: ev.leaves, r: +ev.radius.toFixed(3), t: +ev.time.toFixed(1), ms: +debris.stats.lastBuildMs.toFixed(1) });
+    }
+    sim.breaks.length = 0;
+    // The live leaf set changed: restart the pass (an open one still holds the detached leaves).
+    leavesDirty = true; leafRestart = true;
+  }
+  debris.barkShadow = branches.mesh.castShadow;
+  debris.frame(dt, wind);
+}
 const sunDirTmp = new THREE.Vector3();
 const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
@@ -198,6 +224,7 @@ const LEAF_BUDGET_MS = 3;
 const LEAF_FOLLOW_MS = 2.5;
 let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
+let leafRestart = false;
 let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
 const leafBakeDir = new THREE.Vector3(), camDirTmp = new THREE.Vector3();
 let seenTopo = -1, topoChangedAt = 0;
@@ -247,8 +274,8 @@ function redraw(time: number, dt: number, force = false) {
     }
   }
   if (force) leavesDirty = true;
-  if (leavesDirty && (force || !leaves.passOpen)) {
-    leavesDirty = false;
+  if (leavesDirty && (force || leafRestart || !leaves.passOpen)) {
+    leavesDirty = false; leafRestart = false;
     leafBakeD = camD; leafBakeT = time; leafSimTime = sim.time; leafLightV = sim.lightVersion; leafSunKey = sunKey; leafPV = pv; leafQuality = params.sky.quality;
     leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
@@ -373,8 +400,10 @@ function frame(now: number) {
   structPV = paramsVersion();
   tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
+  breakagePre(dt);
   redraw(elapsed, dt);
   meadowFrame(dt);
+  breakagePost(dt);
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -433,6 +462,7 @@ requestAnimationFrame(loop);
   canopy,
   meadow,
   wind,
+  debris,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {
