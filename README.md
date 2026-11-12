@@ -73,7 +73,7 @@ How it is built: each form is painted into the same square leaf map and carries 
 ## Seasons
 
 The tree lives through a year. One year takes 5 minutes at normal growth speed (the growth-speed control scales it; the
-day and night cycle is separate), and a new tree starts in spring.
+day and night cycle is separate), and a new tree starts in mid-spring (date 0.12), when the landscape is already green.
 
 - Spring: the crown flushes over a few weeks, leaves unfolding small and pale yellow-green, then darkening.
 - Summer: full green.
