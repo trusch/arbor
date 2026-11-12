@@ -129,3 +129,7 @@ body.watch .arbor-ui { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .arbor-ui * { transition: none !important; } }
 /* The panel's status line already shows preset age; keep the watch overlay from bleeding through the glass. */
 body.panel-open #overlay { display: none; }
+.ap-fold summary { list-style: none; justify-content: space-between; }
+.ap-fold summary::-webkit-details-marker { display: none; }
+.ap-fold summary::after { content: ''; width: 9px; height: 9px; margin-right: 6px; border-right: 2px solid var(--mute); border-bottom: 2px solid var(--mute); transform: rotate(45deg); }
+.ap-fold[open] summary::after { transform: rotate(-135deg); }
