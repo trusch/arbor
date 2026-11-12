@@ -25,8 +25,8 @@ const GRASS_MAX = 26000, FLOWER_MAX = 800;
 /** Far meadow (backdrop): larger, sparser tufts and flower clumps from R_NEAR_FAR out to R_BACK, where they have shrunk
  *  into the ground. All of it lies inside the flat radius of the terrain (`R_FLAT` in backdrop.ts), so y = 0 holds. */
 /** Instance colour gain of the backdrop trees (tuned in screenshots against the oak and the ground). */
-const SCENE_GAIN = [0.8, 0.72, 1.0];
-const R_BACK = 64, FAR_GRASS = 4, FAR_GRASS_MAX = 15000, FAR_FLOWER_MAX = 900;
+const SCENE_GAIN = [0.62, 0.6, 0.8];
+const R_BACK = 64, FAR_GRASS = 4, FAR_GRASS_MAX = 20000, FAR_FLOWER_MAX = 900;
 const KINDS: FlowerKind[] = ['daisy', 'buttercup', 'poppy', 'clover'];
 /** Floats per instance: x, z, rot, width, height, hashA, hashB, r. */
 const STRIDE = 8;
@@ -194,7 +194,7 @@ export class Meadow {
       };
       for (let i = 0; i < FAR_GRASS_MAX; i++) {
         let r: number;
-        do r = 13 + (R_BACK - 13) * r2.next(); while (r2.next() > (r / 30) * Math.exp(-(r - 13) / 15) * smooth(12, 21, r) * 1.9);
+        do r = 13 + (R_BACK - 13) * r2.next(); while (r2.next() > (r / 30) * Math.exp(-(r - 13) / 12) * smooth(12, 20, r) * 2.2);
         const a = r2.next() * Math.PI * 2, edge = 1 - 0.8 * smooth(R_BACK - 18, R_BACK, r);
         const tall = r2.next() < 0.2, grow = 1 + (r - 13) / 16;
         put(NEAR + (i % FAR_GRASS), Math.cos(a) * r, Math.sin(a) * r, r2.range(0.6, 1.1) * grow * (0.5 + 0.5 * edge), (tall ? r2.range(0.4, 0.6) : r2.range(0.2, 0.36)) * (1 + r / 45) * edge);
@@ -413,7 +413,7 @@ export class Meadow {
       M[q + 12] = x; M[q + 13] = (pt.scenery ? data[o + 7] : 0) - 0.03 * h; M[q + 14] = z; M[q + 15] = 1;
       // Colour: tint variation (macro drifts of lush / dry, per-tuft jitter) x shade.
       const col = this.col;
-      if (pt.scenery) col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.78 + 0.36 * hA);
+      if (pt.scenery) col.setRGB(SCENE_GAIN[0], SCENE_GAIN[1], SCENE_GAIN[2]).multiplyScalar(0.7 + 0.5 * hA).multiply(this.tintCol.setRGB(1 + 0.25 * (hB - 0.5), 1, 1 - 0.3 * (hB - 0.5)));
       else if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
       else {
         const macro = vnoise(x * 0.23 + 3.1, z * 0.23 - 1.7), fine = vnoise(x * 1.3, z * 1.3);
@@ -431,6 +431,8 @@ export class Meadow {
       const amb = 0.78 + 0.22 * Math.min(up, ts);
       const side = ly + 0.4 * (1 - ly) * (1 - ly);
       const f = (hc: number, sc: number) => Math.min(4, (hc * amb + sc * side * ts + 1e-4) / (hc + sc * ly + 1e-4));
+      // Backdrop trees are lit like a crown, not like blades: the low-sun lift is capped so they never outshine the oak.
+      if (pt.scenery) { const k = Math.min(1.5, f(hemi.g, sun.g)); C[i * 3] = col.r * k; C[i * 3 + 1] = col.g * k; C[i * 3 + 2] = col.b * k; continue; }
       C[i * 3] = col.r * f(hemi.r, sun.r); C[i * 3 + 1] = col.g * f(hemi.g, sun.g); C[i * 3 + 2] = col.b * f(hemi.b, sun.b);
     }
     mesh.count = n;

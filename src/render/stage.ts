@@ -13,9 +13,9 @@ const EASE_S = 3;
 
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
 /** Linear ground colour factor with the backdrop on (the old 0xdcdcb4 is 0.72, 0.72, 0.46). */
-const GROUND_GAIN = [0.9, 0.93, 0.55];
-/** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (12 % at 250 m, 40 % at 500 m, 80 % at 900 m). */
-const HAZE = 0.45;
+const GROUND_GAIN = [0.8, 0.86, 0.5];
+/** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (9 % at 250 m, 30 % at 500 m, 76 % at 1000 m). */
+const HAZE = 0.3;
 
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -221,7 +221,7 @@ export class Stage {
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
   private makeGround(backdrop: boolean) {
-    const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.96, color: 0xdcdcb4 });
+    const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(backdrop), roughness: 0.96, color: 0xdcdcb4 });
     // Backdrop: the ground carries the far meadow on its own, so its colour is lifted to the mean of the lit tufts
     // (uniform only; same program). ?backdrop=0 keeps the old darker value.
     if (backdrop) mat.color.setRGB(GROUND_GAIN[0], GROUND_GAIN[1], GROUND_GAIN[2]);

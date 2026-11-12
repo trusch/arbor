@@ -523,7 +523,9 @@ function smoothstep(a: number, b: number, x: number) {
 }
 
 /** Grass/meadow ground texture, tileable. */
-export function makeGrassTexture(): THREE.Texture {
+/** `patchy` (backdrop): more contrast in the low frequencies. The ground shader reads this map at 140 m and 526 m per
+ *  tile for its dry / lush patches, so the far meadow gets visible patches from texture pixels alone; the mean is unchanged. */
+export function makeGrassTexture(patchy = false): THREE.Texture {
   const S = 512;
   const noise = makeNoise(3);
   const c = document.createElement('canvas');
@@ -535,9 +537,10 @@ export function makeGrassTexture(): THREE.Texture {
       const n = fbm(noise, (x / S) * 8, (y / S) * 8, 8, 8, 5);
       const fine = noise((x / S) * 128, (y / S) * 128, 128, 128);
       const i = (y * S + x) * 4;
-      img.data[i] = 48 + 40 * n + 20 * fine;
-      img.data[i + 1] = 72 + 50 * n + 30 * fine;
-      img.data[i + 2] = 30 + 18 * n;
+      const k = patchy ? 1.9 : 1, m = n - 0.5;
+      img.data[i] = 68 + 40 * k * m + 20 * fine;
+      img.data[i + 1] = 97 + 50 * k * m + 30 * fine;
+      img.data[i + 2] = 39 + 18 * k * m;
       img.data[i + 3] = 255;
     }
   g.putImageData(img, 0, 0);
@@ -633,27 +636,27 @@ export function makeTreeTexture(seed = 3, bush = false): THREE.Texture {
     // Trunk and two limbs.
     g.strokeStyle = 'rgb(58,46,36)'; g.lineCap = 'round';
     const tx = S * (0.5 + rng.range(-0.03, 0.03));
-    g.lineWidth = S * 0.05; g.beginPath(); g.moveTo(tx, S); g.lineTo(tx + S * rng.range(-0.02, 0.02), S * 0.55); g.stroke();
+    g.lineWidth = S * 0.06; g.beginPath(); g.moveTo(tx, S); g.lineTo(tx + S * rng.range(-0.02, 0.02), S * 0.6); g.stroke();
     g.lineWidth = S * 0.028;
-    for (const sgn of [-1, 1]) { g.beginPath(); g.moveTo(tx, S * 0.72); g.lineTo(tx + sgn * S * rng.range(0.1, 0.2), S * rng.range(0.45, 0.55)); g.stroke(); }
+    for (const sgn of [-1, 1]) { g.beginPath(); g.moveTo(tx, S * 0.84); g.lineTo(tx + sgn * S * rng.range(0.1, 0.22), S * rng.range(0.55, 0.65)); g.stroke(); }
   }
   // Lobes: the crown outline is their union.
   const lobes: number[][] = [];
-  const cy0 = bush ? 0.66 : 0.4, ry0 = bush ? 0.3 : 0.33, nl = bush ? 6 : 9;
+  const cy0 = bush ? 0.66 : 0.43, ry0 = bush ? 0.3 : 0.4, nl = bush ? 6 : 13;
   for (let i = 0; i < nl; i++) {
     const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * 0.62;
-    lobes.push([0.5 + Math.cos(a) * d * 0.4, cy0 + Math.sin(a) * d * ry0, rng.range(0.13, 0.2) * (bush ? 0.95 : 1)]);
+    lobes.push([0.5 + Math.cos(a) * d * 0.5, cy0 + Math.sin(a) * d * ry0 * (Math.sin(a) > 0 ? 0.8 : 1), rng.range(0.09, 0.19)]);
   }
   lobes.push([0.5, cy0, 0.22]);
   const dabs: number[][] = [];
-  for (let k = 0; k < 1500; k++) {
+  for (let k = 0; k < 2200; k++) {
     const L = lobes[Math.floor(rng.next() * lobes.length)];
     const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * L[2];
     const x = L[0] + Math.cos(a) * d, y = L[1] + Math.sin(a) * d * 0.9;
     if (y > 0.985) continue;
     // Light: top of its lobe and top of the crown are lit, undersides and the interior are dark.
     const inLobe = (L[1] - y) / L[2], glob = (cy0 - y) / ry0;
-    dabs.push([x, y, 0.5 + 0.3 * inLobe + 0.16 * glob + rng.range(-0.2, 0.2), rng.range(0.012, 0.028)]);
+    dabs.push([x, y, 0.5 + 0.3 * inLobe + 0.16 * glob + rng.range(-0.22, 0.22), rng.range(0.008, 0.024)]);
   }
   dabs.sort((p, q) => q[1] - p[1] + (p[2] - q[2]) * 0.2); // lower ones first, so each lobe's lit top overlaps the shade below
   for (const [x, y, lt, r] of dabs) {

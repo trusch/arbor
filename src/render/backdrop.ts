@@ -43,7 +43,7 @@ export function terrainHeight(x: number, z: number) {
 
 /** Polar grid: 2 flat rings, then rings growing 4.5 % each to R_OUT. position / normal / uv like the old disc. */
 export function makeTerrainGeometry(): THREE.BufferGeometry {
-  const SEG = 256, radii = [R_FLAT * 0.5, R_FLAT];
+  const SEG = 256, radii = [14, 22, 30, 36, 42, 48, 54, 60, R_FLAT];
   for (let r = R_FLAT * 1.045; r < R_OUT; r *= 1.045) radii.push(r);
   const P: number[] = [0, 0, 0], U: number[] = [0, 0], I: number[] = [];
   radii.forEach((r, k) => {
@@ -65,6 +65,18 @@ export function makeTerrainGeometry(): THREE.BufferGeometry {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
   g.setIndex(I);
   g.computeVertexNormals();
+  // Meadow relief the mesh is too coarse to carry as height: tilt the normals by the gradient of a streaky noise
+  // (tussocks, hollows, grazing lines), from 30 m outward. The sun then shades the far ground in patches and streaks
+  // that follow its direction and height like real relief does: faint at noon, strong at a low sun.
+  const N = g.attributes.normal.array as Float32Array, e = 1.5;
+  const relief = (x: number, z: number) => fbm(x / 34 + 3.3, z / 13 + 1.1, 3) * 1.1 + fbm(x / 9 - 7.7, z / 16 + 5.9, 2) * 0.45;
+  for (let i = 0; i < N.length; i += 3) {
+    const x = P[i], z = P[i + 2], r = Math.hypot(x, z), k = smooth(26, 60, r) * (1 - 0.6 * smooth(500, 1200, r)) * 1.7;
+    if (k <= 0) continue;
+    const nx = N[i] - k * (relief(x + e, z) - relief(x - e, z)) / (2 * e), nz = N[i + 2] - k * (relief(x, z + e) - relief(x, z - e)) / (2 * e);
+    const l = Math.hypot(nx, N[i + 1], nz);
+    N[i] = nx / l; N[i + 1] /= l; N[i + 2] = nz / l;
+  }
   return g;
 }
 
@@ -79,21 +91,21 @@ export function plantScenery(): Plant[] {
   const out: Plant[] = [];
   const add = (x: number, z: number, h: number, w: number, bush: boolean, seed: number) =>
     out.push({ x, y: terrainHeight(x, z), z, h, w, bush, hash: hash(Math.floor(seed * 7) + 3, 59) });
-  for (let i = 0; i < 30; i++) {
-    const a = hash(i, 101) * 6.283, r = R_FLAT + 24 + 230 * Math.pow(hash(i, 202), 1.3);
-    const bush = hash(i, 303) < 0.35, h = bush ? 1.8 + 2.2 * hash(i, 404) : 7 + 8 * hash(i, 404);
-    add(Math.cos(a) * r, Math.sin(a) * r, h, bush ? h * 1.5 : h * 0.85, bush, i + 1);
+  for (let i = 0; i < 110; i++) {
+    const a = hash(i, 101) * 6.283, r = R_FLAT + 55 + 480 * Math.pow(hash(i, 202), 1.1);
+    const bush = hash(i, 303) < 0.5, h = bush ? 1.8 + 2.2 * hash(i, 404) : 7 + 8 * hash(i, 404);
+    add(Math.cos(a) * r, Math.sin(a) * r, h, bush ? h * 1.5 : h * (0.8 + 0.5 * hash(i, 505)), bush, i + 1);
   }
   for (let k = 0; k < 5; k++) {
-    const a = hash(k, 11) * 6.283, r = 100 + 55 * k + 30 * hash(k, 12);
+    const a = hash(k, 11) * 6.283, r = 125 + 55 * k + 30 * hash(k, 12);
     let x = Math.cos(a) * r, z = Math.sin(a) * r, dir = a + Math.PI / 2 + (hash(k, 13) - 0.5) * 0.9;
     const n = 60 + Math.floor(50 * hash(k, 14));
     for (let i = 0; i < n; i++) {
       dir += (vnoise(i * 0.13 + k * 9, k) - 0.5) * 0.12;
       x += Math.cos(dir) * 2.6; z += Math.sin(dir) * 2.6;
-      if (Math.hypot(x, z) < R_FLAT + 20 || hash(i, k + 40) < 0.1) continue;
+      if (Math.hypot(x, z) < R_FLAT + 45 || hash(i, k + 40) < 0.1) continue;
       const tall = hash(i, k + 50) < 0.09, h = tall ? 7 + 6 * hash(i, k + 60) : 2.2 + 1.6 * hash(i, k + 60);
-      add(x, z, h, tall ? h * 0.85 : h * 1.7, !tall, k * 100 + i);
+      add(x, z, h, tall ? h * (0.8 + 0.4 * hash(i, k + 70)) : h * 1.7, !tall, k * 100 + i);
     }
   }
   for (const [STEP, r0, r1, size] of [[10, 170, 460, 1], [19, 460, 1000, 1.7]]) {
@@ -105,7 +117,7 @@ export function plantScenery(): Plant[] {
         const mask = fbm(x / 230 + 4.4, z / 230 + 8.8, 3) + 0.08 * smooth(300, 700, r);
         if (mask < 0.57 + 0.04 * hash(ix + 5, iz)) continue;
         const h = (9 + 8 * hash(ix, iz + 9)) * (0.8 + 0.2 * size);
-        add(x, z, h, h * 0.95 * size, false, ix * 31 + iz);
+        add(x, z, h, h * (0.9 + 0.4 * hash(iz, ix + 3)) * size, false, ix * 31 + iz);
       }
   }
   return out;

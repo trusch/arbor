@@ -47,7 +47,7 @@ try {
       await page.waitForTimeout(1200);
       await page.screenshot({ path: `shots/${prefix}-${mode}-${hn}-${v}.png` });
     }
-    console.log(mode, hn, JSON.stringify(await page.evaluate(() => { const a = window.__arbor, r = a.stage.renderer; return { programs: r.info.programs.length, calls: r.info.render.calls, tris: r.info.render.triangles, quality: a.params.sky.quality, fe: a.frameErrors() }; })));
+    console.log(mode, hn, JSON.stringify(await page.evaluate(() => { const a = window.__arbor, r = a.stage.renderer; return { programs: r.info.programs.length, calls: r.info.render.calls, tris: r.info.render.triangles, quality: a.params.sky.quality, fog: a.stage.fog.density, H: a.sim.bboxMax[1], fe: a.frameErrors() }; })));
   }
 } finally {
   await browser.close();
