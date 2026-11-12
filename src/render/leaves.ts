@@ -171,8 +171,8 @@ export const LEAF_VARIANTS: readonly LeafVariant[] = [
 /** ?leafmap=raw: the old canvas map with GPU mips (ghost-card repro). */
 const diagRawLeafMap = typeof location !== 'undefined' && new URLSearchParams(location.search).get('leafmap') === 'raw';
 
-const GROW_TIME = 5; // seconds for a leaf to emerge (see `leafOpen`)
-const GROW_STAGGER = 1.6; // leaves of one node start one after another over this many seconds, the one nearest the tip last
+const GROW_TIME = 3.5; // seconds for a leaf to emerge (see `leafOpen`)
+const GROW_STAGGER = 1; // leaves of one node start one after another over this many seconds, the one nearest the tip last
 const GROW_LATE = 12; // a leaf first drawn more than this long after its sim birth (density, thinning, quality change) is drawn grown
 
 /** How big and how open a leaf is at `age` seconds after it started to emerge (written by `leafOpen`, no allocation). */
@@ -187,8 +187,9 @@ export function leafOpen(age: number, grow = GROW_TIME): typeof leafOpenState {
   const o = leafOpenState, u = age / grow;
   if (u >= 1) { o.len = o.wid = o.swing = 1; return o; }
   if (u <= 0) { o.len = 0; o.wid = 0.3; o.swing = 0.1; return o; }
-  o.len = u * u * (3 - 2 * u);
-  o.wid = 0.3 + 0.7 * smooth(0.2, 0.9, u);
+  // Half ease-out, half smoothstep: visible early (the shoot extends fast), still continuous from 0.
+  o.len = 0.5 * u * (2 - u) + 0.5 * u * u * (3 - 2 * u);
+  o.wid = 0.35 + 0.65 * smooth(0.1, 0.85, u);
   o.swing = 0.1 + 0.9 * smooth(0.1, 0.85, u);
   return o;
 }
