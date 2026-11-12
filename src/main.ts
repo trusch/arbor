@@ -201,6 +201,7 @@ function weatherRender(dt: number) {
   tel.phase('weather', true);
   stage.applyFlash();
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
+  canopy.fade(dt);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
@@ -618,6 +619,7 @@ requestAnimationFrame(loop);
   sim,
   leaves,
   canopy,
+  branches,
   meadow,
   wind,
   weather,

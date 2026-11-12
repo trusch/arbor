@@ -606,6 +606,39 @@ try {
     // One slow frame at 5x is 0.4 s of sim time (11 % of the length by the emergence curve), hence median and a looser max.
     check(`phone: leaves emerge from nothing at ${sp}x (first visible size: median <= 10 %, max <= 35 % of final)`, r.leaves >= 10 && r.median <= 0.1 && r.max <= 0.35 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
   }
+  // Canopy decal continuity (the "shadow jumps while growing" report): the decal's alpha is read every frame at fixed
+  // WORLD points through the plane transform, from a fresh seedling over 22 s of growth. A bake that refits the plane,
+  // moves the texel grid or the flecks, or is shown without the cross-fade steps a point by 10 to 27 of 255 in one frame.
+  {
+    const { ctx, mp, merr } = await phone('?speed=0&weather=calm&autoRotate=false&season.on=false');
+    await mp.waitForTimeout(1500);
+    const r = await mp.evaluate(() => new Promise((done) => {
+      const A = window.__arbor, G = 24, A0 = new Float32Array(G * G), A1 = new Float32Array(G * G), b0 = A.canopy.bakes;
+      let has = false, max = 0, first = -1;
+      const tick = () => {
+        const m = A.canopy.mesh, px = A.canopy.img.data, cs = Math.cos(m.rotation.y), sn = Math.sin(m.rotation.y);
+        if (m.visible && first < 0) first = A.sim.time;
+        for (let j = 0, i = 0; j < G; j++) for (let k = 0; k < G; k++, i++) {
+          let v = 0;
+          if (m.visible) {
+            const dx = (k / (G - 1) - 0.5) * 18 + 0.137 - m.position.x, dz = (j / (G - 1) - 0.5) * 18 + 0.071 - m.position.z;
+            const tx = ((dx * cs - dz * sn) / m.scale.x + 0.5) * 256 - 0.5, tz = ((dx * sn + dz * cs) / m.scale.z + 0.5) * 256 - 0.5;
+            const x0 = Math.floor(tx), z0 = Math.floor(tz), fx = tx - x0, fz = tz - z0;
+            const at = (x, z) => (x < 0 || z < 0 || x > 255 || z > 255 ? 0 : px[(z * 256 + x) * 4 + 3]);
+            v = (at(x0, z0) * (1 - fx) + at(x0 + 1, z0) * fx) * (1 - fz) + (at(x0, z0 + 1) * (1 - fx) + at(x0 + 1, z0 + 1) * fx) * fz;
+          }
+          A1[i] = v;
+          if (has && Math.abs(v - A0[i]) > max) max = Math.abs(v - A0[i]);
+        }
+        A0.set(A1); has = true;
+        if (A.sim.time < 22) return requestAnimationFrame(tick);
+        done({ maxStep: +max.toFixed(1), firstDecalT: +first.toFixed(2), bakes: A.canopy.bakes - b0, fe: A.frameErrors() });
+      };
+      A.params.time.speed = 1; requestAnimationFrame(tick);
+    }));
+    await ctx.close();
+    check('phone: canopy decal changes continuously while growing (per-frame step at a fixed ground point <= 8 of 255, decal from the first second, >= 6 bakes)', r.maxStep <= 8 && r.firstDecalT >= 0 && r.firstDecalT <= 1.5 && r.bakes >= 6 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);

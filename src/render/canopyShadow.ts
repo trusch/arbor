@@ -21,6 +21,8 @@ import type { TreeSim } from '../sim/tree';
  */
 /** Sliding sums leave rounding residue behind the window; anything this small is flushed to 0 (denormals are slow). */
 const EPS = 1e-7;
+/** Cross-fade from the drawn decal to a new bake: duration (real s, under the 0.5 s minimum bake gap) and uploads. */
+const FADE_S = 0.45, FADE_STEPS = 6;
 
 export class CanopyShadow {
   readonly mesh: THREE.Mesh;
@@ -41,6 +43,16 @@ export class CanopyShadow {
   private readonly colAcc: Float64Array;
   private readonly sig = new Float64Array(5);
   private readonly used = new Uint8Array(5);
+  /** Cross-fade between bakes: alpha drawn now, alpha at the fade start (resampled into the new frame), the new bake. */
+  private readonly shown: Uint8Array;
+  private readonly from: Uint8Array;
+  private readonly to: Uint8Array;
+  /** Ground frame of the drawn texture (u0, w0, texels per metre along u and w, azimuth); `has` = something is drawn. */
+  private fr = { u0: 0, w0: 0, toU: 1, toW: 1, ux: 1, uz: 0, has: false };
+  private fadeP = 1;
+  private fadeStep = 0;
+  /** Texture uploads of fade steps (profiling). */
+  fadeUploads = 0;
   private key = '';
   private lastT = -1e9;
   private ver = -1;
@@ -59,6 +71,9 @@ export class CanopyShadow {
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tau = new Float32Array(S * S);
     this.tmp = new Float32Array(S * S);
+    this.shown = new Uint8Array(S * S);
+    this.from = new Uint8Array(S * S);
+    this.to = new Uint8Array(S * S);
     const N = this.N;
     for (let k = 0; k < this.K; k++) this.layers.push(new Float32Array(N * N));
     this.bufA = new Float32Array(N * N);
@@ -84,13 +99,15 @@ export class CanopyShadow {
   /** dir: toward the shadow-casting light (y clamped like the stage sun). Rebuilds at most every `minGap` s unless the sun moved. */
   update(sim: TreeSim, dir: THREE.Vector3, strength: number, time: number, minGap = 2) {
     const G = sim.lightGrid;
-    if (!G || sim.nodes.length < 2) { this.mesh.visible = false; return; }
+    if (sim.nodes.length < 2) { this.mesh.visible = false; this.fr.has = false; this.ver = -1; return; }
+    // Before the first light grid (seedling) the node count stands in for the light version.
+    const ver = G ? sim.lightVersion : -2 - sim.nodes.length, cell = G ? G.cell : 0.25;
     const key = `${dir.x.toFixed(2)},${dir.y.toFixed(2)},${dir.z.toFixed(2)}`;
     const gap = time - this.lastT;
-    if (key === this.key && (sim.lightVersion === this.ver || gap < minGap)) return;
+    if (key === this.key && (ver === this.ver || gap < minGap)) return;
     if (gap < 0.5) return;
     this.key = key;
-    this.ver = sim.lightVersion;
+    this.ver = ver;
     this.lastT = time;
     const t0 = performance.now();
     const S = this.S, N = this.N, K = this.K, sig = this.sig, layers = this.layers, used = this.used;
@@ -110,8 +127,13 @@ export class CanopyShadow {
       if (u < u0) u0 = u; if (u > u1) u1 = u; if (w < w0) w0 = w; if (w > w1) w1 = w;
     }
     const sMax = clumpR * 1.3 + pen * (top / ly);
-    const padW = G.cell + 1.5 * sMax, padU = G.cell + 1.5 * sMax * stretch;
+    const padW = cell + 1.5 * sMax, padU = cell + 1.5 * sMax * stretch;
     u0 -= padU; u1 += padU; w0 -= padW; w1 += padW;
+    // World-anchored grid: the blur cell size comes from a ladder (steps of 2^(1/3)) and the origin sits on a multiple
+    // of it, so from bake to bake the texels stay where they are on the ground (a growing footprint adds whole cells)
+    // until the ladder steps; the refit plane then shows unchanged content in the same place.
+    const cu = Math.pow(2, Math.ceil(Math.log2((u1 - u0) / (N - 2)) * 3) / 3), cw = Math.pow(2, Math.ceil(Math.log2((w1 - w0) / (N - 2)) * 3) / 3);
+    u0 = Math.floor(u0 / cu) * cu; u1 = u0 + N * cu; w0 = Math.floor(w0 / cw) * cw; w1 = w0 + N * cw;
     const extU = u1 - u0, extW = w1 - w0, toU = S / extU, toW = S / extW, hU = N / extU, hW = N / extW;
     // Blur levels: geometric sigmas (world units, w axis) from the pixel floor to the widest penumbra.
     const sMin = 0.6 / hW, ratio = Math.pow(Math.max(1.01, sMax / sMin), 1 / (K - 1));
@@ -189,11 +211,16 @@ export class CanopyShadow {
     // Sun flecks: small soft ellipses (stretched along u like the shadow) punched into the crown shadow where it is
     // only moderately dense (gaps between clumps), not under the trunk/core.
     holes.fill(0);
-    let f = 7;
-    const fr = () => { f = (f * 48271) % 2147483647; return f / 2147483647; };
-    const nF = Math.round(S * S / 90), fe = Math.min(2.2, stretch);
-    for (let k = 0; k < nF; k++) {
-      const gx = fr() * S, gz = fr() * S, t = tau[(gz | 0) * S + (gx | 0)];
+    // Candidates sit on a world-anchored 0.5 m lattice in the (u, w) frame (one hashed fleck per cell), so a fleck
+    // keeps its place on the ground from bake to bake.
+    let f = 1;
+    const fr = () => { f = Math.imul(f ^ (f >>> 15), 2246822519); f = Math.imul(f ^ (f >>> 13), 3266489917); f ^= f >>> 16; return (f >>> 8) / 16777216; };
+    const FL = 0.5, fe = Math.min(2.2, stretch), i1 = Math.ceil(u1 / FL), j1 = Math.ceil(w1 / FL);
+    for (let jj = Math.floor(w0 / FL); jj < j1; jj++) for (let ii = Math.floor(u0 / FL); ii < i1; ii++) {
+      f = (Math.imul(ii, 374761393) ^ Math.imul(jj, 668265263)) | 0;
+      const gx = ((ii + fr()) * FL - u0) * toU, gz = ((jj + fr()) * FL - w0) * toW;
+      if (!(gx >= 0 && gz >= 0 && gx < S && gz < S)) continue;
+      const t = tau[(gz | 0) * S + (gx | 0)];
       if (t < 0.15 || t > 2.2) continue;
       const rr = 0.06 + 0.11 * fr(), ru = Math.min(2.5 * fe, Math.max(0.8, rr * fe * toU)), rw = Math.min(2.5, Math.max(0.8, rr * toW)), wgt = 0.55 + 0.45 * fr();
       const eu = Math.ceil(ru * 1.6), ew = Math.ceil(rw * 1.6), iu2 = 1 / (ru * ru), iw2 = 1 / (rw * rw);
@@ -204,7 +231,7 @@ export class CanopyShadow {
     }
     // Dapple with world-anchored noise (stable while the footprint grows or the sun moves), map optical depth to
     // opacity (cap = strength), fade to 0 at the border.
-    const px8 = this.img.data, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS, k255 = 255 * Math.min(1, strength);
+    const to = this.to, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS, k255 = 255 * Math.min(1, strength);
     for (let z = 0, i = 0; z < S; z++) {
       const ww = w0 + (z + 0.5) / toW, uu = u0 + 0.5 / toU;
       // +4096: keeps the noise coordinate positive so `| 0` floors.
@@ -219,11 +246,35 @@ export class CanopyShadow {
           if (ez < 4 || x < 4 || x > S - 5) a *= Math.min(x, S - 1 - x, ez) / 4;
           a8 = (a + 0.5) | 0;
         }
-        px8[i * 4 + 3] = a8;
+        to[i] = a8;
       }
     }
-    this.ctx.putImageData(this.img, 0, 0);
-    this.tex.needsUpdate = true;
+    // Cross-fade: what is drawn now is resampled into the new frame (exact while the grid only shifted by whole
+    // texels) and blended to the new bake in `FADE_STEPS` uploads over `FADE_S`, so a bake never shows as a step.
+    // A paused or fast-forwarded tree with nothing drawn yet gets the bake at once.
+    const P = this.fr, from = this.from, shown = this.shown;
+    if (!P.has) from.fill(0);
+    else {
+      // new texel (x, z) -> old texel: affine in x and z.
+      const c = ux * P.ux + uz * P.uz, sn = ux * P.uz - uz * P.ux; // rotation between the frames (1, 0 unless the sun moved)
+      const ax = (c / toU) * P.toU, az = (-sn / toU) * P.toW;
+      for (let z = 0, i = 0; z < S; z++) {
+        const un = u0 + 0.5 / toU, wn = w0 + (z + 0.5) / toW;
+        let ox = (un * c + wn * sn - P.u0) * P.toU - 0.5, oz = (-un * sn + wn * c - P.w0) * P.toW - 0.5;
+        for (let x = 0; x < S; x++, i++, ox += ax, oz += az) {
+          const fx0 = Math.floor(ox + 1e-4), fz0 = Math.floor(oz + 1e-4);
+          if (fx0 < -1 || fz0 < -1 || fx0 >= S || fz0 >= S) { from[i] = 0; continue; }
+          const tx = Math.max(0, ox - fx0), tz = Math.max(0, oz - fz0), o = fz0 * S + fx0;
+          const inX0 = fx0 >= 0, inX1 = fx0 < S - 1, inZ0 = fz0 >= 0, inZ1 = fz0 < S - 1;
+          const v00 = inX0 && inZ0 ? shown[o] : 0, v10 = inX1 && inZ0 ? shown[o + 1] : 0, v01 = inX0 && inZ1 ? shown[o + S] : 0, v11 = inX1 && inZ1 ? shown[o + S + 1] : 0;
+          from[i] = (v00 + (v10 - v00) * tx + (v01 - v00 + (v11 - v10 - v01 + v00) * tx) * tz + 0.5) | 0;
+        }
+      }
+    }
+    const instant = !P.has && minGap < 2;
+    P.u0 = u0; P.w0 = w0; P.toU = toU; P.toW = toW; P.ux = ux; P.uz = uz; P.has = true;
+    this.fadeP = instant ? 1 : 0; this.fadeStep = instant ? FADE_STEPS - 1 : 0;
+    this.fadeTo(this.fadeStep + 1);
     const uc = (u0 + u1) / 2, wc = (w0 + w1) / 2;
     this.mesh.position.set(uc * ux - wc * uz, 0.015, uc * uz + wc * ux);
     this.mesh.rotation.y = Math.atan2(-uz, ux); // local +x → U, local +z → W
@@ -232,6 +283,22 @@ export class CanopyShadow {
     this.lastMs = performance.now() - t0;
     if (this.lastMs > this.maxMs) this.maxMs = this.lastMs;
     this.bakes++;
+  }
+
+  /** Per frame (`dt` real seconds): advances the cross-fade to the latest bake; uploads the texture only on a new step. */
+  fade(dt: number) {
+    if (this.fadeStep >= FADE_STEPS || !this.mesh.visible) return;
+    this.fadeP = Math.min(1, this.fadeP + dt / FADE_S);
+    const step = Math.max(this.fadeStep, Math.ceil(this.fadeP * FADE_STEPS));
+    if (step > this.fadeStep) { this.fadeTo(step); this.fadeUploads++; }
+  }
+
+  private fadeTo(step: number) {
+    this.fadeStep = step;
+    const k = Math.round((256 * step) / FADE_STEPS), from = this.from, to = this.to, shown = this.shown, px8 = this.img.data, n = this.S * this.S;
+    for (let i = 0; i < n; i++) { const a = from[i], v = a + (((to[i] - a) * k) >> 8); shown[i] = v; px8[i * 4 + 3] = v; }
+    this.ctx.putImageData(this.img, 0, 0);
+    this.tex.needsUpdate = true;
   }
 
   /**
