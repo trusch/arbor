@@ -97,12 +97,16 @@ export class Meadow {
   /** Row being filled in the back buffers; -1 = idle. The sun direction of the fill in flight is in fillSun. */
   private fillRow = -1;
   private fillSun = [0, 1, 0];
+  private fillCol = -1;
+  private blurStage = 0;
+  /** Cell rectangle of the fill in flight: i0, i1, row0, row1 (inclusive). */
+  private rect = [0, -1, 0, -1];
   private col = new THREE.Color();
   private tintCol = new THREE.Color();
   /** Drawn instance counts (for reports and tests). */
   counts = { grass: 0, flowers: 0, meshes: 0 };
-  /** Bake timings (ms): last patch, max patch, patches baked. */
-  stats = { lastMs: 0, maxMs: 0, bakes: 0 };
+  /** Bake timings (ms): last patch, max patch, patches baked, longest per-frame slice (shade rows or patches). */
+  stats = { lastMs: 0, maxMs: 0, bakes: 0, sliceMaxMs: 0 };
 
   /** `leafMaterial`: the live leaf material. When it is the safe Lambert/basic one it is cloned (same program). */
   constructor(leafMaterial: THREE.Material, seed = 7) {
@@ -217,8 +221,8 @@ export class Meadow {
     this.L = L;
     if (shKey !== this.shKey && this.fillRow < 0) {
       this.shKey = shKey;
-      this.fillRow = 0;
       this.fillSun = [s.x, Math.max(0.08, s.y), s.z];
+      this.beginFill(sim);
     }
     if (key !== this.key) {
       this.key = key;
@@ -229,6 +233,8 @@ export class Meadow {
     const t0 = performance.now();
     if (this.fillRow >= 0) this.fillShade(sim, t0 + FRAME_BUDGET_MS);
     else while (this.dirty.length) { this.bake(sim, this.dirty.shift()!); if (performance.now() - t0 > FRAME_BUDGET_MS) break; }
+    const ms = performance.now() - t0;
+    if (ms > this.stats.sliceMaxMs) this.stats.sliceMaxMs = ms;
   }
 
   /** Bake every pending patch now (screenshots, fastForward). */
@@ -237,30 +243,53 @@ export class Meadow {
     while (this.dirty.length) this.bake(sim, this.dirty.shift()!);
   }
 
-  /** March rows of the shade field into the back buffers until `deadline`; the last row blurs into the live field and dirties every patch. */
+  /** Start a shade fill: only the cells the crown can shade (light-grid footprint swept away from the sun) are marched. */
+  private beginFill(sim: TreeSim) {
+    const G = sim.lightGrid, R = this.rect, k = SG / (2 * SE);
+    this.bkUp.fill(1); this.bkSun.fill(1);
+    if (!G) { R[0] = R[2] = 0; R[1] = R[3] = -1; this.fillRow = 0; return; }
+    const [sx, sy, sz] = this.fillSun, len = (G.ny * G.cell + Math.max(0, G.oy)) / sy;
+    const ax = G.ox, bx = G.ox + G.nx * G.cell, az = G.oz, bz = G.oz + G.nz * G.cell;
+    const c = (v: number) => Math.min(SG - 1, Math.max(0, Math.floor((v + SE) * k)));
+    R[0] = c(Math.min(ax, ax - sx * len) - 1.5); R[1] = c(Math.max(bx, bx - sx * len) + 1.5);
+    R[2] = c(Math.min(az, az - sz * len) - 1.5); R[3] = c(Math.max(bz, bz - sz * len) + 1.5);
+    this.fillRow = R[2];
+  }
+
+  /** March rows of the shade field into the back buffers until `deadline`, then blur one field per call into the live
+   *  field (stages, so no slice does everything); the last stage dirties every patch. */
   private fillShade(sim: TreeSim, deadline: number) {
     const [sx, sy, sz] = this.fillSun, cell = (2 * SE) / SG;
-    while (this.fillRow < SG) {
+    const [i0, i1, r0, r1] = this.rect;
+    while (this.fillRow <= r1) {
       const z = -SE + (this.fillRow + 0.5) * cell, o = this.fillRow * SG;
-      for (let i = 0; i < SG; i++) {
+      for (let i = this.fillCol < 0 ? i0 : this.fillCol; i <= i1; i++) {
         const x = -SE + (i + 0.5) * cell;
         this.bkUp[o + i] = this.transmit(sim, x, z, 0, 1, 0);
         this.bkSun[o + i] = this.transmit(sim, x, z, sx, sy, sz);
+        if ((i & 7) === 7 && i < i1 && performance.now() > deadline) { this.fillCol = i + 1; return; }
       }
+      this.fillCol = -1;
       this.fillRow++;
       if (performance.now() > deadline) return;
     }
     // Binomial 1-4-6-4-1 blur per axis: the voxel steps of the light grid become a gradient about 1 m wide.
-    const T = this.shTmp, cl = (v: number) => Math.min(SG - 1, Math.max(0, v));
-    for (const [src, dst] of [[this.bkUp, this.shUp], [this.bkSun, this.shSun]]) {
-      for (let zr = 0; zr < SG; zr++) for (let i = 0; i < SG; i++) {
-        const o = zr * SG;
-        T[o + i] = (src[o + cl(i - 2)] + src[o + cl(i + 2)] + 4 * (src[o + cl(i - 1)] + src[o + cl(i + 1)]) + 6 * src[o + i]) / 16;
+    const T = this.shTmp, hi = SG - 1;
+    const a0 = Math.max(0, i0 - 2), a1 = Math.min(hi, i1 + 2), b0 = Math.max(0, r0 - 2), b1 = Math.min(hi, r1 + 2);
+    for (; this.blurStage < 2; this.blurStage++) {
+      if (this.blurStage === 1 && performance.now() > deadline) return;
+      const src = this.blurStage ? this.bkSun : this.bkUp, dst = this.blurStage ? this.shSun : this.shUp;
+      dst.fill(1); T.fill(1);
+      for (let zr = r0; zr <= r1; zr++) for (let i = a0, o = zr * SG; i <= a1; i++) {
+        const l1 = i > 0 ? i - 1 : 0, l2 = i > 1 ? i - 2 : 0, h1 = i < hi ? i + 1 : hi, h2 = i < hi - 1 ? i + 2 : hi;
+        T[o + i] = (src[o + l2] + src[o + h2] + 4 * (src[o + l1] + src[o + h1]) + 6 * src[o + i]) / 16;
       }
-      for (let zr = 0; zr < SG; zr++) for (let i = 0; i < SG; i++) {
-        dst[zr * SG + i] = (T[cl(zr - 2) * SG + i] + T[cl(zr + 2) * SG + i] + 4 * (T[cl(zr - 1) * SG + i] + T[cl(zr + 1) * SG + i]) + 6 * T[zr * SG + i]) / 16;
+      for (let zr = b0; zr <= b1; zr++) {
+        const l1 = (zr > 0 ? zr - 1 : 0) * SG, l2 = (zr > 1 ? zr - 2 : 0) * SG, h1 = (zr < hi ? zr + 1 : hi) * SG, h2 = (zr < hi - 1 ? zr + 2 : hi) * SG, o = zr * SG;
+        for (let i = a0; i <= a1; i++) dst[o + i] = (T[l2 + i] + T[h2 + i] + 4 * (T[l1 + i] + T[h1 + i]) + 6 * T[o + i]) / 16;
       }
     }
+    this.blurStage = 0;
     this.fillRow = -1;
     this.dirty = this.patches.map((_, i) => i);
   }
@@ -282,12 +311,12 @@ export class Meadow {
     let px = (x - G.ox) / cell, py = (0.05 - G.oy) / cell, pz = (z - G.oz) / cell;
     // Jump to the grid box (slab test), then march one cell per step.
     let t0 = 0, t1 = 1e9;
-    const slab = (p: number, d: number, n: number) => {
-      if (Math.abs(d) < 1e-6) { if (p < 0 || p >= n) t1 = -1; return; }
+    for (let ax = 0; ax < 3; ax++) {
+      const p = ax === 0 ? px : ax === 1 ? py : pz, d = ax === 0 ? dx : ax === 1 ? dy : dz, n = ax === 0 ? nx : ax === 1 ? ny : nz;
+      if (Math.abs(d) < 1e-6) { if (p < 0 || p >= n) return 1; continue; }
       const a = -p / d, b = (n - p) / d;
       t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
-    };
-    slab(px, dx, nx); slab(py, dy, ny); slab(pz, dz, nz);
+    }
     if (t1 <= t0) return 1;
     px += dx * (t0 + 0.01); py += dy * (t0 + 0.01); pz += dz * (t0 + 0.01);
     let acc = 0;
