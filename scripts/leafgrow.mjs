@@ -3,7 +3,7 @@
 //   env: MODE=desktop|phone  T0=0|40 (0 = seedling tip, else an outer twig after fastForward)  SPEED=1  BURST_S=6 (sim s)
 //        THROTTLE=n (CPU)  SHOTS=0 (numbers only)  GPU=vulkan
 // Output: shots/<prefix>-sheet.png, a table of the first 30 leaves (sim birth, first draw, scale at first draw as a
-// fraction of the largest scale the instance reaches) and one JSON summary line (also used by smoke-style gates).
+// fraction of the largest scale the instance reaches, taken at the first frame it is drawn larger than 0) and one JSON summary line (also used by smoke-style gates).
 import { mkdirSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
@@ -46,7 +46,7 @@ try {
         let r = T.m.get(key);
         if (!r) { r = { node: ND[i], born: D[i * 9 + 8], first: now, s0: s, max: s, old }; T.m.set(key, r); }
         if (s > r.max) r.max = s;
-        if (r.seen === undefined && s > 0) r.seen = now;
+        if (r.seen === undefined && s > 0) { r.seen = now; r.sv = s; }
       }
     };
     scan(true);
@@ -73,9 +73,9 @@ try {
   const res = await page.evaluate(([t0, B]) => {
     const a = window.__arbor, T = window.__lg; a.params.time.speed = 0;
     const rows = [...T.m.values()].filter((r) => !r.old && r.first <= t0 + B && r.max > 0).sort((x, y) => x.first - y.first);
-    const fr = rows.map((r) => r.s0 / r.max).sort((x, y) => x - y);
+    const fr = rows.map((r) => (r.sv ?? r.s0) / r.max).sort((x, y) => x - y);
     // Leaves that came into being during the run (the rest are old leaves newly included by thinning / shell fill).
-    const yf = rows.filter((r) => r.born >= t0 - 0.5).map((r) => r.s0 / r.max).sort((x, y) => x - y);
+    const yf = rows.filter((r) => r.born >= t0 - 0.5).map((r) => (r.sv ?? r.s0) / r.max).sort((x, y) => x - y);
     const js = T.js.slice().sort((x, y) => x - y);
     // Clusters: leaves of one node that became visible within the same 50 ms of sim time.
     const byNode = new Map();
@@ -83,13 +83,13 @@ try {
     let spread = 0, nodes = 0;
     for (const l of byNode.values()) if (l.length > 1) { spread += Math.max(...l) - Math.min(...l); nodes++; }
     return {
-      rows: rows.slice(0, 30).map((r) => [r.node, +(r.born - t0).toFixed(2), +(r.first - t0).toFixed(2), +((r.seen ?? r.first) - t0).toFixed(2), +(r.s0 / r.max).toFixed(3)]),
+      rows: rows.slice(0, 30).map((r) => [r.node, +(r.born - t0).toFixed(2), +(r.first - t0).toFixed(2), +((r.seen ?? r.first) - t0).toFixed(2), +((r.sv ?? r.s0) / r.max).toFixed(3)]),
       sum: { leaves: rows.length, firstFracMax: +(fr[fr.length - 1] ?? 0).toFixed(3), firstFracMedian: +(fr[fr.length >> 1] ?? 0).toFixed(3), over10pct: fr.filter((x) => x > 0.1).length, young: yf.length, youngFirstFracMax: +(yf[yf.length - 1] ?? 0).toFixed(3), youngOver10pct: yf.filter((x) => x > 0.1).length,
         clusterSpreadMeanS: +(nodes ? spread / nodes : 0).toFixed(2), jsMeanMs: +(js.reduce((s, x) => s + x, 0) / (js.length || 1)).toFixed(2), jsP95Ms: +(js[Math.floor(js.length * 0.95)] ?? 0).toFixed(2), frames: js.length,
         quality: a.params.sky.quality, drawn: a.leaves.mesh.count, errors: a.frameErrors() },
     };
   }, [t0, BURST]);
-  console.log('node  born  firstDraw  visible  scaleAtFirstDraw/final   (sim s after start)');
+  console.log('node  born  firstDraw  visible  scaleAtFirstVisibleFrame/final   (sim s after start)');
   for (const r of res.rows) console.log(r.join('\t'));
   console.log(JSON.stringify({ prefix: PRE, mode: MODE, t0: T0, speed: SPEED, ...res.sum }));
   if (files.length) {

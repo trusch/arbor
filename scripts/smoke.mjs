@@ -460,6 +460,31 @@ try {
     await dctx.close();
     check('desktop High: switching through every leaf form adds no shader program (full leaves + GTAO cut-out), no errors', dk.ok && dk.before.gb, dk.detail + (derr.length ? ' ' + derr.join(' | ') : ''));
   }
+  // Leaf emergence: no leaf may be first seen at a noticeable size. Per frame, the card length of every drawn instance
+  // is tracked from a fresh seedling; the first length above 0 is compared with the largest the instance reaches.
+  for (const sp of [1, 5]) {
+    const { ctx, mp, merr } = await phone('?speed=0&weather=calm&autoRotate=false');
+    await mp.waitForTimeout(1500);
+    const r = await mp.evaluate((speed) => new Promise((done) => {
+      const A = window.__arbor, m = new Map(), END = 13;
+      const tick = () => {
+        const L = A.leaves, mesh = L.mesh, n = mesh.count, D = L.frontD, ND = L.frontNode, arr = mesh.instanceMatrix.array, now = A.sim.time;
+        for (let i = 0; i < n; i++) {
+          const key = ND[i] * 4096 + Math.round(D[i * 9] * 4000), o = i * 16, s = Math.hypot(arr[o + 4], arr[o + 5], arr[o + 6]);
+          let e = m.get(key);
+          if (!e) m.set(key, (e = { at: now, sv: 0, max: 0 }));
+          if (e.sv === 0 && s > 0) e.sv = s;
+          if (s > e.max) e.max = s;
+        }
+        if (now < END) return requestAnimationFrame(tick);
+        const fr = [...m.values()].filter((e) => e.at < END - 7.5 && e.max > 0).map((e) => e.sv / e.max);
+        done({ leaves: fr.length, max: +Math.max(0, ...fr).toFixed(3), over: fr.filter((x) => x > 0.15).length, fe: A.frameErrors() });
+      };
+      A.params.time.speed = speed; requestAnimationFrame(tick);
+    }), sp);
+    await ctx.close();
+    check(`phone: leaves emerge from nothing at ${sp}x (first visible size <= 15 % of final)`, r.leaves >= 10 && r.over === 0 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);

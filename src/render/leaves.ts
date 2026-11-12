@@ -795,7 +795,7 @@ export class Leaves {
         if (forced || now - lf.born > GROW_LATE) em = EM[li] = lf.born;
         else { EM[li] = -2; this.passPend = true; }
       }
-      const stag = GROW_STAGGER * Math.min(1, Math.max(0, (t - 0.45) / 0.55));
+      const stag = GROW_STAGGER * Math.min(1, Math.max(0, (t - 0.6) / 0.4));
       const age = em < 0 ? -stag : now - em - stag;
       const around = cp === 0 ? lf.around : lf.around + 1.9 + 0.8 * hr();
       const tilt = cp === 0 ? lf.tilt : 0.3 + 0.7 * hr();
