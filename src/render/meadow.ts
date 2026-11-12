@@ -358,7 +358,8 @@ export class Meadow {
     }
     this.blurStage = 0;
     this.fillRow = -1;
-    this.dirty = this.neverBaked ? this.patches.map((_, i) => i) : this.nearPatches();
+    // Keep patches still waiting from a light change (the far ones are not in `nearPatches`; dropping them left far tufts in stale colours).
+    this.dirty = this.neverBaked ? this.patches.map((_, i) => i) : [...new Set([...this.dirty, ...this.nearPatches()])];
   }
 
   /** Bilinear sample of a shade field at a ground point. */

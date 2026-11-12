@@ -20,15 +20,15 @@ try {
       k.timeOfDay = hour; a.fastForward(0);
       const d = A.sunDir, n0 = a.sim.nodes[0], H = a.sim.bboxMax[1];
       a.params.camera.autoFrame = false; st.controls.maxPolarAngle = Math.PI;
-      const az = Math.atan2(d.z, d.x) + 0.2, D = H * 3, px = n0.wx - Math.cos(az) * D, pz = n0.wz - Math.sin(az) * D;
+      const az = Math.atan2(d.z, d.x) + Number(new URLSearchParams(location.search).get('az') ?? 0.2), D = H * 3, px = n0.wx - Math.cos(az) * D, pz = n0.wz - Math.sin(az) * D;
       st.camera.position.set(px, 1.7, pz);
       st.controls.target.set(px + Math.cos(az) * 9.8, 1.7 + 2, pz + Math.sin(az) * 9.8);
       a.fastForward(0);
       await new Promise((r) => setTimeout(r, 3000));
       const gl = st.renderer.getContext(), px4 = new Uint8Array(4), rows = {};
       const orig = st.render.bind(st);
-      const gains = (new URLSearchParams(location.search).get('probeGains') ?? '1').split(',').map(Number), sweep = {};
-      for (const gf of gains) await new Promise((res) => { st.render = (p) => { A.skyUniforms.skyGain.value *= gf; orig(p); const W = gl.drawingBufferWidth, Hh = gl.drawingBufferHeight; for (const f of [0.97, 0.85, 0.7, 0.6, 0.55]) { gl.readPixels((W * 0.15) | 0, (Hh * f) | 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px4); rows[f] = [px4[0], px4[1], px4[2]]; } sweep[gf] = JSON.stringify(rows); st.render = orig; res(); }; });
+      const gains = JSON.parse(new URLSearchParams(location.search).get('probe') ?? '[{}]'), sweep = {};
+      for (const gv of gains) await new Promise((res) => { const gf = JSON.stringify(gv); st.render = (p) => { for (const [kk, v] of Object.entries(gv)) { if (kk === 'gain') A.skyUniforms.skyGain.value *= v; else if (kk === 'horizonK') A.skyUniforms.horizonK.value = v; else A.sky.material.uniforms[kk].value = v; } orig(p); const W = gl.drawingBufferWidth, Hh = gl.drawingBufferHeight; for (const f of [0.97, 0.85, 0.7, 0.6, 0.55]) { gl.readPixels((W * 0.5) | 0, (Hh * f) | 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px4); rows[f] = [px4[0], px4[1], px4[2]]; } sweep[gf] = JSON.stringify(rows); st.render = orig; res(); }; });
       const u = A.sky.material.uniforms, U = A.skyUniforms, c = (v) => [v.r, v.g, v.b].map((x) => +x.toFixed(3));
       return { quality: k.quality, sunH: +A.sunH.toFixed(3), exposure: st.renderer.toneMappingExposure, toneMapping: st.renderer.toneMapping, skyGain: +U.skyGain.value.toFixed(3), kSkyGain: k.skyGain, kExposure: k.exposure, horizonK: U.horizonK.value, fogCol: c(U.fogCol.value), turbidity: u.turbidity.value, rayleigh: u.rayleigh.value, mie: u.mieCoefficient.value, cloudCov: u.cloudCoverage.value, envI: st.scene.environmentIntensity, pixelsUpScreen: sweep };
     }, hour);
