@@ -236,7 +236,7 @@ try {
     const merr = [];
     mp.on('pageerror', (e) => merr.push(e.message));
     const t0 = Date.now();
-    await mp.goto(url + q, { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
+    await mp.goto(url + (q || '?start=0'), { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
     await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
     return { ctx, mp, merr, loadMs: Date.now() - t0 };
   };
