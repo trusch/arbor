@@ -162,9 +162,9 @@ function meadowFrame(dt: number) {
   L.sunCol.copy(S.color).multiplyScalar(S.intensity);
   L.hemi.copy(H.color).multiplyScalar(H.intensity);
   L.night = stage.atmo.night; L.tintHue = params.sky.groundHue; L.tint = Math.min(1, params.sky.groundTint);
-  // 6k tufts on Low, 20k on High; half when the adaptive pixel ratio has stepped down (overdraw relief).
+  // 10k tufts on Low, 20k on High; half when the adaptive pixel ratio has stepped down (overdraw relief).
   const low = params.sky.quality === 'Low';
-  L.frac = low ? (stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.15 : 0.3) : 1;
+  L.frac = low ? (stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 0.25 : 0.5) : 1;
   meadow.frame(sim, L, elapsed);
 }
 const sunDirTmp = new THREE.Vector3();

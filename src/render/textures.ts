@@ -270,6 +270,26 @@ export function makeTuftTexture(seed = 5): THREE.Texture {
       g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
     }
   }
+  // Base: no straight bottom edge and no dark foot. The lowest rows are cut into a ragged line of blade roots (alpha
+  // stays 0/1) and the bottom fifth fades to the mean tuft colour, which is the colour the instance gains match to the ground.
+  const im = g.getImageData(0, 0, S, S), d = im.data;
+  let mr = 0, mg = 0, mb = 0, mn = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3] >= 128) { mr += d[i]; mg += d[i + 1]; mb += d[i + 2]; mn++; }
+  mr /= mn; mg /= mn; mb /= mn;
+  for (let x = 0; x < S; x++) {
+    // Root line height per column: two octaves of column noise, 0..11 % of the card, in runs 2-5 px wide.
+    const hsh = (v: number) => { const q = Math.sin(v * 91.7 + seed * 13.1) * 43758.5453; return q - Math.floor(q); };
+    const cut = S * (0.015 + 0.06 * hsh(Math.floor(x / 5)) + 0.04 * hsh(Math.floor(x / 2) + 77));
+    for (let y = 0; y < S; y++) {
+      const up = S - 1 - y, i = (y * S + x) * 4;
+      if (up < cut) { d[i + 3] = 0; continue; }
+      const f = 1 - Math.min(1, up / (S * 0.22));
+      if (f <= 0 || d[i + 3] < 128) continue;
+      const k = f * (2 - f) * 0.9;
+      d[i] += (mr - d[i]) * k; d[i + 1] += (mg - d[i + 1]) * k; d[i + 2] += (mb - d[i + 2]) * k;
+    }
+  }
+  g.putImageData(im, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;

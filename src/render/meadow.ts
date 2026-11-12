@@ -18,6 +18,8 @@ import { makeTuftTexture, makeFlowerTexture, type FlowerKind } from './textures'
  */
 const PHASES = 24; // 8 bands x 3 interleaved groups along the wind
 const R_DISC = 14, R_FAR = 21;
+/** Shade field resolution and half extent (m); ms of bake work per frame. */
+const SG = 96, SE = R_FAR + 1, FRAME_BUDGET_MS = 1;
 const GRASS_MAX = 20000, FLOWER_MAX = 800;
 const KINDS: FlowerKind[] = ['daisy', 'buttercup', 'poppy', 'clover'];
 /** Floats per instance: x, z, rot, width, height, hashA, hashB, r. */
@@ -85,6 +87,16 @@ export class Meadow {
   private lightKeyT = -1e9;
   private lightVersion = -1;
   private L: MeadowLight | null = null;
+  /** Shade field: transmission straight up and toward the sun on a SG² grid over ±SE m, blurred; tufts sample it bilinearly. */
+  private shUp = new Float32Array(SG * SG).fill(1);
+  private shSun = new Float32Array(SG * SG).fill(1);
+  private bkUp = new Float32Array(SG * SG);
+  private bkSun = new Float32Array(SG * SG);
+  private shTmp = new Float32Array(SG * SG);
+  private shKey = '';
+  /** Row being filled in the back buffers; -1 = idle. The sun direction of the fill in flight is in fillSun. */
+  private fillRow = -1;
+  private fillSun = [0, 1, 0];
   private col = new THREE.Color();
   private tintCol = new THREE.Color();
   /** Drawn instance counts (for reports and tests). */
@@ -126,15 +138,17 @@ export class Meadow {
       (lists[li] ??= []).push(x, z, rng.next() * Math.PI, w, h, rng.next(), rng.next(), Math.hypot(x, z));
     };
 
-    // Grass: density exp(-r / 6) inside R_DISC plus a thin far ring that fades into the ground texture.
+    // Grass: 30 % in a core that thickens toward the tree (density exp(-r / 6)), 70 % spread evenly over the whole disc so
+    // the foreground of a portrait frame is as covered as the middle; both thin out between R_DISC and R_FAR.
     for (let i = 0; i < GRASS_MAX; i++) {
       let r: number;
-      do r = -6 * Math.log(Math.max(1e-9, rng.next() * rng.next())); while (r > R_FAR);
+      if (rng.next() < 0.3) do r = -6 * Math.log(Math.max(1e-9, rng.next() * rng.next())); while (r > R_FAR);
+      else do r = R_FAR * Math.sqrt(rng.next()); while (rng.next() > 1 - 0.85 * smooth(R_DISC + 1, R_FAR, r));
       const a = rng.next() * Math.PI * 2, x = Math.cos(a) * r, z = Math.sin(a) * r;
       const tall = rng.next() < 0.16;
       // Far tufts are larger so coverage holds where the density drops.
       // Past the disc they shrink away again, so the meadow has no edge: it thins and sinks into the ground texture.
-      const edge = 1 - 0.75 * smooth(R_DISC - 3, R_FAR, r);
+      const edge = 1 - 0.7 * smooth(R_DISC + 1, R_FAR + 1, r);
       const far = (1 + Math.min(r, R_DISC) / 11) * edge;
       const w = rng.range(0.26, 0.5) * far, h = (tall ? rng.range(0.34, 0.5) : rng.range(0.13, 0.3)) * (1 + r / 22) * edge;
       const ph = r > R_DISC ? Math.floor(rng.next() * PHASES) : phaseOf(x, z);
@@ -198,18 +212,66 @@ export class Meadow {
     // Rebake triggers: sun direction/brightness, night, tint, trunk radius, draw fraction; light grid at most every 3 s.
     if (sim.lightVersion !== this.lightVersion && time - this.lightKeyT > 3) { this.lightVersion = sim.lightVersion; this.lightKeyT = time; }
     const s = L.sunDir, lum = (c: THREE.Color) => (c.r + c.g + c.b).toFixed(1);
-    const key = `${s.x.toFixed(2)},${s.y.toFixed(2)},${s.z.toFixed(2)}|${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}|${(sim.nodes[0]?.radius ?? 0).toFixed(2)}|${this.lightVersion}`;
+    const shKey = `${s.x.toFixed(2)},${s.y.toFixed(2)},${s.z.toFixed(2)}|${this.lightVersion}`;
+    const key = `${lum(L.sunCol)}|${lum(L.hemi)}|${L.night.toFixed(1)}|${L.tint.toFixed(2)},${L.tintHue.toFixed(2)}|${L.frac}|${(sim.nodes[0]?.radius ?? 0).toFixed(2)}`;
     this.L = L;
+    if (shKey !== this.shKey && this.fillRow < 0) {
+      this.shKey = shKey;
+      this.fillRow = 0;
+      this.fillSun = [s.x, Math.max(0.08, s.y), s.z];
+    }
     if (key !== this.key) {
       this.key = key;
       this.dirty = this.patches.map((_, i) => i);
     }
-    for (let k = 0; k < 2 && this.dirty.length; k++) this.bake(sim, this.dirty.shift()!);
+    // Time-sliced: shade field rows first (patches wait for it, so a tuft is never baked twice for one change), then
+    // patches, both inside one small budget per frame.
+    const t0 = performance.now();
+    if (this.fillRow >= 0) this.fillShade(sim, t0 + FRAME_BUDGET_MS);
+    else while (this.dirty.length) { this.bake(sim, this.dirty.shift()!); if (performance.now() - t0 > FRAME_BUDGET_MS) break; }
   }
 
   /** Bake every pending patch now (screenshots, fastForward). */
   bakeAll(sim: TreeSim) {
+    if (this.fillRow >= 0) this.fillShade(sim, Infinity);
     while (this.dirty.length) this.bake(sim, this.dirty.shift()!);
+  }
+
+  /** March rows of the shade field into the back buffers until `deadline`; the last row blurs into the live field and dirties every patch. */
+  private fillShade(sim: TreeSim, deadline: number) {
+    const [sx, sy, sz] = this.fillSun, cell = (2 * SE) / SG;
+    while (this.fillRow < SG) {
+      const z = -SE + (this.fillRow + 0.5) * cell, o = this.fillRow * SG;
+      for (let i = 0; i < SG; i++) {
+        const x = -SE + (i + 0.5) * cell;
+        this.bkUp[o + i] = this.transmit(sim, x, z, 0, 1, 0);
+        this.bkSun[o + i] = this.transmit(sim, x, z, sx, sy, sz);
+      }
+      this.fillRow++;
+      if (performance.now() > deadline) return;
+    }
+    // Binomial 1-4-6-4-1 blur per axis: the voxel steps of the light grid become a gradient about 1 m wide.
+    const T = this.shTmp, cl = (v: number) => Math.min(SG - 1, Math.max(0, v));
+    for (const [src, dst] of [[this.bkUp, this.shUp], [this.bkSun, this.shSun]]) {
+      for (let zr = 0; zr < SG; zr++) for (let i = 0; i < SG; i++) {
+        const o = zr * SG;
+        T[o + i] = (src[o + cl(i - 2)] + src[o + cl(i + 2)] + 4 * (src[o + cl(i - 1)] + src[o + cl(i + 1)]) + 6 * src[o + i]) / 16;
+      }
+      for (let zr = 0; zr < SG; zr++) for (let i = 0; i < SG; i++) {
+        dst[zr * SG + i] = (T[cl(zr - 2) * SG + i] + T[cl(zr + 2) * SG + i] + 4 * (T[cl(zr - 1) * SG + i] + T[cl(zr + 1) * SG + i]) + 6 * T[zr * SG + i]) / 16;
+      }
+    }
+    this.fillRow = -1;
+    this.dirty = this.patches.map((_, i) => i);
+  }
+
+  /** Bilinear sample of a shade field at a ground point. */
+  private shade(F: Float32Array, x: number, z: number): number {
+    const k = SG / (2 * SE);
+    const fx = Math.min(SG - 1.001, Math.max(0, (x + SE) * k - 0.5)), fz = Math.min(SG - 1.001, Math.max(0, (z + SE) * k - 0.5));
+    const ix = fx | 0, iz = fz | 0, ax = fx - ix, az = fz - iz, o = iz * SG + ix;
+    const a = F[o] + (F[o + 1] - F[o]) * ax, b = F[o + SG] + (F[o + SG + 1] - F[o + SG]) * ax;
+    return a + (b - a) * az;
   }
 
   /** exp(-k x leaf density) from a ground point toward (dx, dy, dz) through the sim light grid. */
@@ -246,7 +308,6 @@ export class Meadow {
     const n = Math.min(pt.n, Math.ceil(pt.n * L.frac));
     const M = mesh.instanceMatrix.array as Float32Array, C = mesh.instanceColor!.array as Float32Array;
     const n0 = sim.nodes[0], tx = n0?.wx ?? 0, tz = n0?.wz ?? 0, tR = Math.max(0.03, n0?.radius ?? 0.05);
-    const sx = L.sunDir.x, sy = Math.max(0.08, L.sunDir.y), sz = L.sunDir.z;
     const sun = L.sunCol, hemi = L.hemi, ly = Math.max(0, L.sunDir.y);
     const tc = this.tintCol.setHSL(L.tintHue, 0.55, 0.4);
     const open = 1 - L.night; // flowers close at night
@@ -255,10 +316,9 @@ export class Meadow {
       let w = data[o + 3], h = data[o + 4];
       const rt = Math.hypot(x - tx, z - tz);
       // Crown shade: straight up decides how the plant grows, toward the sun decides how it is lit right now.
-      // The start point is jittered by about half a grid cell so the shade edge dithers instead of following the voxels.
-      const jx = (hA - 0.5) * 0.5, jz = (hB - 0.5) * 0.5;
-      const up = this.transmit(sim, x + jx, z + jz, 0, 1, 0);
-      const ts = (0.3 + 0.4 * L.night) + (0.7 - 0.4 * L.night) * this.transmit(sim, x + jx, z + jz, sx, sy, sz); // floor: the decal shadow is not black either
+      // Both come from the blurred shade field, so neighbouring tufts get neighbouring values (a gradient, not squares).
+      const up = this.shade(this.shUp, x, z);
+      const ts = (0.3 + 0.4 * L.night) + (0.7 - 0.4 * L.night) * this.shade(this.shSun, x, z); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
       if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
@@ -275,7 +335,7 @@ export class Meadow {
       M[q] = c * w; M[q + 1] = 0; M[q + 2] = -s * w; M[q + 3] = 0;
       M[q + 4] = (hB - 0.5) * 0.3 * h; M[q + 5] = h; M[q + 6] = (hA - 0.5) * 0.3 * h; M[q + 7] = 0; // slight static lean per tuft
       M[q + 8] = s * w; M[q + 9] = 0; M[q + 10] = c * w; M[q + 11] = 0;
-      M[q + 12] = x; M[q + 13] = 0; M[q + 14] = z; M[q + 15] = 1;
+      M[q + 12] = x; M[q + 13] = -0.03 * h; M[q + 14] = z; M[q + 15] = 1;
       // Colour: tint variation (macro drifts of lush / dry, per-tuft jitter) x shade.
       const col = this.col;
       if (pt.flower) col.setRGB(1, 0.94, 1.1).multiplyScalar((0.62 + 0.16 * hB) * (0.6 + 0.4 * open));
