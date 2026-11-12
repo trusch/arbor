@@ -1015,7 +1015,7 @@ function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, h
 function bakeChE(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, hwF: number, occ: number, sd: number, glow: number, mg: number) {
   const El = gr + (sky - gr) * hw + sun * (Math.max(0, ndl) + mg);
   const Ew = (gr + (sky - gr) * hwF) * occ + sun * (sd + glow * tint);
-  return Math.min(8, Ew / Math.max(0.02, El)) / i;
+  return Math.min(8 - 66 * mg, Ew / Math.max(0.02, El)) / i;
 }
 
 /** Mean linear colour of the pale pre-painted leaf map the full-path albedo was tuned against. */
