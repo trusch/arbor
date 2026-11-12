@@ -162,6 +162,7 @@ export const LEAF_VARIANTS: readonly LeafVariant[] = [
 const diagRawLeafMap = typeof location !== 'undefined' && new URLSearchParams(location.search).get('leafmap') === 'raw';
 
 const GROW_TIME = 3; // seconds for a leaf to unfold
+const LEAF_D = 9; // floats per instance placement record (see `Leaves.place`)
 
 /** Instanced leaves attached to young segments, with vertex-shader wind sway. */
 export class Leaves {
@@ -194,8 +195,6 @@ export class Leaves {
   maxInstances = 0;
   private rankScale = 1;
   private m = new THREE.Matrix4();
-  private q = new THREE.Quaternion();
-  private q2 = new THREE.Quaternion();
   /** Resumable leaf pass (see `beginPass` / `stepPass`): cursor, instances written, candidates seen, input snapshot, back buffers. */
   passOpen = false;
   private passLi = 0;
@@ -204,21 +203,29 @@ export class Leaves {
   private passCand = 0;
   private passTime = 0;
   private passRs = 1;
-  private passH = 2;
   private passT: Float32Array | null = null;
-  private backM = new Float32Array(0);
   private backC = new Float32Array(0);
+  /**
+   * Per-instance placement record (LEAF_D floats: t, cos/sin around, cos/sin tilt, cos/sin roll, base size, born) and
+   * node id. `back*` is written by the open pass, `front*` describes the drawn instances in the order of the uploaded
+   * colour buffer; they are swapped when a pass completes. `follow` re-places the front set from the live nodes.
+   */
+  private backD = new Float32Array(0);
+  private backNode = new Int32Array(0);
+  private frontD = new Float32Array(0);
+  private frontNode = new Int32Array(0);
+  /** False until a pass has completed on the current tree (front records would point into a discarded node list). */
+  private followOk = false;
+  /** Wall time of the last `follow` (ms) and its maximum. */
+  followMs = 0;
+  followMaxMs = 0;
+  follows = 0;
   /** Completed passes, and the wall time of the last one summed over its slices (ms). */
   passes = 0;
   passMs = 0;
   private passAcc = 0;
   private lastN = 0;
   private col = new THREE.Color();
-  private ax = new THREE.Vector3();
-  private ay = new THREE.Vector3();
-  private az = new THREE.Vector3();
-  private basis = new THREE.Matrix4();
-  private scl = new THREE.Vector3();
   private pos = new THREE.Vector3();
 
   constructor(map: THREE.Texture, mode: LeafMode = { shader: 'full', shadow: true }, capacity = 1024) {
@@ -318,13 +325,26 @@ export class Leaves {
     const m = new THREE.InstancedMesh(geo, this.material, cap);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const old = this.mesh;
     m.castShadow = this.mode.shadow;
     m.receiveShadow = this.mode.shadow;
     m.frustumCulled = false;
     if (this.gbufferMaterial) m.userData.gbufferMaterial = this.gbufferMaterial;
     m.count = 0;
+    if (old) {
+      // Capacity grew: carry the drawn instances over so the crown does not blink until the next pass completes.
+      (m.instanceMatrix.array as Float32Array).set(old.instanceMatrix.array as Float32Array);
+      (m.instanceColor.array as Float32Array).set(old.instanceColor!.array as Float32Array);
+      m.count = old.count;
+    }
     this.capacity = cap;
-    if (this.backM.length < cap * 16) { this.backM = new Float32Array(cap * 16); this.backC = new Float32Array(cap * 3); }
+    if (this.backC.length < cap * 3) {
+      this.backC = new Float32Array(cap * 3);
+      this.backD = new Float32Array(cap * LEAF_D); this.backNode = new Int32Array(cap);
+      const fd = new Float32Array(cap * LEAF_D), fn = new Int32Array(cap);
+      fd.set(this.frontD); fn.set(this.frontNode);
+      this.frontD = fd; this.frontNode = fn;
+    }
     return m;
   }
 
@@ -405,27 +425,103 @@ export class Leaves {
     }
     this.passT = this.variant ? this.sunTransmittance(sim) : null;
     this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0;
-    this.passTime = sim.time; this.passRs = this.rankScale; this.passH = Math.max(2, sim.bboxMax[1]);
+    this.passTime = sim.time; this.passRs = this.rankScale;
     this.passAcc = 0;
     this.passOpen = true;
     return replaced;
   }
 
   /** Drop an open pass without touching the drawn instances (tree was reset). */
-  abortPass() { this.passOpen = false; }
+  abortPass() { this.passOpen = false; this.followOk = false; }
+
+  /**
+   * Place instances [from, to) of a record set from the live node transforms into `out` (16 floats each, starting at
+   * `o`). The only code that turns a leaf record into a matrix: the pass uses it for the bake normal/position and
+   * `follow` for the drawn matrices, so the two cannot disagree.
+   */
+  private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array | number[], o: number) {
+    const nodes = sim.nodes, lp = p.leaves, now = sim.time;
+    const H = Math.max(2, sim.bboxMax[1]);
+    const sh = lp.shape, kx = sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh, ky = sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh;
+    const f0 = lp.maxBranchRadius * 0.7, f1 = lp.maxBranchRadius, l0 = 0.9 * H, l1 = 2.6 * H;
+    let last = -1, ok = false;
+    let dx = 0, dy = 1, dz = 0, rx = 1, rz = 0, bx = 0, by = 0, bz = 0, px = 0, py = 0, pz = 0, ex = 0, ey = 0, ez = 0, rad = 0, fade = 1;
+    for (let i = from; i < to; i++, o += 16) {
+      const id = ND[i];
+      if (id !== last) {
+        last = id;
+        const nd = nodes[id], pn = nd && nodes[nd.parent];
+        ok = !!pn;
+        if (pn) {
+          dx = nd.wdx; dy = nd.wdy; dz = nd.wdz; rad = nd.radius;
+          // Radial frame around the branch (ry = 0).
+          if (Math.abs(dy) < 0.9) { const rl = Math.hypot(dz, dx) || 1; rx = -dz / rl; rz = dx / rl; } else { rx = 1; rz = 0; }
+          bx = dy * rz; by = dz * rx - dx * rz; bz = -dy * rx;
+          px = pn.wx; py = pn.wy; pz = pn.wz; ex = nd.wx - px; ey = nd.wy - py; ez = nd.wz - pz;
+          fade = 1 - smooth(f0, f1, rad);
+        }
+      }
+      if (!ok) continue;
+      const k = i * LEAF_D;
+      const t = D[k], ca = D[k + 1], sa = D[k + 2], ct = D[k + 3], st = D[k + 4], cr = D[k + 5], sr = D[k + 6];
+      // Position along the segment, offset to the bark surface.
+      const ox = rx * ca + bx * sa, oy = by * sa, oz = rz * ca + bz * sa;
+      const x = px + ex * t + ox * rad, y = py + ey * t + oy * rad, z = pz + ez * t + oz * rad;
+      // Leaf axis: outward, tilted toward the branch tip, drooping slightly.
+      let ayx = ox * ct + dx * st, ayy = oy * ct + dy * st - 0.25, ayz = oz * ct + dz * st;
+      let il = 1 / (Math.sqrt(ayx * ayx + ayy * ayy + ayz * ayz) || 1);
+      ayx *= il; ayy *= il; ayz *= il;
+      // Face toward the sky as much as possible (ax = up × ay), then roll about the leaf axis.
+      let axx = ayz, axz = -ayx;
+      const al = axx * axx + axz * axz;
+      if (al < 1e-6) { axx = 1; axz = 0; } else { il = 1 / Math.sqrt(al); axx *= il; axz *= il; }
+      let azx = -axz * ayy, azy = axz * ayx - axx * ayz, azz = axx * ayy;
+      il = 1 / (Math.sqrt(azx * azx + azy * azy + azz * azz) || 1);
+      azx *= il; azy *= il; azz *= il;
+      const rxx = axx * cr - azx * sr, rxy = -azy * sr, rxz = axz * cr - azz * sr;
+      const rzx = axx * sr + azx * cr, rzy = azy * cr, rzz = axz * sr + azz * cr;
+      // Size: unfolding, fade on thickening wood, distance LOD (up to 1.5x far from the camera so the silhouette fills).
+      const ddx = x - cx, ddy = y - cy, ddz = z - cz;
+      const s = D[k + 7] * smooth(0, GROW_TIME, now - D[k + 8]) * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
+      const sx = s * kx, sy = s * ky;
+      out[o] = rxx * sx; out[o + 1] = rxy * sx; out[o + 2] = rxz * sx; out[o + 3] = 0;
+      out[o + 4] = ayx * sy; out[o + 5] = ayy * sy; out[o + 6] = ayz * sy; out[o + 7] = 0;
+      out[o + 8] = rzx * s; out[o + 9] = rzy * s; out[o + 10] = rzz * s; out[o + 11] = 0;
+      out[o + 12] = x; out[o + 13] = y; out[o + 14] = z; out[o + 15] = 1;
+    }
+  }
+
+  /**
+   * Re-place every drawn instance on its node's current transform and upload the matrices (colours stay those of the
+   * last completed pass; same instance order). Cheap enough to run on every branch rebuild. `cam` drives the size LOD.
+   */
+  follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3): boolean {
+    const n = this.mesh.count;
+    if (!this.followOk || n === 0) return false;
+    const t0 = performance.now();
+    const M = this.mesh.instanceMatrix;
+    this.place(this.frontD, this.frontNode, 0, n, sim, p, cam.x, cam.y, cam.z, M.array as Float32Array, 0);
+    M.clearUpdateRanges();
+    M.addUpdateRange(0, n * 16);
+    M.needsUpdate = true;
+    this.followMs = performance.now() - t0;
+    if (this.followMs > this.followMaxMs) this.followMaxMs = this.followMs;
+    this.follows++;
+    return true;
+  }
 
   /**
    * Run the open pass for at most `budgetMs` (checked every 256 sim leaves) into the back buffers. When the last leaf
    * is done the back buffers are copied into the instance attributes and uploaded once. Returns true when the pass
    * completed in this call.
    */
-  stepPass(sim: TreeSim, p: ArborParams, budgetMs: number): boolean {
+  stepPass(sim: TreeSim, p: ArborParams, budgetMs: number, cam: THREE.Vector3 = this.lit.cam): boolean {
     if (!this.passOpen) return false;
     const t0 = performance.now();
     const lp = p.leaves;
     const nodes = sim.nodes;
-    const arr = this.backM;
     const carr = this.backC;
+    const D = this.backD, ND = this.backNode, e = this.m.elements;
     // Safe (Lambert, no leaf shadows, no translucency): the instance colour carries the whole bake. Full path: the shader
     // does sun, shadows and translucency, so only albedo × sky occlusion is baked.
     const bakeAll = !!this.variant;
@@ -436,9 +532,6 @@ export class Leaves {
     let n = this.passN;
     let cand = this.passCand;
     const cap = this.capacity;
-    // Distance LOD: leaves far from the camera (relative to the tree height) grow up to 1.5x so the crown silhouette fills
-    // instead of reading as confetti; close-ups keep true size.
-    const H = this.passH;
     const camX = Lt.cam.x, camY = Lt.cam.y, camZ = Lt.cam.z;
     const end = Math.min(this.passEnd, sim.leaves.length);
     let li = this.passLi;
@@ -461,44 +554,19 @@ export class Leaves {
       if (rank * 4 >= lp.density * rs || n >= cap) continue;
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
       const grow = smooth(0, GROW_TIME, now - lf.born);
-      let s = lp.size * lf.size * grow * fade * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
-      if (s < 1e-4) continue;
-      const pn = nodes[nd.parent];
-      // Position along segment, offset to bark surface.
+      const size = lp.size * lf.size * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
+      if (size * grow * fade < 1e-4) continue;
       const t = cp === 0 ? lf.t : 0.45 + 0.55 * hr();
       const around = cp === 0 ? lf.around : lf.around + 1.9 + 0.8 * hr();
       const tilt = cp === 0 ? lf.tilt : 0.3 + 0.7 * hr();
       const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
-      const dx = nd.wdx, dy = nd.wdy, dz = nd.wdz;
-      // Radial direction around the branch.
-      let rx = Math.abs(dy) < 0.9 ? -dz : 1, ry = 0, rz = Math.abs(dy) < 0.9 ? dx : 0;
-      const rl = Math.hypot(rx, ry, rz) || 1;
-      rx /= rl; rz /= rl;
-      const bx = dy * rz - dz * ry, by = dz * rx - dx * rz, bz = dx * ry - dy * rx;
-      const c = Math.cos(around), sn = Math.sin(around);
-      const ox = rx * c + bx * sn, oy = ry * c + by * sn, oz = rz * c + bz * sn;
-      this.pos.set(
-        pn.wx + (nd.wx - pn.wx) * t + ox * nd.radius,
-        pn.wy + (nd.wy - pn.wy) * t + oy * nd.radius,
-        pn.wz + (nd.wz - pn.wz) * t + oz * nd.radius,
-      );
-      // Leaf axis: outward, tilted toward the branch tip, drooping slightly.
-      this.ay.set(ox * Math.cos(tilt) + dx * Math.sin(tilt), oy * Math.cos(tilt) + dy * Math.sin(tilt) - 0.25, oz * Math.cos(tilt) + dz * Math.sin(tilt)).normalize();
-      // Face toward the sky as much as possible, with a random roll.
-      this.ax.set(0, 1, 0).cross(this.ay);
-      if (this.ax.lengthSq() < 1e-6) this.ax.set(1, 0, 0);
-      this.ax.normalize();
-      this.az.crossVectors(this.ax, this.ay).normalize();
-      this.basis.makeBasis(this.ax, this.ay, this.az);
-      this.q.setFromRotationMatrix(this.basis);
-      this.q.multiply(this.q2.setFromAxisAngle(this.ay.set(0, 1, 0), roll));
-      const dc = Math.hypot(this.pos.x - camX, this.pos.y - camY, this.pos.z - camZ);
-      s *= 1 + 0.5 * smooth(0.9 * H, 2.6 * H, dc);
-      // Blade shape: >0 long and narrow, <0 broad fan.
-      const sh = lp.shape;
-      this.scl.set(s * (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh), s * (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh), s);
-      this.m.compose(this.pos, this.q, this.scl);
-      this.m.toArray(arr, n * 16);
+      const k = n * LEAF_D;
+      D[k] = t; D[k + 1] = Math.cos(around); D[k + 2] = Math.sin(around); D[k + 3] = Math.cos(tilt); D[k + 4] = Math.sin(tilt);
+      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = lf.born;
+      ND[n] = lf.node;
+      // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
+      this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0);
+      this.pos.set(e[12], e[13], e[14]);
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
       const young = 1 - smooth(2, 14, now - lf.born);
       const fresh = Math.max(young, 1 - smooth(10, 50, now - lf.born)) * 0.6 + young * 0.4;
@@ -532,7 +600,7 @@ export class Leaves {
         kr = kg = kb = k;
       } else {
         // Leaf normal (blade +Z of the instance basis) and the face the camera sees.
-        const e = this.m.elements, il = 1 / (Math.hypot(e[8], e[9], e[10]) || 1);
+        const il = 1 / (Math.hypot(e[8], e[9], e[10]) || 1);
         let nx = e[8] * il, ny = e[9] * il, nz = e[10] * il;
         let vx = Lt.cam.x - this.pos.x, vy = Lt.cam.y - this.pos.y, vz = Lt.cam.z - this.pos.z;
         const vl = 1 / (Math.hypot(vx, vy, vz) || 1);
@@ -568,16 +636,18 @@ export class Leaves {
     if (li < end) return false;
     this.passOpen = false;
     this.passes++;
-    const M = this.mesh.instanceMatrix, C = this.mesh.instanceColor!;
-    (M.array as Float32Array).set(n * 16 === arr.length ? arr : arr.subarray(0, n * 16));
+    const C = this.mesh.instanceColor!;
+    // Swap the record sets together with the colours, then place the new set on the nodes as they are now (the pass
+    // ran over many frames, so matrices computed during it would be stale and uneven).
+    this.backD = this.frontD; this.frontD = D;
+    this.backNode = this.frontNode; this.frontNode = ND;
+    this.followOk = true;
     (C.array as Float32Array).set(n * 3 === carr.length ? carr : carr.subarray(0, n * 3));
     this.mesh.count = n;
     this.lastN = n;
     // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next pass draws ≤ maxInstances.
     this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
-    M.clearUpdateRanges();
-    M.addUpdateRange(0, n * 16);
-    M.needsUpdate = true;
+    this.follow(sim, p, cam);
     C.clearUpdateRanges();
     C.addUpdateRange(0, n * 3);
     C.needsUpdate = true;
