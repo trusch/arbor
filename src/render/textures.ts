@@ -263,8 +263,8 @@ export function makeTuftTexture(seed = 5): THREE.Texture {
       const a = s / seg, b = (s + 1) / seg;
       const P = (t: number) => [(1 - t) * (1 - t) * x0 + 2 * t * (1 - t) * cx + t * t * x1, (1 - t) * (1 - t) * S + 2 * t * (1 - t) * cy + t * t * y1];
       const [ax, ay] = P(a), [bx, by] = P(b);
-      const lt = 0.5 + 0.5 * f * 0.6 + 0.45 * a; // lighter toward the tip and for front blades
-      const r = dry ? 150 + 50 * v : 62 + 46 * v, gg = dry ? 142 + 40 * v : 104 + 52 * v, bl = dry ? 78 + 20 * v : 38 + 22 * v;
+      const lt = 0.72 + 0.22 * f + 0.3 * a; // lighter toward the tip and for front blades
+      const r = dry ? 118 + 30 * v : 62 + 46 * v, gg = dry ? 150 + 30 * v : 104 + 52 * v, bl = dry ? 40 + 12 * v : 38 + 22 * v;
       g.strokeStyle = `rgb(${Math.min(255, r * lt) | 0},${Math.min(255, gg * lt) | 0},${Math.min(255, bl * lt) | 0})`;
       g.lineWidth = Math.max(1.6, w0 * (1 - 0.82 * a));
       g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();

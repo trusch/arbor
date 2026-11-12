@@ -258,7 +258,7 @@ export class Meadow {
       // The start point is jittered by about half a grid cell so the shade edge dithers instead of following the voxels.
       const jx = (hA - 0.5) * 0.5, jz = (hB - 0.5) * 0.5;
       const up = this.transmit(sim, x + jx, z + jz, 0, 1, 0);
-      const ts = 0.3 + 0.7 * this.transmit(sim, x + jx, z + jz, sx, sy, sz); // floor: the decal shadow is not black either
+      const ts = (0.3 + 0.4 * L.night) + (0.7 - 0.4 * L.night) * this.transmit(sim, x + jx, z + jz, sx, sy, sz); // floor: the decal shadow is not black either
       let show = rt > tR * 1.3 + 0.02;
       if (pt.flower) {
         if (up < 0.55 + 0.3 * hA || rt < tR * 3 + 0.5) show = false; // no flowers in deep shade or against the trunk
@@ -287,7 +287,7 @@ export class Meadow {
         col.setRGB(v * (0.95 + 0.45 * dry), v * (0.66 + 0.1 * dry), v * (1.7 - 0.5 * dry));
         if (L.tint > 0) { const lumc = (col.r * 0.3 + col.g * 0.59 + col.b * 0.11) * 2.0; col.r += (tc.r * lumc - col.r) * L.tint; col.g += (tc.g * lumc - col.g) * L.tint; col.b += (tc.b * lumc - col.b) * L.tint; }
         // Contact darkening at the trunk, like the ground shader.
-        col.multiplyScalar(0.5 + 0.5 * smooth(tR * 0.6, tR * 7, rt));
+        col.multiplyScalar(0.72 + 0.28 * smooth(tR * 0.6, tR * 7, rt));
       }
       // E_wanted / E_lambert: blades stand upright, so a low sun still lights them (the up normal alone would not).
       const amb = 0.72 + 0.28 * Math.min(up, ts);
