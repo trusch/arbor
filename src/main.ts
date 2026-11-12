@@ -20,6 +20,8 @@ import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
+import { keepAwake } from './wake';
+keepAwake();
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
