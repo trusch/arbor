@@ -42,8 +42,8 @@ camera, **D** shows a debug line. Most settings can also be given in the URL, fo
 
 ## Status
 
-A work in progress. Not built yet: blossom, snow, growth tied to the
-year. Known weak spots are listed under "Known weaknesses" below.
+A work in progress. Not built yet: snow, growth tied to the year, a start screen. Known weak spots are listed under
+"Known weaknesses" below.
 
 ## Development
 
