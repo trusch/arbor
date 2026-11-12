@@ -47,6 +47,8 @@ export class Stage {
   /** True once the user has orbited or zoomed by hand. While set, nothing automatic (cinema, auto-rotate,
    *  auto-frame) writes the camera; only `autoCamera()` clears it. */
   manual = false;
+  /** Start screen is up: the automatic camera holds a calm wide view of the meadow (slow orbit) instead of the seedling close-up. */
+  intro = false;
   /** Ease back into the automatic camera: seconds since `autoCamera()`, and the hand-set view it started from. */
   private easeT = 1e9;
   private easePos = new THREE.Vector3();
@@ -401,7 +403,7 @@ export class Stage {
     this.prevCinema = p.camera.cinema;
     this.prevAutoFrame = p.camera.autoFrame;
     const auto = !this.manual;
-    const cine = p.camera.cinema && auto;
+    const cine = p.camera.cinema && auto && !this.intro;
     if (cine && !this.cineOn) {
       // Resume from the current view: no jump.
       const off = this.camera.position.clone().sub(this.controls.target);
@@ -409,8 +411,16 @@ export class Stage {
       p.camera.autoFrame = true;
     }
     this.cineOn = cine;
-    this.controls.autoRotate = p.camera.autoRotate && !cine && auto;
-    if (cine) {
+    this.controls.autoRotate = p.camera.autoRotate && !cine && auto && !this.intro;
+    if (this.intro && auto) {
+      // Start screen: horizon in the upper third (the card covers the lower part), eye above the grass, slow orbit.
+      const kk = snap ? 1 : 1 - Math.exp(-dt * 2);
+      this.cineYaw += dt * 0.025;
+      this.center.lerp(new THREE.Vector3(c.x, 1.9, c.z), kk);
+      this.dist += (8 - this.dist) * kk;
+      this.controls.target.copy(this.center);
+      this.camera.position.set(this.center.x + Math.sin(this.cineYaw) * this.dist, this.center.y + 0.05 * this.dist, this.center.z + Math.cos(this.cineYaw) * this.dist);
+    } else if (cine) {
       // Cinematic dolly: slow orbit, breathing height, occasional slow push-ins; always frames the tree.
       this.cineT += dt;
       const t = this.cineT;

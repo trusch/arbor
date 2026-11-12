@@ -456,8 +456,8 @@ function redraw(time: number, dt: number, force = false) {
 /** Start screen (`src/start.ts`): built on first use; a proposal resets the tree to its seed and holds time until the visitor starts. */
 let startUi: ReturnType<typeof buildStartScreen> | null = null;
 const openStart = (roll?: number) => (startUi ??= buildStartScreen(params, automation, {
-  proposed: (pr) => { presetName = pr.name; params.time.paused = true; regrow(); if (stage.manual) stage.autoCamera(); },
-  begin: () => { params.time.paused = false; },
+  proposed: () => { params.time.paused = true; stage.intro = true; regrow(); if (stage.manual) stage.autoCamera(); },
+  begin: (name) => { presetName = name; params.time.paused = false; stage.intro = false; },
 })).open(roll);
 if (query.get('nogui') !== '1') {
   const qp = query.get('panel');

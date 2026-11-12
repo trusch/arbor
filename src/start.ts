@@ -22,6 +22,8 @@ export function wantsStartScreen(q: URLSearchParams): boolean {
 
 export interface Proposal {
   name: string;
+  /** Earth kinds: the habit word; the title follows the chosen leaf form ("Broad maple"). */
+  adj?: string;
   blurb: string;
   alien: boolean;
   /** "group.field" → value, on top of `defaultParams()`. */
@@ -45,7 +47,7 @@ const SKY_FIELDS = ['timeOfDay', 'latitude', 'fog', 'stars', 'skyHue', 'skyTint'
 interface Kind {
   w: number;
   alien?: boolean;
-  make(r: (lo: number, hi: number) => number, pick: <T>(a: T[]) => T): { name: string; blurb: string; v: Record<string, number | string> };
+  make(r: (lo: number, hi: number) => number, pick: <T>(a: T[]) => T): { name: string; adj?: string; blurb: string; v: Record<string, number | string> };
 }
 const flat = (name: string): Record<string, number | string> => {
   const out: Record<string, number | string> = {};
@@ -61,7 +63,7 @@ const FORM_NAME: Record<string, string> = { oak: 'oak', maple: 'maple', round: '
 const KINDS: Kind[] = [
   { w: 22, make: (r, pick) => {
     const form = pick(['oak', 'oak', 'oak', 'maple', 'round']);
-    return { name: `Broad ${FORM_NAME[form]}`, blurb: 'A full, rounded crown on a sturdy trunk.', v: {
+    return { adj: 'Broad', name: `Broad ${FORM_NAME[form]}`, blurb: 'A full, rounded crown on a sturdy trunk.', v: {
       'crown.shape': r(0, 0.3), 'crown.height': r(5.6, 7.4), 'crown.radius': r(3.2, 4.3), 'crown.base': r(2.1, 2.7), 'crown.bole': r(1.4, 1.9),
       'growth.branchAngle': r(38, 50), 'growth.wander': r(0.25, 0.4),
       'leaves.form': form, 'leaves.hue': r(0.24, 0.31), 'leaves.saturation': r(0.46, 0.6), 'leaves.lightness': r(0.92, 1.08), 'leaves.size': r(0.145, 0.165),
@@ -69,7 +71,7 @@ const KINDS: Kind[] = [
   } },
   { w: 14, make: (r, pick) => {
     const form = pick(['birch', 'birch', 'ginkgo']);
-    return { name: `Slender ${FORM_NAME[form]}`, blurb: 'Tall and airy, with a light, narrow crown.', v: {
+    return { adj: 'Slender', name: `Slender ${FORM_NAME[form]}`, blurb: 'Tall and airy, with a light, narrow crown.', v: {
       'crown.shape': r(0, 0.35), 'crown.height': r(7.4, 9.2), 'crown.radius': r(2.3, 2.9), 'crown.base': r(2.4, 3.1), 'crown.bole': r(1.9, 2.5),
       'growth.branchAngle': r(30, 40), 'growth.apicalDominance': r(0.58, 0.7), 'growth.weeping': r(0.15, 0.45), 'growth.straightness': r(1.6, 2),
       'leaves.form': form, 'leaves.hue': r(0.24, 0.3), 'leaves.saturation': r(0.48, 0.6), 'leaves.lightness': r(1.04, 1.18), 'leaves.size': r(0.14, 0.16),
@@ -87,7 +89,7 @@ const KINDS: Kind[] = [
   } }) },
   { w: 11, make: (r, pick) => {
     const form = pick(['maple', 'round', 'ginkgo', 'oak']);
-    return { name: `Spreading ${FORM_NAME[form]}`, blurb: 'A wide parasol of a crown over a clear trunk.', v: {
+    return { adj: 'Spreading', name: `Spreading ${FORM_NAME[form]}`, blurb: 'A wide parasol of a crown over a clear trunk.', v: {
       'crown.shape': r(1.5, 2), 'crown.height': r(4.4, 5.4), 'crown.radius': r(4.7, 5.7), 'crown.base': r(2.6, 3.2), 'crown.bole': r(2, 2.5),
       'growth.branchAngle': r(54, 66), 'growth.scaffoldBranching': r(0.6, 0.9), 'growth.vigorDecay': r(0.83, 0.86), 'thickness.rootFlare': r(1.6, 2.2),
       'leaves.form': form, 'leaves.hue': r(0.22, 0.3), 'leaves.saturation': r(0.48, 0.6), 'leaves.lightness': r(0.95, 1.1), 'leaves.size': r(0.15, 0.18),
@@ -95,7 +97,7 @@ const KINDS: Kind[] = [
   } },
   { w: 8, make: (r, pick) => {
     const form = pick(['ginkgo', 'maple', 'birch']);
-    return { name: `Young ${FORM_NAME[form]}`, blurb: 'A neat cone that tapers to a point.', v: {
+    return { adj: 'Young', name: `Young ${FORM_NAME[form]}`, blurb: 'A neat cone that tapers to a point.', v: {
       'crown.shape': r(0.7, 1), 'crown.height': r(7, 8.8), 'crown.radius': r(2.7, 3.4), 'crown.base': r(1.6, 2.2), 'crown.bole': r(1.1, 1.6),
       'growth.branchAngle': r(40, 52), 'growth.apicalDominance': r(0.6, 0.75),
       'leaves.form': form, 'leaves.hue': r(0.2, 0.27), 'leaves.saturation': r(0.5, 0.62), 'leaves.lightness': r(1.02, 1.15), 'leaves.size': r(0.145, 0.165),
@@ -127,7 +129,7 @@ export function rollProposal(rollSeed = Math.floor(Math.random() * 2 ** 31)): Pr
   // Hour: earth trees start between morning and golden hour; the worlds keep their own (one of them is a night scene).
   if (!kind.alien) v['sky.timeOfDay'] = r(8.5, 17.8);
   v['seed.seed'] = Math.floor(rng() * 999999);
-  return { name: made.name, blurb: made.blurb, alien: !!kind.alien, values: v };
+  return { name: made.name, adj: made.adj, blurb: made.blurb, alien: !!kind.alien, values: v };
 }
 
 /** Write a proposal into the live params: owned groups back to defaults, then its values, all through `userSet`. */
@@ -151,8 +153,8 @@ export function applyProposal(p: ArborParams, auto: Automation, pr: Proposal) {
 export interface StartActions {
   /** Called with every new proposal (first one included) after it is applied; resets the tree to its seed. */
   proposed(pr: Proposal): void;
-  /** The visitor pressed the primary action. */
-  begin(): void;
+  /** The visitor pressed the primary action; `name` is the title shown. */
+  begin(name: string): void;
 }
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
@@ -223,8 +225,9 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
   });
   syncers.push(() => {
     const f = leafForm(String(get('leaves.form')));
-    const hr = p.sky.timeOfDay, when = hr < 5 || hr > 21 ? 'at night' : hr < 11 ? 'in the morning' : hr < 15.5 ? 'around midday' : hr < 19 ? 'in the afternoon light' : 'at dusk';
-    facts.textContent = `${f.name} leaves · about ${(p.crown.height + p.crown.base).toFixed(0)} m tall, ${(2 * p.crown.radius).toFixed(0)} m wide · ${when}`;
+    const hr = p.sky.timeOfDay, when = hr < 5 || hr > 21 ? 'night' : hr < 11 ? 'morning' : hr < 15 ? 'midday' : hr < 19 ? 'afternoon' : 'dusk';
+    facts.textContent = `${f.name} leaves · ${(p.crown.height + p.crown.base).toFixed(0)} m tall, ${(2 * p.crown.radius).toFixed(0)} m wide · ${when}`;
+    if (current?.adj) title.textContent = `${current.adj} ${FORM_NAME[f.id] ?? `${f.name.toLowerCase()} tree`}`;
   });
 
   const reroll = h('button', { type: 'button', class: 'as-btn', id: 'arbor-start-reroll', 'aria-label': 'Suggest another tree' });
@@ -257,7 +260,7 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
   let leaveTimer = 0;
   go.addEventListener('click', () => {
     if (root.classList.contains('leaving')) return;
-    a.begin();
+    a.begin(title.textContent ?? '');
     root.classList.add('leaving');
     document.body.classList.remove('starting');
     leaveTimer = window.setTimeout(() => { root.hidden = true; root.classList.remove('leaving'); }, 700);
@@ -280,7 +283,8 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
       root.classList.remove('leaving');
       root.hidden = false;
       document.body.classList.add('starting');
-      go.focus({ preventScroll: true });
+      // Keyboard: Enter starts at once. Touch devices get no focus ring on arrival.
+      if (matchMedia('(hover: hover)').matches) go.focus({ preventScroll: true });
     },
     get isOpen() { return !root.hidden && !root.classList.contains('leaving'); },
     get proposal() { return current; },
