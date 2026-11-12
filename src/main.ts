@@ -20,6 +20,7 @@ import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
+import { Blossom } from './render/blossom';
 import { keepAwake } from './wake';
 keepAwake();
 
@@ -172,7 +173,7 @@ stage.scene.add(canopy.mesh);
 const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material, 7, diag.backdrop) : null;
 if (meadow) stage.scene.add(meadow.group);
 /** Linear bark material colour under the moon on Low (High x 2.2: its day value is white, not the warm tint). */
-const BARK_NIGHT = [0.062, 0.08, 0.1], barkNight = new THREE.Color();
+const BARK_NIGHT = [0.062, 0.08, 0.1], BARK_FLOOR = 14, barkNight = new THREE.Color(); // BARK_FLOOR: lift without moonlight (no key light on the trunk)
 const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
 /** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */
 const rain = diag.rain ? new Rain(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
@@ -262,6 +263,9 @@ if (leafFall) {
   stage.scene.add(leafFall.group);
   debris.leafSink = (m, c, n) => leafFall.adopt(m, c, n, weather.violence);
 }
+/** Spring blossom (`src/render/blossom.ts`): clone of the live leaf material, own group; petals go through `leafFall`. */
+const blossom = diag.leaves && new URLSearchParams(location.search).get('blossom') !== '0' ? new Blossom(leaves, params.sky.quality === 'Low') : null;
+if (blossom) stage.scene.add(blossom.group);
 let leafFallSimT = 0;
 /** After `breakagePost` (twig leaves are handed over there). */
 function leafFallFrame(dt: number) {
@@ -411,6 +415,7 @@ function redraw(time: number, dt: number, force = false) {
     leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
     leaves.nightGrade = stage.atmo.night;
+    leaves.nightFloor = stage.nightFloor;
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;
@@ -553,6 +558,7 @@ function frame(now: number) {
   meadowFrame(dt);
   breakagePost(dt);
   leafFallFrame(dt);
+  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -562,7 +568,7 @@ function frame(now: number) {
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
   // Moonlight: the bark joins the dim, cool range of the crown (lerp from the day value each frame; exactly the day value while night = 0).
   const barkCol = (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
-  if (stage.atmo.night > 0) barkCol.lerp(barkNight.setRGB(BARK_NIGHT[0], BARK_NIGHT[1], BARK_NIGHT[2]).multiplyScalar(params.sky.quality === 'High' ? 2.2 : 1), 1 - Math.pow(1 - stage.atmo.night, 3));
+  if (stage.atmo.night > 0) barkCol.lerp(barkNight.setRGB(BARK_NIGHT[0], BARK_NIGHT[1], BARK_NIGHT[2]).multiplyScalar((params.sky.quality === 'High' ? 2.2 : 1) * (1 + BARK_FLOOR * stage.nightFloor)), 1 - Math.pow(1 - stage.atmo.night, 3));
   weatherRender(dt);
   tel.phase('render', true);
   stage.render(params);
@@ -621,6 +627,7 @@ requestAnimationFrame(loop);
   sway,
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   leafFall,
+  blossom,
   season,
   stage,
   frameErrors: () => frameErrors,

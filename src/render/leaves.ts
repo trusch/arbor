@@ -172,7 +172,28 @@ export const LEAF_VARIANTS: readonly LeafVariant[] = [
 /** ?leafmap=raw: the old canvas map with GPU mips (ghost-card repro). */
 const diagRawLeafMap = typeof location !== 'undefined' && new URLSearchParams(location.search).get('leafmap') === 'raw';
 
-const GROW_TIME = 3; // seconds for a leaf to unfold
+const GROW_TIME = 3.5; // seconds for a leaf to emerge (see `leafOpen`)
+const GROW_STAGGER = 1; // leaves of one node start one after another over this many seconds, the one nearest the tip last
+const GROW_LATE = 12; // a leaf first drawn more than this long after its sim birth (density, thinning, quality change) is drawn grown
+
+/** How big and how open a leaf is at `age` seconds after it started to emerge (written by `leafOpen`, no allocation). */
+export const leafOpenState = { len: 1, wid: 1, swing: 1 };
+/**
+ * Leaf emergence, the one rule for "how big and how open is this leaf at this age" (`Leaves.place` multiplies it onto
+ * the card; a spring flush can call it with its own age): `len` 0..1 = length, `wid` = width relative to that length
+ * (narrow first, as if folded), `swing` = how far the leaf axis has swung from the shoot direction to its final pose.
+ * Everything is 0 at age <= 0 and exactly 1 from `grow` on.
+ */
+export function leafOpen(age: number, grow = GROW_TIME): typeof leafOpenState {
+  const o = leafOpenState, u = age / grow;
+  if (u >= 1) { o.len = o.wid = o.swing = 1; return o; }
+  if (u <= 0) { o.len = 0; o.wid = 0.3; o.swing = 0.1; return o; }
+  // Half ease-out, half smoothstep: visible early (the shoot extends fast), still continuous from 0.
+  o.len = 0.5 * u * (2 - u) + 0.5 * u * u * (3 - 2 * u);
+  o.wid = 0.35 + 0.65 * smooth(0.1, 0.85, u);
+  o.swing = 0.1 + 0.9 * smooth(0.1, 0.85, u);
+  return o;
+}
 const LEAF_D = 11; // floats per instance placement record (see `Leaves.place`); 9 = bud-break date, 10 = fall date (seasons)
 const FOLLOW_EPS = 0.0015; // node travel (world units; leaf ≈ 0.1) below which its leaves are not re-placed
 const FOLLOW_EPS_R = 0.0002; // same for the node radius (drives the fade on thickening wood)
@@ -201,6 +222,8 @@ export class Leaves {
   };
   /** 0 day .. 1 night (`Atmosphere.night`, set next to `setLighting`): the bake pulls leaf colours toward a dim, cool grey (`nightTone`). Exactly 0 by day. */
   nightGrade = 0;
+  /** 0..1 share of the night without moonlight (`Stage.nightFloor`, set with `nightGrade`): the full path's albedo is lifted by it. */
+  nightFloor = 0;
   /** Mean linear colour of the leaf map: instance colours are divided by it so the albedo is what the bake says. */
   private mapMean = new THREE.Color(0.7, 0.78, 0.6);
   /** Per-voxel sun transmittance (march through the light grid toward the sun), cached by grid version + sun dir. */
@@ -221,6 +244,9 @@ export class Leaves {
   private passT: Float32Array | null = null;
   private backC = new Float32Array(0);
   private scratch = new Float32Array(16);
+  private scratch2 = new Float32Array(16);
+  /** Bake only: `place` draws the leaf at this emergence age instead of the record's (-1 = off). */
+  private poseAge = -1;
   private followAt = 0;
   /**
    * Per-instance placement record (LEAF_D floats: t, cos/sin around, cos/sin tilt, cos/sin roll, base size, born) and
@@ -501,11 +527,26 @@ export class Leaves {
     this.passPhase = season.phase; this.passSpring = season.springTime; this.passSeasonOn = season.active; this.passFs = leafSeason(this.formId);
     this.passAcc = 0;
     this.passOpen = true;
+    // Emergence clock per sim leaf (see `emerge`): a shorter leaf list means a new tree.
+    if (sim.leaves.length < this.emergeN) this.emerge.fill(-1);
+    this.emergeN = sim.leaves.length;
+    if (this.emerge.length < this.emergeN) { const em = new Float32Array(Math.max(4096, this.emergeN * 2)).fill(-1); em.set(this.emerge); this.emerge = em; }
+    this.passPend = false;
     return replaced;
   }
 
   /** Drop an open pass without touching the drawn instances (tree was reset). */
-  abortPass() { this.passOpen = false; this.followOk = false; }
+  abortPass() { this.passOpen = false; this.followOk = false; this.emerge.fill(-1); this.emergeN = 0; }
+
+  /**
+   * Sim time at which each sim leaf (index into `sim.leaves`) started to emerge: the sim time of the swap that first
+   * drew it, not its sim birth (a pass spans frames, at high growth speed seconds of sim time, and the leaf would be
+   * first seen partly grown). -1 = never drawn, -2 = in the open pass, stamped when it swaps in. The placement record's
+   * `born` slot holds this time plus the leaf's stagger within its node.
+   */
+  private emerge = new Float32Array(0);
+  private emergeN = 0;
+  private passPend = false;
 
   /**
    * Place instances [from, to) of a record set from the live node transforms into `out` (16 floats each, starting at
@@ -546,7 +587,8 @@ export class Leaves {
       // (or passing its bud-break or fall date)
       if (!mv && now - D[k + 8] > GROW_TIME + 1 && !(sOn && ((ph >= D[k + 10] && ph < D[k + 10] + LEAF_EPS) || (ph > D[k + 9] && ph < D[k + 9] + 0.05 + LEAF_EPS)))) continue;
       placed++;
-      const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr) : 1;
+      // (a record inside an open pass carries -1 - stagger in the born slot: a leaf about to emerge, grown this year)
+      const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr || (D[k + 8] < 0 && D[k + 8] >= -2 && spr > -1e8)) : 1;
       if (ks === 0) {
         // Not in leaf (bud, or fallen). A leaf that lets go now is handed to the falling-leaf system as it was drawn.
         if (dropP > 0 && ph >= D[k + 10] && DQ.n < 48 && out[o + 4] * out[o + 4] + out[o + 5] * out[o + 5] + out[o + 6] * out[o + 6] > 1e-8 && Math.random() < dropP) {
@@ -567,6 +609,16 @@ export class Leaves {
       let ayx = ox * ct + dx * st, ayy = oy * ct + dy * st - 0.25, ayz = oz * ct + dz * st;
       let il = 1 / (Math.sqrt(ayx * ayx + ayy * ayy + ayz * ayz) || 1);
       ayx *= il; ayy *= il; ayz *= il;
+      // Emergence: short, narrow and lying along the shoot at first, then it lengthens, broadens and swings out.
+      const age = this.poseAge >= 0 ? this.poseAge : now - D[k + 8];
+      let gl = 1, gw = 1;
+      if (age < GROW_TIME) {
+        const op = leafOpen(age), sw = op.swing;
+        gl = op.len; gw = op.wid * gl;
+        ayx = dx + (ayx - dx) * sw; ayy = dy + (ayy - dy) * sw; ayz = dz + (ayz - dz) * sw;
+        il = 1 / (Math.sqrt(ayx * ayx + ayy * ayy + ayz * ayz) || 1);
+        ayx *= il; ayy *= il; ayz *= il;
+      }
       // Face toward the sky as much as possible (ax = up × ay), then roll about the leaf axis.
       let axx = ayz, axz = -ayx;
       const al = axx * axx + axz * axz;
@@ -578,11 +630,11 @@ export class Leaves {
       const rzx = axx * sr + azx * cr, rzy = azy * cr, rzz = axz * sr + azz * cr;
       // Size: unfolding, fade on thickening wood, distance LOD (up to 1.5x far from the camera so the silhouette fills).
       const ddx = x - cx, ddy = y - cy, ddz = z - cz;
-      const s = D[k + 7] * ks * smooth(0, GROW_TIME, now - D[k + 8]) * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
-      const sx = s * kx, sy = s * ky;
+      const s = D[k + 7] * ks * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
+      const sx = s * kx * gw, sy = s * ky * gl, sz = s * gl;
       out[o] = rxx * sx; out[o + 1] = rxy * sx; out[o + 2] = rxz * sx; out[o + 3] = 0;
       out[o + 4] = ayx * sy; out[o + 5] = ayy * sy; out[o + 6] = ayz * sy; out[o + 7] = 0;
-      out[o + 8] = rzx * s; out[o + 9] = rzy * s; out[o + 10] = rzz * s; out[o + 11] = 0;
+      out[o + 8] = rzx * sz; out[o + 9] = rzy * sz; out[o + 10] = rzz * sz; out[o + 11] = 0;
       out[o + 12] = x; out[o + 13] = y; out[o + 14] = z; out[o + 15] = 1;
       if (RT) { const q = i * 3; RT[q] = x; RT[q + 1] = y; RT[q + 2] = z; }
     }
@@ -737,6 +789,7 @@ export class Leaves {
     const nodes = sim.nodes;
     const carr = this.backC;
     const D = this.backD, ND = this.backNode, e = this.scratch;
+    const EM = this.emerge, forced = budgetMs === Infinity;
     // Safe (Lambert, no leaf shadows, no translucency): the instance colour carries the whole bake. Full path: the shader
     // does sun, shadows and translucency, so only albedo × sky occlusion is baked.
     const bakeAll = !!this.variant;
@@ -770,9 +823,8 @@ export class Leaves {
       cand++;
       if (rank * 4 >= lp.density * rs || n >= cap) continue;
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
-      const grow = smooth(0, GROW_TIME, now - lf.born);
       const size = lp.size * lf.size * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
-      if (size * grow * fade < 1e-4) continue;
+      if (size * fade < 1e-4) continue;
       // Seasons: this leaf's own dates. Leaves that have fallen (or are still in bud) are not in the instance set.
       let tOn = -1, tFall = 2, tTurn = 2, su = 0, sv = 0, thisYear = true;
       if (sOn && (fs.drop || fs.pal)) {
@@ -787,17 +839,36 @@ export class Leaves {
         }
       }
       const t = cp === 0 ? lf.t : 0.45 + 0.55 * hr();
+      // Emergence start: first draw of this sim leaf (stamped at the swap) + its turn within the node (tip last).
+      let em = EM[li];
+      if (em < 0) {
+        if (forced || now - lf.born > GROW_LATE) em = EM[li] = lf.born;
+        else { EM[li] = -2; this.passPend = true; }
+      }
+      const stag = GROW_STAGGER * Math.min(1, Math.max(0, (t - 0.6) / 0.4));
+      const age = em < 0 ? -stag : now - em - stag;
       const around = cp === 0 ? lf.around : lf.around + 1.9 + 0.8 * hr();
       const tilt = cp === 0 ? lf.tilt : 0.3 + 0.7 * hr();
       const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
       const k = n * LEAF_D;
       D[k] = t; D[k + 1] = Math.cos(around); D[k + 2] = Math.sin(around); D[k + 3] = Math.cos(tilt); D[k + 4] = Math.sin(tilt);
-      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = lf.born; D[k + 9] = tOn; D[k + 10] = tFall;
+      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
       ND[n] = lf.node;
       // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
       this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0);
+      // Safe path, emerging leaf: the bake wants the light of the GROWN pose (`e2`) and compensates the Lambert term of
+      // the pose it is drawn in (`e`, taken at least 0.2 s into the emergence: at scale 0 there is no normal).
+      const emg = bakeAll && age < GROW_TIME, e2 = this.scratch2;
+      if (emg) {
+        this.poseAge = GROW_TIME; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e2, 0);
+        if (sim.time - D[k + 8] < 0.2 || em < 0) { this.poseAge = 0.2; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0); }
+        this.poseAge = -1;
+      }
       this.pos.set(e[12], e[13], e[14]);
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
+      // An emerging leaf is paler and yellower still (`flush`), and darkens as it opens.
+      const flush = 1 - smooth(0, GROW_TIME * 1.4, age);
+      // (`young` / `fresh` run on the sim birth, so a grown leaf has exactly the colour it had before emergence existed)
       const young = 1 - smooth(2, 14, now - lf.born);
       const fresh = Math.max(young, 1 - smooth(10, 50, now - lf.born)) * 0.6 + young * 0.4;
       if (!bakeAll) {
@@ -805,16 +876,16 @@ export class Leaves {
         // instance colour × map; normalise by the map mean to the pale reference map the albedo was tuned against, so
         // the painted texture adds detail without brightening. Dark interior via the light grid.
         const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
-        let hh = lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05, ss = Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12), ll = (0.19 + lf.tint * 0.1 + young * 0.1) * lp.lightness;
+        let hh = lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05 - flush * 0.05, ss = Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12), ll = (0.19 + lf.tint * 0.1 + young * 0.1 + flush * 0.1) * lp.lightness;
         if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll, 2.1); hh = c[0]; ss = c[1]; ll = c[2]; }
         this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
-        if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1);
+        if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1 + NIGHT_FULL_LIFT * this.nightFloor);
         carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
         n++;
         continue;
       }
-      let hh = lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05, ss = Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12), ll = (0.3 + lf.tint * 0.12 + fresh * 0.12) * lp.lightness;
+      let hh = lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05 - flush * 0.05, ss = Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12 + flush * 0.15), ll = (0.3 + lf.tint * 0.12 + fresh * 0.12 - flush * 0.04) * lp.lightness;
       if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll); hh = c[0]; ss = c[1]; ll = c[2]; }
       this.col.setHSL(hh, ss, Math.min(0.85, ll), THREE.SRGBColorSpace);
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
@@ -846,9 +917,37 @@ export class Leaves {
         const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
         const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
         const sd = Math.abs(ndl) * vis;
+        const fl = emg ? Math.hypot(e2[8], e2[9], e2[10]) : 0;
+        if (fl > 0) {
+          // Emerging: the card is narrow (folded), and the instance normal transform fans the cupped blade's normals
+          // out by 1 / width (about 45 degrees to either side at 35 % width, 20 when grown), while the leaf lies along
+          // the shoot with its middle normal level and often turned away from the sun. E_lambert of the middle normal
+          // is then the hemisphere term alone, the ratio runs to 5..8, and the half of the blade whose normals do see
+          // the sun is drawn 5 to 8 times too bright: a cream-white leaf. So: wanted light = that of the GROWN pose
+          // (no jump when it gets there), E_lambert = the brightest normal anywhere on the blade of the
+          // drawn pose plus a margin (a colour baked a few frames before the leaf swings further cannot overshoot).
+          // Both corrections fade out over the last 40 % of the emergence, where the poses meet: the lit half of a
+          // young leaf gets what a grown leaf gets, the other half is darker, nothing is brighter.
+          let fx = e2[8] / fl, fy = e2[9] / fl, fz = e2[10] / fl;
+          if (fx * vx + fy * vy + fz * vz < 0) { fx = -fx; fy = -fy; fz = -fz; }
+          const ndF = fx * L.x + fy * L.y + fz * L.z, hwF = 0.5 * fy + 0.5;
+          const glF = (0.15 * (ndF < 0 ? 1 : 0.3) + 0.55 * into * into) * vis, sdF = Math.abs(ndF) * vis;
+          const w = 1 - smooth(0.6, 1, age / GROW_TIME), mg = 0.1 * w;
+          // Blade normals in the card frame: (-1.2 x / sx, 0.36 y / sy, 1 / sz), x within +-0.3, y 0.12..1.12.
+          const zl = Math.hypot(e[8], e[9], e[10]), xl = Math.hypot(e[0], e[1], e[2]), yl = Math.hypot(e[4], e[5], e[6]);
+          const fs = nx * e[8] + ny * e[9] + nz * e[10] < 0 ? -1 : 1; // the camera sees the back copy
+          const xL = xl > 0 ? Math.abs(e[0] * L.x + e[1] * L.y + e[2] * L.z) / xl : 0, yL = yl > 0 ? fs * (e[4] * L.x + e[5] * L.y + e[6] * L.z) / yl : 0;
+          const a = xl > 0 ? 0.36 * zl / xl : 0, b = yl > 0 ? (yL > 0 ? 0.4 : 0.043) * zl / yl : 0;
+          const ndE = (ndl + a * xL + b * yL) / Math.sqrt(1 + a * a + b * b), nd0 = Math.max(0, ndl);
+          const ndU = nd0 + (Math.max(nd0, ndE) - nd0) * w;
+          kr = bakeChE(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r, hw, ndU, hwF, occ, sdF, glF, mg);
+          kg = bakeChE(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g, hw, ndU, hwF, occ, sdF, glF, mg);
+          kb = bakeChE(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b, hw, ndU, hwF, occ, sdF, glF, mg);
+        } else {
         kr = bakeCh(Lt.sky.r, Lt.ground.r, Lt.sunCol.r, 1.0, mm.r, hw, ndl, occ, sd, glow);
         kg = bakeCh(Lt.sky.g, Lt.ground.g, Lt.sunCol.g, 1.15, mm.g, hw, ndl, occ, sd, glow);
         kb = bakeCh(Lt.sky.b, Lt.ground.b, Lt.sunCol.b, 0.35, mm.b, hw, ndl, occ, sd, glow);
+        }
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
@@ -869,6 +968,12 @@ export class Leaves {
     // ran over many frames, so matrices computed during it would be stale and uneven).
     // Instances whose record is unchanged at the same index (the usual case on a tree that only sags and thickens)
     // keep their matrices, which `follow` has kept on the nodes; only the tail behind the first difference is placed.
+    if (this.passPend) {
+      // Leaves drawn for the first time start to emerge now (records carry -1 - stagger until here).
+      const ts = sim.time;
+      for (let i = 0; i < end; i++) if (EM[i] === -2) EM[i] = ts;
+      for (let i = 0, k = 8; i < n; i++, k += LEAF_D) if (D[k] < 0) D[k] = ts - 1 - D[k];
+    }
     let same = 0;
     const H = Math.max(2, sim.bboxMax[1]);
     if (this.followOk && budgetMs !== Infinity && !(season.active ? Math.abs(season.phase - this.lodPhase) > 0.02 : this.lodPhase !== -1) && lp.shape === this.lodShape && this.formId === this.lodForm && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
@@ -915,19 +1020,28 @@ function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number) {
   const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = NIGHT_DESAT * g;
   // Safe path (dim < 1): the bake spans black interior leaves to 8x lit ones; moonlight is flat, so the luminance is
   // compressed toward NIGHT_LREF (power 0.7) before the dim. Full path: the shader lights the leaf, chroma only.
-  const k = dim < 1 ? 1 + (dim * Math.pow(NIGHT_LREF / Math.max(1e-3, L), 0.7) - 1) * g : 1;
+  // dim > 1: full path without moonlight (no key light, no translucency): plain gain so the crown is not a silhouette.
+  const k = dim < 1 ? 1 + (dim * Math.pow(NIGHT_LREF / Math.max(1e-3, L), 0.7) - 1) * g : dim;
   c.r = ((r + (L * NIGHT_GREY[0] - r) * s) * k) / mm.r; c.g = ((gg + (L * NIGHT_GREY[1] - gg) * s) * k) / mm.g; c.b = ((b + (L * NIGHT_GREY[2] - b) * s) * k) / mm.b;
 }
 /** Moonlit look, shared by the leaf bake, the meadow bake and the bark tint: share of chroma that goes to the cool grey, and that grey. */
 export const NIGHT_DESAT = 0.62;
 export const NIGHT_GREY = [0.74, 1.0, 1.22];
 const NIGHT_LREF = 0.4;
+const NIGHT_FULL_LIFT = 10;
 
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
   const hemi = gr + (sky - gr) * hw;
   const El = hemi + sun * Math.max(0, ndl);
   const Ew = hemi * occ + sun * (sd + glow * tint);
   return Math.min(8, Ew / Math.max(0.02, El)) / i;
+}
+
+/** `bakeCh` for an emerging leaf: E_lambert of the drawn pose (`hw`, `ndl`, plus `mg` x sun), E_wanted of the grown pose (`hwF`, `sd`, `glow`). */
+function bakeChE(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, hwF: number, occ: number, sd: number, glow: number, mg: number) {
+  const El = gr + (sky - gr) * hw + sun * (Math.max(0, ndl) + mg);
+  const Ew = (gr + (sky - gr) * hwF) * occ + sun * (sd + glow * tint);
+  return Math.min(8 - 66 * mg, Ew / Math.max(0.02, El)) / i;
 }
 
 /** Mean linear colour of the pale pre-painted leaf map the full-path albedo was tuned against. */

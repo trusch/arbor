@@ -490,6 +490,10 @@ export class Meadow {
         if (!near && hA > 0.4 + 0.6 * up) show = false;
         h *= near ? 0.8 + 0.5 * hB : 0.55 + 0.45 * up;
         if (near) w *= 0.75;
+        // Clearing at the foot of the tree: grass is short within about half a metre of the trunk (down to 40 %),
+        // so a seedling of a few centimetres is not hidden behind 0.3 m tufts.
+        const cl = Math.min(1, Math.max(0, (rt - tR * 1.3) / 0.55));
+        h *= 0.4 + 0.6 * cl * cl * (3 - 2 * cl);
       }
       // A turned tree's trunk would take the crown's autumn gain (red): the leafed card sinks by its trunk and the bare card behind it shows the wood.
       const sink = pt.scenery && !pt.bare && !bushy ? 0.2 * TS.turn : 0;
