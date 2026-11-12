@@ -327,6 +327,7 @@ export class Stage {
     this.hemi.intensity = 0.15 + 0.35 * day;
     this.scene.environmentIntensity = 0.25 + 0.3 * day;
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
+    this.applyWeather(night);
 
     // Post: god rays from the sun screen position at low sun, grade warmth by time of day.
     // Only touch post uniforms on High: the getter would otherwise allocate the post RTs on Low.
@@ -391,6 +392,49 @@ export class Stage {
       this.camera.position.copy(this.center).add(off);
     }
     this.controls.update(dt);
+  }
+
+  /** Storm inputs, written by `main.ts` from `src/weather.ts` each frame: cloud 0..1, flash 0..1. */
+  wx = { cloud: 0, flash: 0 };
+  private wxCool = new THREE.Color(0.5, 0.57, 0.68);
+  private wxFog = new THREE.Color();
+  /**
+   * Storm look as uniform/intensity changes on top of the values `frame` just computed (so calm returns exactly):
+   * heavier darker cloud, sun x 0.22 and cooler, cool hemisphere, denser greyer fog, darker sky.
+   */
+  private applyWeather(night: number) {
+    const c = this.wx.cloud, su = this.atmo.sky.material.uniforms, U = this.atmo.skyUniforms;
+    su.cloudCoverage.value = 0.35 + 0.6 * c;
+    su.cloudDensity.value = 0.35 + 0.6 * c;
+    if (c <= 0) return;
+    const fc = this.fog.color, L = fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11;
+    // Storm haze: grey-blue at the fog's own luminance, darkened (less at night, where it is already dark).
+    this.wxFog.copy(this.wxCool).multiplyScalar(L * (0.62 + 0.25 * night) / 0.57);
+    fc.lerp(this.wxFog, 0.85 * c);
+    U.fogCol.value.copy(fc);
+    U.skyGain.value *= 1 - 0.62 * c;
+    this.fog.density *= 1 + 1.2 * c;
+    this.sun.intensity *= 1 - 0.78 * c;
+    this.sun.color.lerp(this.wxCool, 0.7 * c);
+    this.hemi.color.lerp(this.wxCool, 0.75 * c);
+    this.hemi.groundColor.multiplyScalar(1 - 0.35 * c);
+    this.hemi.intensity *= 1 - 0.3 * c;
+    this.scene.environmentIntensity *= 1 - 0.55 * c;
+  }
+  /** Lightning flash for this frame only (call after everything that bakes from the lights, before `render`). */
+  applyFlash() {
+    const f = this.wx.flash;
+    if (f <= 0) return;
+    const U = this.atmo.skyUniforms;
+    this.sun.intensity += 5 * f;
+    this.sun.color.lerp(this.wxCool.clone().multiplyScalar(1.6), 0.8 * f);
+    this.hemi.intensity += 3.2 * f;
+    this.hemi.color.lerp(new THREE.Color(0.85, 0.9, 1), 0.8 * f);
+    this.hemi.groundColor.lerp(new THREE.Color(0.5, 0.52, 0.6), 0.6 * f);
+    U.skyGain.value *= 1 + 5 * f;
+    this.fog.color.multiplyScalar(1 + 4 * f);
+    U.fogCol.value.copy(this.fog.color);
+    this.scene.environmentIntensity *= 1 + 2 * f;
   }
 
   render(p: ArborParams) {

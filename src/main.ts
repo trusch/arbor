@@ -13,6 +13,8 @@ import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
+import { weather, type WeatherEvent } from './weather';
+import { Rain } from './render/rain';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -33,7 +35,7 @@ function loadPreset(name: string) {
   presetName = name;
   const src = presetParams(name) as unknown as Record<string, Record<string, unknown>>;
   const dst = params as unknown as Record<string, Record<string, unknown>>;
-  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time') Object.assign(dst[g], src[g]);
+  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather') Object.assign(dst[g], src[g]);
   params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
   bumpParams();
   automation.drift = {};
@@ -151,8 +153,32 @@ stage.scene.add(canopy.mesh);
 const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material) : null;
 if (meadow) stage.scene.add(meadow.group);
 const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
+/** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */
+const rain = diag.rain ? new Rain(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
+if (rain) stage.scene.add(rain.group);
+{
+  const qw = query.get('weather');
+  if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
+  if (qw === 'storm') weather.snapStorm();
+}
+/** Before `stage.frame`: advance the weather and hand its scalars to the stage. */
+function weatherFrame(dt: number) {
+  tel.phase('weather', true);
+  weather.update(dt, params.weather.event as WeatherEvent, params.weather.lightning);
+  stage.wx.cloud = weather.cloud;
+  stage.wx.flash = weather.flash;
+}
+/** Just before `stage.render`: flash on the lights (after all bakes read them), decal fade under overcast, rain planes. */
+function weatherRender(dt: number) {
+  tel.phase('weather', true);
+  stage.applyFlash();
+  (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
+  if (!rain) return;
+  const night = stage.atmo.night, low = params.sky.quality === 'Low';
+  rain.frame(stage.camera, weather, wind, dt, 0.5 * (1 - night) + 0.05, low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 2 : 3);
+}
 function meadowFrame(dt: number) {
-  wind.update(dt, params.sky.wind, stage.atmo.night);
+  wind.update(dt, params.sky.wind, stage.atmo.night, weather.wind);
   if (!meadow) return;
   meadow.group.visible = params.sky.meadow;
   if (!params.sky.meadow) return;
@@ -284,6 +310,8 @@ if (query.get('nogui') !== '1') {
     presetNames: Object.keys(PRESETS),
     currentPreset: () => presetName,
     simTime: () => sim.time,
+    stormNow: () => { if (params.weather.event === 'calm') automation.userSet('weather.event', 'auto'); weather.trigger(); },
+    weatherPhase: () => weather.phase,
     // Fully grown: the node budget is used up, or no tip is alive any more (crown space is filled).
     growth: () => ({ nodes: sim.nodes.length, age: sim.time, grown: sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive)) }),
   }, { open: qp === 'open' ? true : qp === 'closed' ? false : undefined, tab: query.get('tab') ?? undefined });
@@ -360,6 +388,7 @@ function frame(now: number) {
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else if (paramsVersion() !== structPV) sim.updateStructure(0); // paused: only after a params edit
   structPV = paramsVersion();
+  weatherFrame(dt);
   tel.phase('stage frame', true);
   stage.frame(sim, params, dt);
   redraw(elapsed, dt);
@@ -372,6 +401,7 @@ function frame(now: number) {
   leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
   (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
+  weatherRender(dt);
   tel.phase('render', true);
   stage.render(params);
   tel.phase('idle', true);
@@ -422,6 +452,8 @@ requestAnimationFrame(loop);
   canopy,
   meadow,
   wind,
+  weather,
+  rain,
   stage,
   frameErrors: () => frameErrors,
   fastForward(seconds: number) {

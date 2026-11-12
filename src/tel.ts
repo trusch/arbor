@@ -27,6 +27,8 @@ export function diagSwitches(q: URLSearchParams) {
     leaves: !off('leaves'),
     /** ?meadow=0: no grass tufts / wildflowers (WP3). */
     meadow: !off('meadow'),
+    /** ?rain=0: no rain sheets and no lightning bolt plane (storm light, sky and wind stay). */
+    rain: !off('rain'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),
