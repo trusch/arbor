@@ -831,8 +831,8 @@ export class Leaves {
       }
       this.col.setHSL(
         lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05 - flush * 0.05,
-        Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12),
-        Math.min(0.85, (0.3 + lf.tint * 0.12 + fresh * 0.12 + flush * 0.1) * lp.lightness),
+        Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12 + flush * 0.15),
+        Math.min(0.85, (0.3 + lf.tint * 0.12 + fresh * 0.12 - flush * 0.04) * lp.lightness),
         THREE.SRGBColorSpace,
       );
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.

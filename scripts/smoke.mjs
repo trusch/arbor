@@ -478,12 +478,14 @@ try {
         }
         if (now < END) return requestAnimationFrame(tick);
         const fr = [...m.values()].filter((e) => e.at < END - 7.5 && e.max > 0).map((e) => e.sv / e.max);
-        done({ leaves: fr.length, max: +Math.max(0, ...fr).toFixed(3), over: fr.filter((x) => x > 0.15).length, fe: A.frameErrors() });
+        fr.sort((x, y) => x - y);
+        done({ leaves: fr.length, max: +Math.max(0, ...fr).toFixed(3), median: +(fr[fr.length >> 1] ?? 1).toFixed(3), fe: A.frameErrors() });
       };
       A.params.time.speed = speed; requestAnimationFrame(tick);
     }), sp);
     await ctx.close();
-    check(`phone: leaves emerge from nothing at ${sp}x (first visible size <= 15 % of final)`, r.leaves >= 10 && r.over === 0 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
+    // One slow frame at 5x is 0.4 s of sim time (11 % of the length by the emergence curve), hence median and a looser max.
+    check(`phone: leaves emerge from nothing at ${sp}x (first visible size: median <= 10 %, max <= 35 % of final)`, r.leaves >= 10 && r.median <= 0.1 && r.max <= 0.35 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
   }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
