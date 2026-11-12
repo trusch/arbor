@@ -20,11 +20,11 @@ try {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   if (E.THROTTLE) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(E.THROTTLE) });
-  await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=13${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
+  await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${E.HOUR ?? 13}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(1500);
   await page.evaluate((t0) => {
-    const a = window.__arbor; a.params.camera.autoFrame = false; a.params.sky.timeOfDay = 13;
+    const a = window.__arbor; a.params.camera.autoFrame = false; a.params.sky.timeOfDay = Number(new URLSearchParams(location.search).get('timeOfDay') ?? 13);
     let tgt = [0, 0.2, 0], pos = [0.42, 0.42, 0.42];
     if (t0 > 0) {
       a.fastForward(t0);

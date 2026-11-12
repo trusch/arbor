@@ -424,7 +424,15 @@ try {
     const ev = await mp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && { nodes: e.nodeIds.length, leaves: e.leaves }; });
     await mp.waitForTimeout(500);
     const flight = await st();
-    await mp.evaluate(() => { window.__arbor.breakTwig(); });
+    // The twig is picked here, not by `breakTwig()`: that hook takes a random order >= 2 chain of <= 10 nodes, and when
+    // the chain carries side chains the detached subtree reaches `TWIG_NODES` 12 and becomes a second limb (stats
+    // limbs 2 / twigs 0, "rest phases 2,2"). On the t = 60 oak 1 of the 136 candidates is such a chain, on every build.
+    await mp.evaluate(() => {
+      const A = window.__arbor, N = A.sim.nodes, sub = new Int32Array(N.length).fill(1);
+      for (let i = N.length - 1; i > 0; i--) if (N[i].parent >= 0) sub[N[i].parent] += sub[i];
+      const ch = A.sim.chains.find((c) => !c.pruned && c.order >= 2 && c.nodes.length >= 4 && c.nodes.length <= 10 && N[c.nodes[1]].subLen < 3 && sub[c.nodes[1]] < 11);
+      A.breakLimb(ch.nodes[1]);
+    });
     await mp.waitForTimeout(8000);
     const rest = await st();
     check('phone: limb break adds no shader program (before / in flight / at rest), limb comes to rest on the ground',
@@ -457,10 +465,12 @@ try {
   // scrubbing changes the mean leaf colour and the drawn leaf count as a year should; hold freezes them.
   {
     const read = (pg) => pg.evaluate(() => {
-      const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array;
-      let r = 0, g = 0, b = 0, k = 0;
-      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; k++; }
-      return { programs: A.stage.renderer.info.programs.length, n: k, rg: k ? +(r / g).toFixed(3) : 0, lum: k ? +((r + g + b) / k).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
+      const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array, D = A.leaves.frontD, now = A.sim.time;
+      let r = 0, g = 0, b = 0, k = 0, kc = 0;
+      // Colour is read from leaves that have finished emerging (the tree is paused mid-growth at t = 60, a third of its
+      // leaves are under 7 s old and an emerging leaf is yellower on purpose); the count takes every drawn leaf.
+      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; k++; if (now - D[i * 11 + 8] < 6) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; kc++; }
+      return { programs: A.stage.renderer.info.programs.length, n: k, rg: kc ? +(r / g).toFixed(3) : 0, lum: kc ? +((r + g + b) / kc).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
     });
     // A reading is taken once the leaf pass the scrub started has completed (a pass in flight finishes first), not after a fixed delay.
     const settle = async (k) => {

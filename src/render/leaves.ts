@@ -864,8 +864,9 @@ export class Leaves {
       // Albedo: per-leaf hue/value spread, young leaves lighter and yellower (sRGB HSL → linear).
       // An emerging leaf is paler and yellower still (`flush`), and darkens as it opens.
       const flush = 1 - smooth(0, GROW_TIME * 1.4, age);
-      const young = 1 - smooth(2, 14, age);
-      const fresh = Math.max(young, 1 - smooth(10, 50, age)) * 0.6 + young * 0.4;
+      // (`young` / `fresh` run on the sim birth, so a grown leaf has exactly the colour it had before emergence existed)
+      const young = 1 - smooth(2, 14, now - lf.born);
+      const fresh = Math.max(young, 1 - smooth(10, 50, now - lf.born)) * 0.6 + young * 0.4;
       if (!bakeAll) {
         // Full path: deep natural greens (the shader adds sun, shadows and translucency glow on top). Effective albedo =
         // instance colour × map; normalise by the map mean to the pale reference map the albedo was tuned against, so
