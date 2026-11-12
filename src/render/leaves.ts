@@ -205,6 +205,8 @@ export class Leaves {
   private passRs = 1;
   private passT: Float32Array | null = null;
   private backC = new Float32Array(0);
+  private scratch = new Float32Array(16);
+  private followAt = 0;
   /**
    * Per-instance placement record (LEAF_D floats: t, cos/sin around, cos/sin tilt, cos/sin roll, base size, born) and
    * node id. `back*` is written by the open pass, `front*` describes the drawn instances in the order of the uploaded
@@ -439,7 +441,7 @@ export class Leaves {
    * `o`). The only code that turns a leaf record into a matrix: the pass uses it for the bake normal/position and
    * `follow` for the drawn matrices, so the two cannot disagree.
    */
-  private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array | number[], o: number) {
+  private place(D: Float32Array, ND: Int32Array, from: number, to: number, sim: TreeSim, p: ArborParams, cx: number, cy: number, cz: number, out: Float32Array, o: number) {
     const nodes = sim.nodes, lp = p.leaves, now = sim.time;
     const H = Math.max(2, sim.bboxMax[1]);
     const sh = lp.shape, kx = sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh, ky = sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh;
@@ -495,14 +497,24 @@ export class Leaves {
    * Re-place every drawn instance on its node's current transform and upload the matrices (colours stay those of the
    * last completed pass; same instance order). Cheap enough to run on every branch rebuild. `cam` drives the size LOD.
    */
-  follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3): boolean {
+  follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3, budgetMs = Infinity): boolean {
     const n = this.mesh.count;
     if (!this.followOk || n === 0) return false;
     const t0 = performance.now();
-    const M = this.mesh.instanceMatrix;
-    this.place(this.frontD, this.frontNode, 0, n, sim, p, cam.x, cam.y, cam.z, M.array as Float32Array, 0);
+    const M = this.mesh.instanceMatrix, arr = M.array as Float32Array;
     M.clearUpdateRanges();
-    M.addUpdateRange(0, n * 16);
+    // Round-robin in chunks of 1024 instances until the budget is spent (a whole sweep when it fits); only the
+    // touched ranges are uploaded. Leaves so move in small staggered steps, never the whole crown at once.
+    let at = this.followAt >= n ? 0 : this.followAt, left = n;
+    while (left > 0) {
+      const to = Math.min(n, at + 1024);
+      this.place(this.frontD, this.frontNode, at, to, sim, p, cam.x, cam.y, cam.z, arr, at * 16);
+      M.addUpdateRange(at * 16, (to - at) * 16);
+      left -= to - at;
+      at = to >= n ? 0 : to;
+      if (performance.now() - t0 >= budgetMs) break;
+    }
+    this.followAt = at;
     M.needsUpdate = true;
     this.followMs = performance.now() - t0;
     if (this.followMs > this.followMaxMs) this.followMaxMs = this.followMs;
@@ -521,7 +533,7 @@ export class Leaves {
     const lp = p.leaves;
     const nodes = sim.nodes;
     const carr = this.backC;
-    const D = this.backD, ND = this.backNode, e = this.m.elements;
+    const D = this.backD, ND = this.backNode, e = this.scratch;
     // Safe (Lambert, no leaf shadows, no translucency): the instance colour carries the whole bake. Full path: the shader
     // does sun, shadows and translucency, so only albedo × sky occlusion is baked.
     const bakeAll = !!this.variant;

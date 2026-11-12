@@ -194,6 +194,8 @@ function regrow() {
 
 /** Leaf work per frame while a pass is open (ms); the pass is uploaded when its last slice ends. */
 const LEAF_BUDGET_MS = 3;
+/** Leaf follow work per branch rebuild (ms): a whole sweep when it fits, else round-robin chunks. */
+const LEAF_FOLLOW_MS = 2.5;
 let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
 let leavesDirty = true;
 let leafBakeD = 1, leafBakeT = -1e9, leafSimTime = -1, leafLightV = -1, leafSunKey = NaN, leafPV = -1, leafQuality = '';
@@ -276,7 +278,7 @@ function redraw(time: number, dt: number, force = false) {
   // Leaves ride their branches: whenever the branch mesh was rebuilt, every drawn leaf is re-placed on its node.
   if (branchMoved && !placed) {
     tel.phase('leaves follow', true);
-    leaves.follow(sim, params, stage.camera.position);
+    leaves.follow(sim, params, stage.camera.position, LEAF_FOLLOW_MS);
   }
 }
 

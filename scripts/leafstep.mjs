@@ -30,7 +30,7 @@ function sampler() {
     let cs = 0;
     for (let i = 0; i < n; i += 7) cs += M[i * 16 + 12] * 1.3 + M[i * 16 + 13] * 0.7 + M[i * 16 + 14];
     // Branch node step: median and max over the younger half of the nodes (where the leaves sit).
-    const N = nodes.length, h = N >> 1, cur = new Float32Array((N - h) * 3);
+    const N = nodes.length, h = N >> 1, cur = new Float64Array((N - h) * 3);
     for (let i = h; i < N; i++) { const nd = nodes[i]; cur[(i - h) * 3] = nd.wx; cur[(i - h) * 3 + 1] = nd.wy; cur[(i - h) * 3 + 2] = nd.wz; }
     let nMed = 0, nMax = 0;
     if (S.prevN) {
