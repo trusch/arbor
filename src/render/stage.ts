@@ -378,7 +378,7 @@ export class Stage {
     const day = 1 - night;
     this.hemi.color.copy(A.fogColor).lerp(new THREE.Color(0.55, 0.7, 1.0), 0.4);
     this.hemi.groundColor.setRGB(0.22, 0.2, 0.12).multiplyScalar(0.3 + 0.7 * day);
-    // Night ambient follows the moon: 0.1 starlit, 0.19 under a full moon (it was a flat 0.15).
+    // Night ambient follows the moon: 0.24 under a full moon; the starlit 0.1 is lifted by the night floor below.
     this.hemi.intensity = 0.15 + 0.35 * day + night * (0.09 * A.moonLight - 0.05 * (1 - A.moonLight));
     // Night floor (day for night): what the moon does not light, the ambient does. 0 until the sun is 3.4 degrees down (dusk unchanged).
     this.nightFloor = (1 - THREE.MathUtils.smoothstep(A.sunH, -0.16, -0.06)) * (1 - A.moonLight);
