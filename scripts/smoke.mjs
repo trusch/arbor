@@ -1,6 +1,6 @@
 // Interaction smoke test in headless chromium (SwiftShader).
 // Usage: node scripts/smoke.mjs [url]   (default: the deployed app http://10.77.0.2:8050/; pass "dev" to start vite)
-// Checks: no console errors, reload survives, phone emulation picks Low (adaptive DPR start 2, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset dropdown, drift, journey keyframes + interpolation, H/C keys, cinema camera motion.
+// Checks: no console errors, reload survives, phone emulation picks Low (adaptive DPR start 2, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset chips, drift, journey keyframes + interpolation, hand-set values winning over journey/drift (mouse + touch), H/C keys, cinema camera motion.
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 
@@ -31,41 +31,80 @@ try {
   await page.waitForTimeout(1500);
   check('loads without console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
-  // Presets via the GUI dropdown (first <select> in the panel).
-  const sel = page.locator('.lil-gui select').first();
-  const names = await sel.locator('option').allTextContents();
-  check('preset dropdown lists presets', names.length >= 8, `${names.length} options`);
+  // Presets via the panel chips (Grow tab).
+  const tab = (id) => page.locator(`[data-tab="${id}"]`).click();
+  const chip = (n) => page.locator(`.ap-chip[data-preset="${n}"]`);
+  const pick = async (n) => { await tab('grow'); await chip(n).click(); };
+  await tab('grow');
+  const names = await page.locator('.ap-chip').evaluateAll((els) => els.map((e) => e.dataset.preset));
+  check('preset chips list presets', names.length >= 8, `${names.length} chips`);
   for (const n of names) {
     const before = errors.length;
-    await sel.selectOption({ label: n });
+    await chip(n).click();
     const info = await page.evaluate(() => window.__arbor.fastForward(12));
     const ov = await page.evaluate(() => ({ g: window.__arbor.params.growth.gravity, sim: window.__arbor.sim.time }));
     check(`preset "${n}" grows`, info.nodes > 5 && errors.length === before && ov.sim < 20, `nodes=${info.nodes} t=${ov.sim.toFixed(1)} gravity=${ov.g.toFixed(2)}`);
   }
-  await sel.selectOption({ label: 'Oak meadow' });
+
+  // A value set by hand wins: drag the Gravity slider with the mouse while a journey keys gravity, then while it drifts.
+  const gravity = () => page.evaluate(() => window.__arbor.params.growth.gravity);
+  const dragGravity = async (frac) => {
+    await tab('shape');
+    const sl = page.locator('input[data-param="growth.gravity"]');
+    await sl.scrollIntoViewIfNeeded();
+    const b = await sl.boundingBox();
+    await page.mouse.move(b.x + b.width * 0.5, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width * frac, b.y + b.height / 2, { steps: 6 });
+    await page.mouse.up();
+  };
+  const driftBtn = page.locator('[data-drift="growth.gravity"]');
+  {
+    await pick('Journey: Earth → alien');
+    await page.evaluate(() => window.__arbor.fastForward(30)); // inside the 25 s → 75 s gravity ramp
+    await dragGravity(0.85);
+    const g1 = await gravity();
+    await page.waitForTimeout(3000);
+    const g2 = await gravity();
+    const keyed = await page.evaluate(() => window.__arbor.automation.journey.some((k) => 'growth.gravity' in k.values));
+    check('hand-set gravity sticks for 3 s with a journey active', g1 > 2 && Math.abs(g2 - g1) < 1e-9 && !keyed, `set=${g1.toFixed(3)} after3s=${g2.toFixed(3)} stillKeyed=${keyed}`);
+    await pick('Oak meadow');
+    await tab('shape');
+    await driftBtn.click();
+    await page.evaluate(() => { window.__arbor.automation.drift['growth.gravity'].rate = 0.2; window.__arbor.fastForward(3); });
+    await dragGravity(0.2);
+    const d1 = await gravity();
+    await page.waitForTimeout(3000);
+    const d2 = await gravity();
+    const pressed = await driftBtn.getAttribute('aria-pressed');
+    check('hand-set gravity sticks for 3 s with drift on', d1 < 0.9 && Math.abs(d2 - d1) < 1e-9 && pressed === 'false', `set=${d1.toFixed(3)} after3s=${d2.toFixed(3)} driftPressed=${pressed}`);
+  }
+  await pick('Oak meadow');
+  await tab('shape');
 
   // Drift on gravity (default selected drift param) via the GUI checkbox.
-  const driftBox = page.locator('.lil-gui .lil-controller', { hasText: 'drift this param' }).locator('input[type=checkbox]');
   await page.evaluate(() => { window.__arbor.params.growth.gravity = 1; });
-  await driftBox.check();
+  await driftBtn.click();
   // Fast rate so a few sim seconds show movement.
   await page.evaluate(() => { window.__arbor.automation.drift['growth.gravity'].rate = 0.2; });
   const gs = [];
   for (let i = 0; i < 6; i++) gs.push(await page.evaluate(() => { window.__arbor.fastForward(1.5); return window.__arbor.params.growth.gravity; }));
   const spread = Math.max(...gs) - Math.min(...gs);
   check('drift moves gravity over time', spread > 0.02, gs.map((g) => g.toFixed(3)).join(','));
-  await driftBox.uncheck();
+  await driftBtn.click();
   const gOff = await page.evaluate(() => window.__arbor.params.growth.gravity);
   check('drift off restores base', Math.abs(gOff - 1) < 1e-6, `gravity=${gOff}`);
 
   // Journey: two keyframes via the GUI button, then interpolation.
-  const addKf = page.locator('.lil-gui button', { hasText: 'Add keyframe (now)' });
-  await page.locator('.lil-gui button', { hasText: 'Clear journey' }).click();
+  await tab('more');
+  await page.locator('#arbor-panel summary', { hasText: 'Changes over time' }).click();
+  const addKf = page.locator('#arbor-add-keyframe');
+  await page.locator('#arbor-clear-journey').click();
   await page.evaluate(() => { window.__arbor.params.growth.gravity = 1; window.__arbor.params.leaves.hue = 0.3; });
   await addKf.click();
   await page.evaluate(() => { window.__arbor.fastForward(10); window.__arbor.params.growth.gravity = 0.2; window.__arbor.params.leaves.hue = 0.9; });
   await addKf.click();
-  const kfInfo = await page.locator('.lil-gui .lil-controller', { hasText: 'keyframes' }).locator('input').inputValue();
+  const kfInfo = await page.locator('#arbor-journey-info').textContent();
   const jr = await page.evaluate(() => {
     const A = window.__arbor.automation, P = window.__arbor.params;
     const [a, b] = A.journey.map((k) => k.t); // keyframe times as recorded (the sim keeps growing in real time)
@@ -75,11 +114,11 @@ try {
   check('two keyframes recorded', jr.n === 2, `gui="${kfInfo}"`);
   check('journey interpolates', Math.abs(jr.start - 1) < 1e-6 && Math.abs(jr.mid - 0.6) < 1e-3 && Math.abs(jr.end - 0.2) < 1e-6 && Math.abs(jr.after - 0.2) < 1e-6,
     `start=${jr.start.toFixed(3)} mid=${jr.mid.toFixed(3)} end=${jr.end.toFixed(3)} after=${jr.after.toFixed(3)}`);
-  await page.locator('.lil-gui button', { hasText: 'Clear journey' }).click();
+  await page.locator('#arbor-clear-journey').click();
 
   // Keys: H hides UI, C toggles cinema (focus is still on a GUI button: keys must work there too).
   await page.keyboard.press('h');
-  const hidden = await page.evaluate(() => document.body.classList.contains('watch') && getComputedStyle(document.querySelector('.lil-gui')).display === 'none');
+  const hidden = await page.evaluate(() => document.body.classList.contains('watch') && getComputedStyle(document.querySelector('#arbor-panel')).display === 'none');
   await page.keyboard.press('h');
   const shown = await page.evaluate(() => !document.body.classList.contains('watch'));
   check('H hides and restores UI', hidden && shown);
@@ -116,7 +155,7 @@ try {
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
-  await sel.selectOption({ label: names[names.length - 1] });
+  await pick(names[names.length - 1]);
   for (let i = 0; i < 2; i++) {
     const before = errors.length;
     await page.reload();
@@ -157,6 +196,32 @@ try {
     // Leaf modes: phone defaults to the safe leaf path; ?leafsafe=1/0 and ?leafshader=basic force it; leaves render, no errors.
     const lm = await leafState(mp);
     check('phone: safe leaves by default (Lambert, no shadow), leaves drawn', lm.type === 'MeshLambertMaterial' && !lm.cast && lm.n > 0 && lm.fe === 0, JSON.stringify(lm));
+    await ctx.close();
+  }
+  // Phone, real touch: open the bottom sheet, drag Gravity while the journey keys it. The value must stick, the page
+  // must not scroll and the camera must not take the gesture.
+  {
+    const { ctx, mp, merr } = await phone('?preset=' + encodeURIComponent('Journey: Earth → alien'));
+    await mp.waitForTimeout(1500);
+    const closed = await mp.evaluate(() => !document.querySelector('#arbor-panel').classList.contains('open'));
+    await mp.tap('#arbor-panel-open');
+    await mp.tap('[data-tab="shape"]');
+    const sl = mp.locator('input[data-param="growth.gravity"]');
+    await sl.scrollIntoViewIfNeeded();
+    const b = await sl.boundingBox();
+    const cdp = await ctx.newCDPSession(mp);
+    const y = b.y + b.height / 2, x0 = b.x + b.width / 3, x1 = b.x + b.width * 0.85;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+    for (let i = 1; i <= 8; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + ((x1 - x0) * i) / 8, y }] }); await mp.waitForTimeout(30); }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const st = () => mp.evaluate(() => ({ g: window.__arbor.params.growth.gravity, sy: document.scrollingElement.scrollTop, af: window.__arbor.params.camera.autoFrame }));
+    const t1 = await st();
+    await mp.waitForTimeout(3000);
+    const t2 = await st();
+    const box = await mp.locator('#arbor-panel').boundingBox();
+    check('phone: sheet closed at start, touch-dragged gravity sticks 3 s under a journey, no page scroll, camera untouched',
+      closed && t1.g > 2 && Math.abs(t2.g - t1.g) < 1e-9 && t2.sy === 0 && t2.af === true && merr.length === 0 && box.y > 915 * 0.4,
+      `set=${t1.g.toFixed(3)} after3s=${t2.g.toFixed(3)} scrollTop=${t2.sy} autoFrame=${t2.af} sheetTop=${box.y.toFixed(0)}`);
     await ctx.close();
   }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {

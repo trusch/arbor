@@ -127,3 +127,5 @@ body.watch .arbor-ui { display: none !important; }
   .ap-top { padding-top: 6px; }
 }
 @media (prefers-reduced-motion: reduce) { .arbor-ui * { transition: none !important; } }
+/* The panel's status line already shows preset age; keep the watch overlay from bleeding through the glass. */
+body.panel-open #overlay { display: none; }

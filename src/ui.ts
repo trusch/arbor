@@ -205,6 +205,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     root.classList.toggle('open', open);
     opener.classList.toggle('hidden', open);
     opener.setAttribute('aria-expanded', String(open));
+    document.body.classList.toggle('panel-open', open);
     if (open) refresh();
     if (focus) (open ? closeBtn : opener).focus();
   };
@@ -315,12 +316,12 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     r.addEventListener('change', commitCrown);
     n.addEventListener('change', () => { write(Number(n.value)); commitCrown(); });
     syncers.push(() => {
-      if (!pane.open) return;
+      if (!pane?.open) return;
       const v = num(key);
       if (dragging !== r) r.value = String(v);
       if (document.activeElement !== n) n.value = String(+v.toFixed(4));
     });
-    let pane: HTMLDetailsElement;
+    let pane: HTMLDetailsElement | undefined;
     queueMicrotask(() => (pane = r.closest('details') as HTMLDetailsElement));
     return h('div', { class: 'ap-raw' }, h('label', { for: id, text: name }), r, n);
   };
