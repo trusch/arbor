@@ -53,7 +53,7 @@ function sampler() {
         if (s < 1e-3) continue;
         const d = Math.hypot(M[o + 12] - I[o + 12], M[o + 13] - I[o + 13], M[o + 14] - I[o + 14]), rel = d / s;
         checked++; sumRel += rel;
-        if (d > maxLag) maxLag = d;
+        if (d > maxLag) { maxLag = d; S.wi = i; }
         if (rel > maxRel) maxRel = rel;
         if (rel > 0.1) over10++;
         if (rel > 0.5) over50++;
@@ -64,7 +64,8 @@ function sampler() {
     const P = S.prevN, N = nodes.length, cur = S.curN && S.curN.length >= N * 3 ? S.curN : new Float32Array(N * 3 + 3000);
     for (let i = 0; i < N; i++) { const nd = nodes[i]; cur[i * 3] = nd.wx; cur[i * 3 + 1] = nd.wy; cur[i * 3 + 2] = nd.wz; if (P && i < S.prevCount) { const d = Math.hypot(nd.wx - P[i * 3], nd.wy - P[i * 3 + 1], nd.wz - P[i * 3 + 2]); if (d > nodeStep) nodeStep = d; } }
     S.curN = P && P.length >= N * 3 ? P : null; S.prevN = cur; S.prevCount = N;
-    S.rows.push({ nodeStep, ts, simT: a.sim.time, moved: a.sim.time !== S.lastT, n, nodes: nodes.length, maxLag, maxRel, meanRel: checked ? sumRel / checked : 0, over10, over50, checked, gone, passes: L.passes, passOpen: L.passOpen });
+    const wn = nodes[ND[S.wi ?? 0]], wp = wn && nodes[wn.parent];
+    S.rows.push({ wi: S.wi, wNode: ND[S.wi ?? 0], wPruned: wn ? !!a.sim.chains[wn.chain].pruned : null, wNodes: nodes.length, wSeg: wn && wp ? Math.hypot(wn.wx - wp.wx, wn.wy - wp.wy, wn.wz - wp.wz) : 0, nodeStep, ts, simT: a.sim.time, moved: a.sim.time !== S.lastT, n, nodes: nodes.length, maxLag, maxRel, meanRel: checked ? sumRel / checked : 0, over10, over50, checked, gone, passes: L.passes, passOpen: L.passOpen });
     S.lastT = a.sim.time;
   });
 }
@@ -112,6 +113,7 @@ try {
     goneNodeInstancesMax: q(rows.map((r) => r.gone), 1),
     worstFrame: { simT: r3(worst.simT ?? 0), n: worst.n, maxRel: r3(worst.maxRel), maxLag: r3(worst.maxLag ?? 0), nodeStepThatFrame: r3(worst.nodeStep ?? 0), passOpen: worst.passOpen },
     lagBeyondOneFrameNodeStep: { frames: mv.filter((r) => r.maxLag > r.nodeStep + 0.004).length, worstExcess: r3(Math.max(0, ...mv.map((r) => r.maxLag - r.nodeStep))) },
+    worstFrames: [...mv].sort((x, y) => y.maxLag - x.maxLag).slice(0, 10).map((r) => ({ f: rows.indexOf(r), simT: r3(r.simT), lag: r3(r.maxLag), i: r.wi, node: r.wNode, ofNodes: r.wNodes, pruned: r.wPruned, segLen: r3(r.wSeg), nodeStep: r3(r.nodeStep), passes: r.passes })),
     instCounts: [...new Set(rows.map((r) => r.n))].slice(0, 40).join(','),
     bySimTime: bySim,
   }, null, 1));
