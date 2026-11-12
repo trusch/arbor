@@ -345,6 +345,35 @@ try {
         && storm.noon.cloud === 1 && on.noon.cloud === 0 && on.noon.rain === 0 && dry.noon.rain === 0 && !dry.noon.bolt && dry.noon.programs === on.noon.programs && dry.night.programs <= on.night.programs
         && storm.noon.fe === 0 && storm.night.fe === 0 && storm.errs === 0 && dry.errs === 0,
       `storm ${JSON.stringify(storm)} calm ${JSON.stringify(on)} rain=0 ${JSON.stringify(dry)}`);
+    // Sky gate (PowerVR rule): sun glow, glare, moon and moon halo are clones of the canopy-shadow decal material and the
+    // star detail is attribute data, so the phone compiles no more programs than with them off (?celestial=0). The
+    // camera is aimed at the body so the planes are really drawn; both runs are read at equal times.
+    {
+      const sky = async (q) => {
+        const { ctx, mp, merr } = await phone(q);
+        const out = {};
+        for (const [name, hour, body] of [['noon', 13, 'sun'], ['golden', 18.6, 'sun'], ['night', 23.2, 'moon']]) {
+          await mp.evaluate(([h, b]) => {
+            const A = window.__arbor, k = A.params.sky; k.timeOfDay = h; k.moonPhase = 0.5; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true;
+            const d = b === 'sun' ? A.stage.atmo.sunDir : A.stage.atmo.moonDir, c = A.stage.camera.position;
+            A.params.camera.autoFrame = false; A.stage.controls.maxPolarAngle = Math.PI;
+            A.stage.controls.target.set(c.x + d.x * 10, c.y + d.y * 10, c.z + d.z * 10); A.fastForward(0);
+          }, [hour, body]);
+          await mp.waitForTimeout(2500);
+          out[name] = await mp.evaluate(() => { const A = window.__arbor, S = A.sky; return { programs: A.stage.renderer.info.programs.length, fe: A.frameErrors(), glow: !!S?.sunGlow.visible, moon: !!S?.moon.visible, halo: !!S?.moonHalo.visible, bakes: S?.stats.moonBakes ?? 0, ms: S ? +(S.stats.sumMs / Math.max(1, S.stats.frames)).toFixed(3) : 0, stars: A.stage.atmo.stars.visible, key: +A.stage.sun.intensity.toFixed(3) }; });
+        }
+        await ctx.close();
+        return { ...out, errs: merr.length };
+      };
+      const on = await sky('?speed=0&weather=calm'), off = await sky('?speed=0&weather=calm&celestial=0');
+      const son = await sky('?speed=0&weather=storm'), soff = await sky('?speed=0&weather=storm&celestial=0');
+      const T = ['noon', 'golden', 'night'];
+      check('phone: sun glow, moon and star detail add no shader program (noon, golden hour, night, storm), planes drawn in calm and hidden under the storm cloud',
+        T.every((t) => on[t].programs <= off[t].programs && son[t].programs <= soff[t].programs && on[t].fe === 0 && son[t].fe === 0)
+          && on.noon.glow && on.golden.glow && on.night.moon && on.night.halo && on.night.stars && on.night.key > 0.1 && on.night.bakes >= 1
+          && !son.noon.glow && !son.night.moon && !off.noon.glow && on.errs + off.errs + son.errs + soff.errs === 0,
+        `on ${T.map((t) => on[t].programs).join('/')} off ${T.map((t) => off[t].programs).join('/')} storm on ${T.map((t) => son[t].programs).join('/')} off ${T.map((t) => soff[t].programs).join('/')} night ${JSON.stringify(on.night)} noon ${JSON.stringify(on.noon)}`);
+    }
     // Lightning off means no flash and no bolt at all, even when one is forced.
     {
       const { ctx, mp } = await phone('?speed=0&weather=storm&lightning=0');

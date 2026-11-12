@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { terrainHeight } from './backdrop';
 
 /**
  * Sun glow, moon and star detail, phone-safe (PowerVR rule): every material here is a clone of the canopy-shadow decal
@@ -188,7 +189,7 @@ export class Celestial {
   /** Repaint the moon map for a phase (0 new, 0.5 full): lit limb at +u while waxing, −u while waning; earthshine on the dark part. */
   private bakeMoon(phase: number) {
     const d = this.moonImg.data, A = this.albedo, c = Math.cos(phase * Math.PI * 2), waxing = phase < 0.5;
-    const earth = 0.2 * (1 - moonIllum(phase)) + 0.05;
+    const earth = 0.13 * (1 - moonIllum(phase)) + 0.04;
     for (let j = 0; j < MS; j++) for (let i = 0; i < MS; i++) {
       const o = (j * MS + i) * 4, a = A[j * MS + i];
       if (a < 0) { d[o] = d[o + 1] = d[o + 2] = 0; d[o + 3] = 0; continue; }
@@ -236,12 +237,20 @@ export class Celestial {
     if (sg.visible) {
       this.place(sg, cam, A.sunDir, dist, (7 + 17 * low) * DEG);
       sg.lookAt(cam.position);
-      const gain = (0.4 + 1.0 * low) * sunVis * (h < 0 ? 0.55 + 0.45 * smooth(-0.13, 0, h) : 1);
+      const gain = (0.12 + 1.1 * low) * sunVis * (h < 0 ? 0.55 + 0.45 * smooth(-0.13, 0, h) : 1);
       sm.color.copy(A.sunColor).multiplyScalar(gain);
     }
     // Veiling glare (Low only; High has bloom): a small glow that ignores depth, so a low sun behind the crown bleeds
     // through and over the gaps. Off once the terrain hides the sun.
-    const gl = this.sunGlare, gv = lowQ ? 0.3 * low * smooth(0.02, 0.1, h) * clear : 0;
+    let gv = lowQ ? 0.3 * low * smooth(0.0, 0.06, h) * clear : 0;
+    if (gv > 0.004) {
+      // Terrain horizon toward the sun (24 samples of the analytic height field): no glare once a ridge hides it.
+      const hl = Math.hypot(A.sunDir.x, A.sunDir.z) || 1, ax = A.sunDir.x / hl, az = A.sunDir.z / hl;
+      let hz = 0;
+      for (let i = 0, d = 70; i < 24; i++, d *= 1.17) hz = Math.max(hz, (terrainHeight(cam.position.x + ax * d, cam.position.z + az * d) - cam.position.y) / d);
+      gv *= smooth(hz, hz + 0.035, h / hl);
+    }
+    const gl = this.sunGlare;
     gl.visible = gv > 0.004;
     if (gl.visible) {
       this.place(gl, cam, A.sunDir, dist, 8 * DEG);
@@ -268,7 +277,7 @@ export class Celestial {
       // Pale by day, bright at night; warm and dimmer through the thick air at the horizon.
       const night = A.night, k = (0.3 + 0.7 * night) * (1 - 0.45 * lowM);
       this.col.copy(this.cool).lerp(this.warm, lowM * lowM);
-      mm.color.copy(this.col).multiplyScalar(1.15 * k);
+      mm.color.copy(this.col).multiplyScalar(0.72 * k);
       mm.opacity = up;
       const ha = this.moonHalo, hm = ha.material as THREE.MeshBasicMaterial;
       const hg = up * night * illum * (0.06 + 0.08 * lowM);
@@ -280,14 +289,16 @@ export class Celestial {
       }
     } else this.moonHalo.visible = false;
 
-    // ---- stars: twinkle (stronger low in the sky) and glare around a bright moon, every second frame ----
-    if (this.stars.visible && (this.tick++ & 1) === 0) {
+    // ---- stars: twinkle (stronger low in the sky) and glare around a bright moon ----
+    if (this.stars.visible) {
       const out = this.starCol.array as Float32Array, B = this.starBase, P = this.starPos.array as Float32Array, n = this.starPhase.length;
       // Moon direction in the starfield's own (rotated) frame.
       const ry = this.stars.rotation.y, cr = Math.cos(ry), sr = Math.sin(ry);
       const mx = (md.x * cr - md.z * sr) / 4000, my = md.y / 4000, mz = (md.x * sr + md.z * cr) / 4000;
       const glare = up * illum * 0.9, t = this.t;
-      for (let i = 0, j = 0; i < n; i++, j += 3) {
+      // A quarter of the stars per frame (each star at a quarter of the frame rate): one ranged upload.
+      const q = this.tick++ & 3, i0 = Math.floor((n * q) / 4), i1 = Math.floor((n * (q + 1)) / 4);
+      for (let i = i0, j = i0 * 3; i < i1; i++, j += 3) {
         const y = P[j + 1] / 4000;
         let f = 1 + (0.1 + 0.32 * (1 - y)) * Math.sin(this.starPhase[i] + t * this.starRate[i]);
         if (glare > 0.01) {
@@ -296,6 +307,8 @@ export class Celestial {
         }
         out[j] = B[j] * f; out[j + 1] = B[j + 1] * f; out[j + 2] = B[j + 2] * f;
       }
+      this.starCol.clearUpdateRanges();
+      this.starCol.addUpdateRange(i0 * 3, (i1 - i0) * 3);
       this.starCol.needsUpdate = true;
     }
     const ms = performance.now() - t0;

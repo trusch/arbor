@@ -12,12 +12,12 @@ const CASES = {
   noon: ['sun', 13, 0.5, false, 0.2],
   h1730: ['sun', 17.5, 0.5, false, 0.2],
   crown: ['sun', 17.5, 0.5, false, 0],
-  sunset: ['sun', { el: 0.07, from: 17, to: 23 }, 0.5, false, 0.2],
+  sunset: ['sun', { el: 0.11, from: 17, to: 23 }, 0.5, false, 0.2],
   dusk: ['sun', { el: -0.06, from: 17, to: 23 }, 0.5, false, 0.2],
   full: ['moon', 23.2, 0.5, false, 0.2],
   half: ['moon', 21.8, 0.25, false, 0.2],
   new: ['moon', 23.5, 0.02, false, 0.2],
-  moonrise: ['moon', { el: 0.13, from: 19.5, to: 23.9 }, 0.5, false, 0.2],
+  moonrise: ['moon', { el: 0.2, from: 19.5, to: 23.9 }, 0.5, false, 0.2],
   storm: ['sun', 17.5, 0.5, true, 0.2],
 };
 const names = (process.argv[4] && process.argv[4] !== 'all' ? process.argv[4].split(',') : Object.keys(CASES));
