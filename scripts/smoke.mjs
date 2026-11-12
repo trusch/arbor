@@ -423,20 +423,28 @@ try {
       for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; k++; }
       return { programs: A.stage.renderer.info.programs.length, n: k, rg: k ? +(r / g).toFixed(3) : 0, lum: k ? +((r + g + b) / k).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
     });
+    // A reading is taken once the leaf pass the scrub started has completed (a pass in flight finishes first), not after a fixed delay.
+    const settle = async (k) => {
+      await on.mp.waitForTimeout(600);
+      await on.mp.waitForFunction((kk) => { const L = window.__arbor.leaves; return L.passes >= window.__p0 + kk && (kk > 1 || !L.passOpen); }, k, { timeout: 30000 });
+      await on.mp.waitForTimeout(600);
+      if (k === 1) await on.mp.waitForFunction(() => !window.__arbor.leaves.passOpen, null, { timeout: 30000 });
+      await on.mp.waitForTimeout(300);
+    };
     const on = await phone('?speed=0&weather=calm'), off = await phone('?speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
     const st = {}, offP = [];
     for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
-      await on.mp.evaluate((dd) => { const A = window.__arbor; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
-      await on.mp.waitForTimeout(1500);
+      await on.mp.evaluate((dd) => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
+      await settle(1);
       st[name] = await read(on.mp);
       offP.push((await read(off.mp)).programs);
     }
     const o0 = await read(off.mp);
     // Hold: time runs, the date does not. Then released: the year moves on.
-    await on.mp.evaluate(() => { window.__arbor.automation.userSet('season.date', 0.62); window.__arbor.params.time.speed = 1; });
-    await on.mp.waitForTimeout(1500);
+    await on.mp.evaluate(() => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.date', 0.62); A.params.time.speed = 1; });
+    await settle(3);
     const h0 = await read(on.mp);
     await on.mp.waitForTimeout(3000);
     const h1 = await read(on.mp);
