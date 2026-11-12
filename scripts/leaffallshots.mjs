@@ -29,14 +29,24 @@ try {
     A.stage.camera.position.set(p[0] - w.dirZ * d + w.dirX * 0.8, Math.max(0.5, p[1] - 0.4 + ld), p[2] + w.dirX * d + w.dirZ * 0.8);
     A.stage.controls.update?.();
   }, [p, d, lookDown]);
-  const leaf = await page.evaluate(() => { const A = window.__arbor, L = A.leafFall; const before = L.state.air.length; for (let i = 0; i < 40; i++) { L.force(1); const s = L.state.air; const p = s[s.length - 1]; if (p[1] < 3.2 && p[1] > 1.5) return { p, idx: s.length - 1, before }; } const s = L.state.air; return { p: s[s.length - 1], idx: s.length - 1, before }; });
+  // A leaf on the crown's rim on the camera side (across the wind), low enough to follow to the ground.
+  const leaf = await page.evaluate(() => { const A = window.__arbor, L = A.leafFall, w = A.wind; let best = null, bs = -1e9; for (let i = 0; i < 400; i++) { if (!A.leaves.sampleInstance(Math.random(), window.__m ??= new Float32Array(16), window.__c ??= new Float32Array(3))) continue; const m = window.__m; const sc = -m[12] * w.dirZ + m[14] * w.dirX - Math.abs(m[13] - 3); if (sc > bs) { bs = sc; best = [m.slice(), window.__c.slice()]; } } L.launch(best[0], 0, best[1], 0, 0); const s = L.state.air; return { p: s[s.length - 1] }; });
   console.log('forced leaf', JSON.stringify(leaf));
-  await cam(leaf.p, 2.2);
-  for (const [n, ms] of [['calm-a', 350], ['calm-b', 700], ['calm-c', 900]]) { await page.waitForTimeout(ms); await shot(page, n); }
+  await cam(leaf.p, 2.0);
+  let lp = leaf.p;
+  for (const [n, ms] of [['calm-a', 350], ['calm-b', 700], ['calm-c', 900]]) {
+    await page.waitForTimeout(ms);
+    // Follow the leaf: the air leaf nearest to where it was.
+    lp = await page.evaluate((q) => { let b = q, bd = 1e9; for (const p of window.__arbor.leafFall.state.air) { const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); if (d < bd) { bd = d; b = p; } } return b; }, lp);
+    await cam([lp[0], lp[1] + 0.6, lp[2]], 2.0);
+    await page.waitForTimeout(120);
+    await shot(page, n);
+    console.log(n, JSON.stringify(lp));
+  }
   await page.waitForTimeout(6000);
   const ground = await page.evaluate(() => { const g = window.__arbor.leafFall.state.ground; return g[g.length - 1] ?? null; });
   console.log('landed at', JSON.stringify(ground), JSON.stringify(await st()));
-  if (ground) { await cam([ground[0], 1.0, ground[2]], 1.1, 0.3); await page.waitForTimeout(400); await shot(page, 'calm-landed'); }
+  if (ground) { await cam([ground[0], 1.0, ground[2]], 0.9, 0.3); await page.waitForTimeout(400); await shot(page, 'calm-landed'); }
   // Storm: wide, across the wind, tree in the upwind third.
   await page.evaluate(() => {
     const A = window.__arbor, w = A.wind, H = A.sim.bboxMax[1];
@@ -47,8 +57,8 @@ try {
   });
   const t0 = Date.now();
   await page.waitForTimeout(3000);
-  await page.waitForFunction(() => { const A = window.__arbor; return A.wind.gust(0, 0) / A.wind.base > 0.88; }, null, { timeout: 40000, polling: 100 }).catch(() => console.log('no gust peak seen'));
-  await page.waitForTimeout(900);
+  await page.waitForFunction(() => { const A = window.__arbor; return A.wind.gust(0, 0) / A.wind.base > 0.8; }, null, { timeout: 40000, polling: 100 }).catch(() => console.log('no gust peak seen'));
+  await page.waitForTimeout(250);
   await shot(page, 'storm-a'); await page.waitForTimeout(500); await shot(page, 'storm-b');
   console.log('storm gust peak', JSON.stringify(await st()));
   await page.waitForFunction(() => { const A = window.__arbor; return A.wind.gust(0, 0) / A.wind.base < 0.3; }, null, { timeout: 40000, polling: 100 }).catch(() => {});

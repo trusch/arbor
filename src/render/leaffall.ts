@@ -13,14 +13,16 @@ import type { Leaves } from './leaves';
  * Randomness is a render-side xorshift (the sim rng is not consumed).
  */
 const GROUND = 0.02;
-/** Per air leaf: vx vy vz, fall speed, sail, spin axis xyz, spin rate, phase, age, lift, landing timer (-1 = flying), brown age. */
-const S = 14;
+/** Per air leaf: vx vy vz, fall speed, sail, spin axis xyz, spin rate, phase, age, lift, landing timer (-1 = flying), brown age, light gain. */
+const S = 15;
 const AIR_ALLOC = 512, LITTER_ALLOC = 2400;
 /** Seconds for a lying leaf to dry to brown. */
 const BROWN_S = 120;
 /** A full litter scan (browning, gust push) takes this long. */
 const SCAN_S = 0.7;
 const LAND_S = 0.3;
+/** Height range in which a landed leaf comes to rest in the grass. */
+const REST_MIN = 0.06, REST_MAX = 0.3;
 /** Leaves that land farther than this from the trunk are dropped (outside the meadow). */
 const R_GONE = 42;
 
@@ -53,6 +55,10 @@ export class LeafFall {
   /** Landing target matrices (flat on the ground) of air leaves. */
   private tgt = new Float32Array(AIR_ALLOC * 16);
   private n = 0;
+  /** Colours as copied from the crown; the drawn colour brightens to open-air light over the first second of flight. */
+  private aBase = new Float32Array(AIR_ALLOC * 3);
+  /** Luminance of the brightest crown leaves seen lately (what a leaf in the open looks like). */
+  private refLum = 0;
   /** Litter: ring of slots; age < 0 = empty. */
   private lAge = new Float32Array(LITTER_ALLOC).fill(-1);
   private lBase = new Float32Array(LITTER_ALLOC * 3);
@@ -107,7 +113,12 @@ export class LeafFall {
     if (this.n >= AIR_ALLOC) return false;
     const i = this.n++, a = this.air.instanceMatrix.array as Float32Array, col = this.air.instanceColor!.array as Float32Array, s = this.st, o = i * S;
     for (let j = 0; j < 16; j++) a[i * 16 + j] = m[mo + j];
-    col[i * 3] = c[co]; col[i * 3 + 1] = c[co + 1]; col[i * 3 + 2] = c[co + 2];
+    const B = this.aBase;
+    B[i * 3] = col[i * 3] = c[co]; B[i * 3 + 1] = col[i * 3 + 1] = c[co + 1]; B[i * 3 + 2] = col[i * 3 + 2] = c[co + 2];
+    // A leaf from the shaded inside of the crown carries its baked occlusion: outside it is lit like the outer leaves.
+    const lum = 0.3 * c[co] + 0.6 * c[co + 1] + 0.1 * c[co + 2] + 1e-5;
+    if (!hop) this.refLum = Math.max(this.refLum * 0.998, lum);
+    s[o + 14] = hop ? 1 : Math.min(3, Math.max(1, (0.8 * this.refLum) / lum));
     const r = () => this.rnd();
     s[o] = 0; s[o + 1] = hop ? 0.9 + 1.4 * r() : 0; s[o + 2] = 0;
     // Fall speed: calm 0.7..1.3 m/s (a slow flutter), storm up to 3 m/s (wet, driven down between the lifts).
@@ -168,7 +179,7 @@ export class LeafFall {
     const mature = Math.min(1, Math.max(0, (e.simLeaves - 500) / 2500));
     const g = wind.gust(cx, cz), gr = wind.base > 1e-3 ? g / wind.base : 0, gr3 = gr * gr * gr;
     const calm = (0.04 + 0.5 * gr3) * Math.min(2, (wind.base / 0.35) ** 2) * (1 + 2 * e.dusk);
-    const storm = v * (e.low ? 16 : 45) * e.scale * (0.06 + gr3);
+    const storm = v * (e.low ? 40 : 110) * e.scale * (0.06 + gr3);
     const rate = mature * e.rate * (calm + storm);
     this.stats.rate = rate;
     this.acc += rate * dt;
@@ -197,7 +208,7 @@ export class LeafFall {
   }
 
   private stepAir(dt: number, wind: Wind, v: number, H: number, cx: number, cz: number, litCap: number) {
-    const a = this.air.instanceMatrix.array as Float32Array, col = this.air.instanceColor!.array as Float32Array, s = this.st, T = this.tgt;
+    const a = this.air.instanceMatrix.array as Float32Array, col = this.air.instanceColor!.array as Float32Array, s = this.st, T = this.tgt, B = this.aBase;
     const px = -wind.dirZ, pz = wind.dirX;
     const kh = 1 - Math.exp(-dt / 0.4), kv = 1 - Math.exp(-dt / 0.3);
     for (let i = this.n - 1; i >= 0; i--) {
@@ -223,6 +234,11 @@ export class LeafFall {
         }
       } else {
         const x = a[q + 12], y = a[q + 13], z = a[q + 14];
+        if (s[o + 14] > 1 && age < 1.2) {
+          const gk = 1 + (s[o + 14] - 1) * Math.min(1, age);
+          col[i * 3] = B[i * 3] * gk; col[i * 3 + 1] = B[i * 3 + 1] * gk; col[i * 3 + 2] = B[i * 3 + 2] * gk;
+          this.colDirty = true;
+        }
         const W = Wind.speed(wind.gust(x, z));
         // Sheltered near the ground, full wind from about 60 % of the crown height.
         const sh = 0.3 + 0.7 * Math.min(1, Math.max(0, y / (0.6 * H)));
@@ -245,18 +261,20 @@ export class LeafFall {
           a[q + c + 2] = Z * cs + (kx * Y - ky * X) * sn + kz * d;
         }
         const size = Math.hypot(a[q + 4], a[q + 5], a[q + 6]);
-        if (a[q + 13] <= GROUND + 0.35 * size && s[o + 1] < 0) {
+        if (a[q + 13] <= REST_MAX + 0.02 && s[o + 1] < 0) {
           // Touch-down: target = lying flat (blade normal up or down, random heading, a few degrees of tilt).
           s[o + 12] = 0;
-          const yaw = this.rnd() * 6.283, up = this.rnd() < 0.5 ? 1 : -1, tl = (this.rnd() - 0.5) * 0.3;
+          const yaw = this.rnd() * 6.283, up = this.rnd() < 0.5 ? 1 : -1, tl = (this.rnd() - 0.5) * 0.9;
           const lx = Math.cos(yaw), lz = Math.sin(yaw), ct = Math.cos(tl), stl = Math.sin(tl);
           // Columns: X = Y × Z, Y = long axis (horizontal, tilted by tl), Z = normal.
           const Yx = lx * ct, Yy = stl, Yz = lz * ct, Zx = -lx * stl * up, Zy = ct * up, Zz = -lz * stl * up;
           T[q] = (Yy * Zz - Yz * Zy) * size; T[q + 1] = (Yz * Zx - Yx * Zz) * size; T[q + 2] = (Yx * Zy - Yy * Zx) * size;
           T[q + 4] = Yx * size; T[q + 5] = Yy * size; T[q + 6] = Yz * size;
           T[q + 8] = Zx * size; T[q + 9] = Zy * size; T[q + 10] = Zz * size;
-          // The blade is cupped (tip 0.22 below its base along the normal): keep the lowest point above the ground.
-          T[q + 13] = GROUND + size * (up > 0 ? 0.24 : 0.07) + Math.max(0, -stl) * size * 1.1 + this.rnd() * 0.012;
+          // Caught in the grass at some height (the tufts are 0.3 m tall: a leaf flat on the soil is never seen); the
+          // blade is cupped (tip 0.22 below its base along the normal), so the lowest point stays above the ground.
+          const r = this.rnd();
+          T[q + 13] = Math.max(GROUND + size * (up > 0 ? 0.24 : 0.07) + Math.max(0, -stl) * size * 1.1, REST_MIN + (REST_MAX - REST_MIN) * r * r);
         } else if (age > 40) { done = true; this.stats.gone++; }
       }
       if (done) {
@@ -264,7 +282,7 @@ export class LeafFall {
         const l = --this.n;
         if (l !== i) {
           a.copyWithin(q, l * 16, l * 16 + 16); T.copyWithin(q, l * 16, l * 16 + 16);
-          col.copyWithin(i * 3, l * 3, l * 3 + 3); s.copyWithin(o, l * S, l * S + S);
+          col.copyWithin(i * 3, l * 3, l * 3 + 3); B.copyWithin(i * 3, l * 3, l * 3 + 3); s.copyWithin(o, l * S, l * S + S);
         }
         this.colDirty = true;
       }

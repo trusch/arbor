@@ -284,6 +284,24 @@ try {
       `programs ${before.programs}/${flight.programs}/${rest.programs} event ${JSON.stringify(ev)} flight phases ${flight.phases} rest phases ${rest.phases} lowest ${rest.lowest} drawn leaves ${rest.stats.lastLeaves} build ${rest.stats.maxBuildMs.toFixed(1)} ms errs ${merr.length}`);
     await ctx.close();
   }
+  // Falling-leaf program gate (PowerVR rule): leaves in the air and litter on the ground reuse the live leaf program.
+  // Same page age for every reading (settled 9 s after the tree is grown), with and without ?leaffall=0, calm and storm.
+  {
+    const out = {};
+    for (const name of ['calmOn', 'calmOff', 'stormOn', 'stormOff']) {
+      const { ctx, mp, merr } = await phone(`?speed=0&weather=${name.startsWith('storm') ? 'storm' : 'calm'}${name.endsWith('Off') ? '&leaffall=0' : ''}`);
+      await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); A.leafFall?.force(6); });
+      await mp.waitForTimeout(9000);
+      out[name] = await mp.evaluate(() => { const A = window.__arbor, L = A.leafFall; return { programs: A.stage.renderer.info.programs.length, fe: A.frameErrors(), on: !!L, spawned: L?.stats.spawned ?? 0, air: L?.stats.air ?? 0, ground: L?.stats.ground ?? 0, maxMs: L?.stats.maxMs ?? 0 }; });
+      out[name].errs = merr.length;
+      await ctx.close();
+    }
+    const o = out;
+    check('phone: falling leaves and litter add no shader program (calm and storm, vs ?leaffall=0), leaves fly and land',
+      o.calmOn.programs === o.calmOff.programs && o.stormOn.programs === o.stormOff.programs && !o.calmOff.on && o.calmOn.spawned >= 6 && o.calmOn.ground >= 1
+        && o.stormOn.spawned > 20 && o.stormOn.ground > 5 && Object.values(o).every((r) => r.fe === 0 && r.errs === 0),
+      JSON.stringify(o));
+  }
   for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);
