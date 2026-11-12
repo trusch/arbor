@@ -655,10 +655,10 @@ try {
     await sp.click('#arbor-start-go');
     await sp.waitForTimeout(2500);
     const s2 = await st();
-    const el = await sp.evaluate(() => ({ hidden: document.getElementById('arbor-start').hidden, pill: !!document.getElementById('arbor-panel-open')?.offsetParent }));
+    const el = await sp.evaluate(() => ({ hidden: document.getElementById('arbor-start').hidden, pill: [...document.querySelectorAll('.arbor-ui')].some((e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0), starting: document.body.classList.contains('starting') }));
     check('start screen: start grows the shown tree (proposal + choices), the screen leaves and the panel is back',
-      s2.t > 1 && s2.nodes > s1.nodes && !s2.paused && !s2.intro && el.hidden && el.pill && s2.seed === s1.seed && s2.form === 'ginkgo' && s2.h === 9 && s2.r === s1.r && s2.hue === s1.hue && s2.fe === 0 && serr.length === 0,
-      `t=${s2.t.toFixed(1)} nodes=${s2.nodes} seed=${s2.seed} form=${s2.form} h=${s2.h} ${serr[0] ?? ''}`);
+      s2.t > 1 && s2.nodes > s1.nodes && !s2.paused && !s2.intro && el.hidden && el.pill && !el.starting && s2.seed === s1.seed && s2.form === 'ginkgo' && s2.h === 9 && s2.r === s1.r && s2.hue === s1.hue && s2.fe === 0 && serr.length === 0,
+      `t=${s2.t.toFixed(1)} nodes=${s2.nodes} seed=${s2.seed} form=${s2.form} h=${s2.h} ${JSON.stringify(el)} ${serr[0] ?? ''}`);
     const by = [];
     for (const q of ['?start=0', '?preset=Weeping%20willow&t=5', '?seed=7', '?gravity=1']) {
       await sp.goto(url + q, { waitUntil: 'domcontentloaded' });

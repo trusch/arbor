@@ -103,3 +103,14 @@ body.starting .arbor-ui, body.starting #overlay, body.starting #hud { display: n
 @media (prefers-reduced-motion: reduce) {
   .as-root, .as-card, .as-brand, .as-btn svg { transition: none; animation: none; }
 }
+/* Short viewports (phone in landscape): no brand, card from the top, the screen scrolls if it must. */
+@media (max-height: 560px) {
+  .as-root { justify-content: flex-start; overflow-y: auto; padding-top: 8px; }
+  .as-brand { display: none; }
+  .as-card { padding: 10px 14px 8px; margin: auto 0; }
+  .as-name { font-size: 22px; }
+  .as-form canvas { width: 40px; height: 40px; }
+  .as-row { min-height: 32px; }
+  .as-row input[type='range'] { height: 32px; }
+  .as-btn { min-height: 46px; }
+}
