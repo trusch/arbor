@@ -20,6 +20,7 @@ import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
+import { Blossom } from './render/blossom';
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -258,6 +259,9 @@ if (leafFall) {
   stage.scene.add(leafFall.group);
   debris.leafSink = (m, c, n) => leafFall.adopt(m, c, n, weather.violence);
 }
+/** Spring blossom (`src/render/blossom.ts`): clone of the live leaf material, own group; petals go through `leafFall`. */
+const blossom = diag.leaves && new URLSearchParams(location.search).get('blossom') !== '0' ? new Blossom(leaves, params.sky.quality === 'Low') : null;
+if (blossom) stage.scene.add(blossom.group);
 let leafFallSimT = 0;
 /** After `breakagePost` (twig leaves are handed over there). */
 function leafFallFrame(dt: number) {
@@ -549,6 +553,7 @@ function frame(now: number) {
   meadowFrame(dt);
   breakagePost(dt);
   leafFallFrame(dt);
+  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -615,6 +620,7 @@ requestAnimationFrame(loop);
   sway,
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   leafFall,
+  blossom,
   season,
   stage,
   frameErrors: () => frameErrors,

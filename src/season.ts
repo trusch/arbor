@@ -18,6 +18,8 @@ export interface SeasonParams {
   date: number;
   /** Hold this date. */
   hold: boolean;
+  /** Spring blossom amount (`src/render/blossom.ts`): 0 = none, 1 = normal, up to 1.5. */
+  blossom: number;
 }
 
 const sm = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-6))); return t * t * (3 - 2 * t); };
