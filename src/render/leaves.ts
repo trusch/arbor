@@ -852,7 +852,7 @@ export class Leaves {
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
-      if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.5 : 1);
+      if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.95 : 1);
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
       }
@@ -908,13 +908,20 @@ function h01(a: number) { a = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b); a ^= a >>> 
 /** One colour channel of the safe-path bake: wanted irradiance over what the Lambert shader will add, over the map mean. */
 /**
  * Night look of a leaf instance colour: what the eye and a camera record under the moon is dim and nearly colourless.
- * Works on the drawn colour (instance x map mean): 85 % of the chroma goes to a cool grey of the same luminance at full
- * night, and `dim` scales the result (safe path: its bake holds the lit and the translucent term at night exposure).
+ * Works on the drawn colour (instance x map mean): `NIGHT_DESAT` of the chroma goes to a cool grey-blue of the same
+ * luminance at full night (muted blue-green, not grey); `dim` < 1 marks the safe path (range compression, see below).
  */
 function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number) {
-  const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = 0.85 * g, k = 1 + (dim - 1) * g;
-  c.r = ((r + (L * 0.8 - r) * s) * k) / mm.r; c.g = ((gg + (L * 1.0 - gg) * s) * k) / mm.g; c.b = ((b + (L * 1.25 - b) * s) * k) / mm.b;
+  const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = NIGHT_DESAT * g;
+  // Safe path (dim < 1): the bake spans black interior leaves to 8x lit ones; moonlight is flat, so the luminance is
+  // compressed toward NIGHT_LREF (power 0.7) before the dim. Full path: the shader lights the leaf, chroma only.
+  const k = dim < 1 ? 1 + (dim * Math.pow(NIGHT_LREF / Math.max(1e-3, L), 0.7) - 1) * g : 1;
+  c.r = ((r + (L * NIGHT_GREY[0] - r) * s) * k) / mm.r; c.g = ((gg + (L * NIGHT_GREY[1] - gg) * s) * k) / mm.g; c.b = ((b + (L * NIGHT_GREY[2] - b) * s) * k) / mm.b;
 }
+/** Moonlit look, shared by the leaf bake, the meadow bake and the bark tint: share of chroma that goes to the cool grey, and that grey. */
+export const NIGHT_DESAT = 0.62;
+export const NIGHT_GREY = [0.74, 1.0, 1.22];
+const NIGHT_LREF = 0.4;
 
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
   const hemi = gr + (sky - gr) * hw;
