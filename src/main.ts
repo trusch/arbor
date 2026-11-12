@@ -406,6 +406,7 @@ function redraw(time: number, dt: number, force = false) {
     leafBakeD = camD; leafBakeT = time; leafSimTime = sim.time; leafLightV = sim.lightVersion; leafSunKey = sunKey; leafPV = pv; leafQuality = params.sky.quality;
     leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
+    leaves.nightGrade = stage.atmo.night;
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;

@@ -199,6 +199,8 @@ export class Leaves {
     cam: new THREE.Vector3(0, 2, 8), sun: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(1, 1, 1),
     sky: new THREE.Color(0.5, 0.6, 0.8), ground: new THREE.Color(0.1, 0.1, 0.05),
   };
+  /** 0 day .. 1 night (`Atmosphere.night`, set next to `setLighting`): the bake pulls leaf colours toward a dim, cool grey (`nightTone`). Exactly 0 by day. */
+  nightGrade = 0;
   /** Mean linear colour of the leaf map: instance colours are divided by it so the albedo is what the bake says. */
   private mapMean = new THREE.Color(0.7, 0.78, 0.6);
   /** Per-voxel sun transmittance (march through the light grid toward the sun), cached by grid version + sun dir. */
@@ -807,6 +809,7 @@ export class Leaves {
         if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll, 2.1); hh = c[0]; ss = c[1]; ll = c[2]; }
         this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
+        if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1);
         carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
         n++;
         continue;
@@ -849,6 +852,7 @@ export class Leaves {
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
+      if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.5 : 1);
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
       }
@@ -902,6 +906,16 @@ function hr() { hs ^= hs << 13; hs >>>= 0; hs ^= hs >>> 17; hs ^= hs << 5; hs >>
 function h01(a: number) { a = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b); a ^= a >>> 13; a = Math.imul(a, 0xc2b2ae35); a ^= a >>> 16; return (a >>> 0) / 4294967296; }
 
 /** One colour channel of the safe-path bake: wanted irradiance over what the Lambert shader will add, over the map mean. */
+/**
+ * Night look of a leaf instance colour: what the eye and a camera record under the moon is dim and nearly colourless.
+ * Works on the drawn colour (instance x map mean): 85 % of the chroma goes to a cool grey of the same luminance at full
+ * night, and `dim` scales the result (safe path: its bake holds the lit and the translucent term at night exposure).
+ */
+function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number) {
+  const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = 0.85 * g, k = 1 + (dim - 1) * g;
+  c.r = ((r + (L * 0.8 - r) * s) * k) / mm.r; c.g = ((gg + (L * 1.0 - gg) * s) * k) / mm.g; c.b = ((b + (L * 1.25 - b) * s) * k) / mm.b;
+}
+
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
   const hemi = gr + (sky - gr) * hw;
   const El = hemi + sun * Math.max(0, ndl);
