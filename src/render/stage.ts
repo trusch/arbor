@@ -7,6 +7,8 @@ import { Atmosphere } from './atmosphere';
 import { Post } from './post';
 import { makeTerrainGeometry } from './backdrop';
 import { tel } from '../tel';
+import { season } from '../season';
+import { groundSeason } from './landseason';
 
 /** Seconds the camera takes to ease from a hand-set view back into the automatic camera. */
 const EASE_S = 3;
@@ -16,6 +18,8 @@ const EASE_S = 3;
 const GROUND_GAIN = [0.76, 0.9, 0.4];
 /** Haze with the backdrop on: the land now has depth to several hundred metres, so the calm fog is thinner (9 % at 250 m, 30 % at 500 m, 76 % at 1000 m). */
 const HAZE = 0.3;
+// Hemisphere added on a moonless night (day for night: the tree stays readable on a dim phone). Full moon adds none.
+const NIGHT_FLOOR = 0.34;
 
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -222,6 +226,9 @@ export class Stage {
   }
 
   /** Meadow: grass texture at two incommensurate scales + world-space macro variation (no visible tiling), contact darkening at the trunk, fades into fog. */
+  private groundMat: THREE.MeshStandardMaterial | null = null;
+  private groundBase = new THREE.Color();
+  private groundK = [1, 1, 1];
   private makeGround(backdrop: boolean) {
     const mat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(backdrop), roughness: 0.96, color: 0xdcdcb4 });
     // Backdrop: the ground carries the far meadow on its own, so its colour is lifted to the mean of the lit tufts
@@ -261,6 +268,7 @@ export class Stage {
     // Backdrop: rolling terrain (flat within R_FLAT of the tree) instead of the level disc; same material, same attributes.
     const ground = new THREE.Mesh(backdrop ? makeTerrainGeometry() : new THREE.CircleGeometry(3000, 96).rotateX(-Math.PI / 2), mat);
     ground.receiveShadow = true;
+    this.groundMat = mat; this.groundBase = mat.color.clone();
     return ground;
   }
 
@@ -299,6 +307,8 @@ export class Stage {
   }
 
   /** Per-frame: advance clock, atmosphere, lights, shadow frustum, camera. snap=true jumps instead of easing. */
+  /** 0..1: how much of the night has no moonlight (0 by day, at dusk and under a full moon). Set in `frame`. */
+  nightFloor = 0;
   frame(sim: TreeSim, p: ArborParams, dt: number, snap = false) {
     const k = p.sky;
     if (k.cycle && k.dayLength > 0) k.timeOfDay = (k.timeOfDay + (dt * 24) / k.dayLength) % 24;
@@ -345,6 +355,8 @@ export class Stage {
     this.sun2.intensity = A.sun2Intensity;
     this.sun2.position.copy(c).addScaledVector(A.sun2Dir, ext * 4);
     this.sun2.target.position.copy(c);
+    // Ground through the year: colour uniform only, summer colour x a pure function of the year phase (1, 1, 1 in summer).
+    if (this.groundMat) { const gk = groundSeason(season.phase, this.groundK), b = this.groundBase; this.groundMat.color.setRGB(b.r * gk[0], b.g * gk[1], b.b * gk[2]); }
     if (k.groundTint > 0) {
       const gc = new THREE.Color().setHSL(k.groundHue, 0.55, 0.4);
       this.groundU.tint.value.set(gc.r, gc.g, gc.b, Math.min(1, k.groundTint));
@@ -376,8 +388,11 @@ export class Stage {
     const day = 1 - night;
     this.hemi.color.copy(A.fogColor).lerp(new THREE.Color(0.55, 0.7, 1.0), 0.4);
     this.hemi.groundColor.setRGB(0.22, 0.2, 0.12).multiplyScalar(0.3 + 0.7 * day);
-    // Night ambient follows the moon: 0.1 starlit, 0.19 under a full moon (it was a flat 0.15).
+    // Night ambient follows the moon: 0.24 under a full moon; the starlit 0.1 is lifted by the night floor below.
     this.hemi.intensity = 0.15 + 0.35 * day + night * (0.09 * A.moonLight - 0.05 * (1 - A.moonLight));
+    // Night floor (day for night): what the moon does not light, the ambient does. 0 until the sun is 3.4 degrees down (dusk unchanged).
+    this.nightFloor = (1 - THREE.MathUtils.smoothstep(A.sunH, -0.16, -0.06)) * (1 - A.moonLight);
+    this.hemi.intensity += NIGHT_FLOOR * this.nightFloor;
     this.scene.environmentIntensity = 0.25 + 0.3 * day;
     this.renderer.toneMappingExposure = k.exposure * (1 + 1.6 * night);
     this.applyWeather(night);

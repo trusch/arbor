@@ -669,6 +669,40 @@ export function makeTreeTexture(seed = 3, bush = false): THREE.Texture {
   return t;
 }
 
+/**
+ * Bare crown of a backdrop tree / bush (winter): trunk, limbs and a haze of twigs in grey-brown, the same card layout
+ * as `makeTreeTexture` (base at the bottom centre). Goes through `cleanLeafTexture(map, true)`, whose mip thresholds
+ * keep the twig coverage, so a far crown stays a see-through grey-brown haze instead of vanishing.
+ */
+export function makeBareTreeTexture(seed = 3, bush = false): THREE.Texture {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const rng = new Rng(seed * 53 + (bush ? 11 : 0));
+  g.lineCap = 'round';
+  const maxD = bush ? 4 : 6;
+  const limb = (x: number, y: number, a: number, len: number, w: number, d: number) => {
+    const x1 = x + Math.cos(a) * len, y1 = Math.max(S * 0.02, y - Math.sin(a) * len), bend = rng.range(-0.18, 0.18) * len;
+    const v = 58 + 34 * rng.next() + d * 7;
+    g.strokeStyle = `rgb(${v | 0},${(v * 0.87) | 0},${(v * 0.78) | 0})`;
+    g.lineWidth = Math.max(1.7, w);
+    g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo((x + x1) / 2 + Math.sin(a) * bend, (y + y1) / 2 + Math.cos(a) * bend, x1, y1); g.stroke();
+    if (d >= maxD || x1 < S * 0.14 || x1 > S * 0.86) return;
+    const n = d === 0 ? 3 : rng.next() < 0.55 ? 3 : 2;
+    for (let i = 0; i < n; i++) {
+      // Children fan out, pulled back toward upright so the crown stays a dome.
+      const na = a + ((i / (n - 1)) * 2 - 1) * rng.range(0.45, 0.85) + rng.range(-0.2, 0.2);
+      limb(x1, y1, na + (Math.PI / 2 - na) * 0.12, len * rng.range(0.55, 0.74), w * 0.6, d + 1);
+    }
+  };
+  if (bush) for (let k = 0; k < 7; k++) limb(S * (0.5 + rng.range(-0.2, 0.2)), S * 0.99, Math.PI / 2 + ((k / 6) * 2 - 1) * 1.0 + rng.range(-0.15, 0.15), S * rng.range(0.13, 0.18), S * 0.02, 1);
+  else limb(S * (0.5 + rng.range(-0.03, 0.03)), S, Math.PI / 2 + rng.range(-0.06, 0.06), S * 0.27, S * 0.055, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export type FlowerKind = 'daisy' | 'buttercup' | 'poppy' | 'clover';
 /** Wildflower map (WP3): a few stems with side-on flower heads in the upper part, small leaves low down. */
 export function makeFlowerTexture(kind: FlowerKind): THREE.Texture {

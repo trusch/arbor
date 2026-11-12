@@ -45,8 +45,8 @@ screen and grows exactly that; `?start=0` skips it for the default oak.
 
 ## Status
 
-A work in progress. Not built yet: blossom, seasons in the meadow and the background trees, snow, growth tied to the
-year. Known weak spots are listed under "Known weaknesses" below.
+A work in progress. Not built yet: snow, growth tied to the year. Known weak spots are listed under
+"Known weaknesses" below.
 
 ## Development
 
@@ -90,6 +90,14 @@ Which trees have seasons is decided by the leaf form: oak, willow, birch, maple,
 deciduous; the cypress spray is evergreen; the alien frond turns violet and sheds; the Crimson world ring turns gold
 for the cold months and keeps its leaves; the bioluminescent spiral has no seasons.
 
+The landscape follows the same year. The grass comes up short and fresh green in spring, yellows toward straw in
+autumn and lies short and dull in winter; the ground takes the same colours. Wildflowers bloom species by species from
+spring (daisies first, poppies last) and are gone by mid-autumn. The lone trees, hedgerows and woods on the hills flush
+pale green, turn each at its own time and to its own shade (russet, orange, yellow, dull brown) around the oak's own
+dates, and stand as bare grey-brown crowns through winter; about one in seven is an evergreen and stays dark green.
+All of it is a function of the date, so scrubbing, holding and seasons off behave like the oak. No snow yet.
+`node scripts/bgseasonshots.mjs` shoots the landscape at seven dates, `node scripts/bgseasoncost.mjs` measures the rebake.
+
 ### Blossom
 
 In spring the tree flowers. Pink buds show on the bare outer twigs right at the start of spring, open over a few days
@@ -110,7 +118,7 @@ peak; ground after the fall; stats and program count), `node scripts/blossomcost
 
 URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
 winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
-(frame cost summer vs autumn). Not built yet: growth tied to the year, the meadow's seasons, snow, seasonal
+(frame cost summer vs autumn). Not built yet: growth tied to the year, snow, seasonal
 weather, sun height by season.
 
 ## Start screen
