@@ -160,6 +160,13 @@ export class LeafFall {
     for (let i = 0; i < n; i++) if (this.launch(matrices, i * 16, colours, i * 3, storm * 0.6, this.rnd() * 0.45)) this.stats.adopted++;
   }
 
+  /** Blossom petals: as `adopt`, but drawn in the given colour (no pull toward the crown-leaf luminance, which they leave untouched). */
+  adoptRaw(matrices: Float32Array, colours: Float32Array, n: number, storm: number) {
+    const ref = this.refLum;
+    for (let i = 0; i < n; i++) if (this.launch(matrices, i * 16, colours, i * 3, storm * 0.6, this.rnd() * 0.3)) { this.st[(this.n - 1) * S + 14] = 1; this.stats.adopted++; }
+    this.refLum = ref;
+  }
+
   /** Tree reset: remove everything. */
   clear() {
     this.n = 0; this.air.count = 0; this.air.visible = false;

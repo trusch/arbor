@@ -361,6 +361,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     toggle('season.on', 'Seasons', 'The tree lives through the year: fresh leaves in spring, colour and leaf fall in autumn, bare in winter.'),
     seasonInfo,
     slider({ key: 'season.date', name: 'Time of year', help: 'Drag to jump to any time of the year. Starts in spring, ends in winter.', min: 0, max: 0.999, step: 0.001, big: true, fmt: (v) => seasonName(v) }),
+    slider({ key: 'season.blossom', name: 'Blossom', help: 'How richly the tree flowers in spring. 0 = no blossom.', min: 0, max: 1.5, step: 0.05, fmt: (v) => (v <= 0 ? 'Off' : `${Math.round(v * 100)} %`) }),
     toggle('season.hold', 'Hold this season', 'Stay at this time of year. The tree keeps growing.'),
     slider({ key: 'season.yearLength', name: 'Length of a year', help: 'How long one year takes at normal growth speed. Growth speed makes the year pass faster or slower too.', min: 60, max: 1200, step: 30, fmt: (v) => `${(v / 60).toFixed(1)} min` }),
     note('Evergreen trees (the cypress) keep their leaves. Trees from other worlds follow their own calendar.'));
