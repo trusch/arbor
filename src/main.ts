@@ -20,6 +20,8 @@ import { Celestial } from './render/celestial';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
+import { keepAwake } from './wake';
+keepAwake();
 
 const query = new URLSearchParams(location.search);
 // Old builds auto-marked leaf variants BAD per GPU and ran a variant ladder; both produced false positives
@@ -169,6 +171,8 @@ stage.scene.add(canopy.mesh);
 /** Living meadow (WP3): P-LEAF clones of the live leaf material; ?meadow=0 or the Meadow switch turns it off. */
 const meadow = diag.meadow ? new Meadow(leaves.mesh.material as THREE.Material, 7, diag.backdrop) : null;
 if (meadow) stage.scene.add(meadow.group);
+/** Linear bark material colour under the moon on Low (High x 2.2: its day value is white, not the warm tint). */
+const BARK_NIGHT = [0.062, 0.08, 0.1], barkNight = new THREE.Color();
 const meadowLight: MeadowLight = { sunDir: new THREE.Vector3(0, 1, 0), sunCol: new THREE.Color(), hemi: new THREE.Color(), night: 0, tintHue: 0, tint: 0, frac: 1 };
 /** Weather (WP9): state machine -> stage storm look + wind; rain sheets and bolt are P-DECAL clones of the canopy decal. */
 const rain = diag.rain ? new Rain(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
@@ -406,6 +410,7 @@ function redraw(time: number, dt: number, force = false) {
     leafBakeD = camD; leafBakeT = time; leafSimTime = sim.time; leafLightV = sim.lightVersion; leafSunKey = sunKey; leafPV = pv; leafQuality = params.sky.quality;
     leafBakeDir.copy(stage.camera.position).sub(stage.controls.target).normalize();
     tel.phase('leaves rebuild');
+    leaves.nightGrade = stage.atmo.night;
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;
@@ -555,7 +560,9 @@ function frame(now: number) {
   leaves.setGlow(glow, 1 - stage.atmo.night);
   leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
-  (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
+  // Moonlight: the bark joins the dim, cool range of the crown (lerp from the day value each frame; exactly the day value while night = 0).
+  const barkCol = (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
+  if (stage.atmo.night > 0) barkCol.lerp(barkNight.setRGB(BARK_NIGHT[0], BARK_NIGHT[1], BARK_NIGHT[2]).multiplyScalar(params.sky.quality === 'High' ? 2.2 : 1), 1 - Math.pow(1 - stage.atmo.night, 3));
   weatherRender(dt);
   tel.phase('render', true);
   stage.render(params);

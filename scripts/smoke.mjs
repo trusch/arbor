@@ -466,11 +466,11 @@ try {
   {
     const read = (pg) => pg.evaluate(() => {
       const A = window.__arbor, n = A.leaves.mesh.count, c = A.leaves.mesh.instanceColor.array, m = A.leaves.mesh.instanceMatrix.array, D = A.leaves.frontD, now = A.sim.time;
-      let r = 0, g = 0, b = 0, k = 0, kc = 0;
+      let r = 0, g = 0, b = 0, k = 0, kc = 0, red = 0;
       // Colour is read from leaves that have finished emerging (the tree is paused mid-growth at t = 60, a third of its
       // leaves are under 7 s old and an emerging leaf is yellower on purpose); the count takes every drawn leaf.
-      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; k++; if (now - D[i * 11 + 8] < 6) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; kc++; }
-      return { programs: A.stage.renderer.info.programs.length, n: k, rg: kc ? +(r / g).toFixed(3) : 0, lum: kc ? +((r + g + b) / kc).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
+      for (let i = 0; i < n; i++) { const o = i * 16; if (m[o + 4] * m[o + 4] + m[o + 5] * m[o + 5] + m[o + 6] * m[o + 6] < 1e-8) continue; k++; if (c[i * 3] > 1.5 * c[i * 3 + 1]) red++; if (now - D[i * 11 + 8] < 6) continue; r += c[i * 3]; g += c[i * 3 + 1]; b += c[i * 3 + 2]; kc++; }
+      return { programs: A.stage.renderer.info.programs.length, n: k, red: k ? +(red / k).toFixed(3) : 0, rg: kc ? +(r / g).toFixed(3) : 0, lum: kc ? +((r + g + b) / kc).toFixed(3) : 0, phase: +A.season.phase.toFixed(4), name: A.season.name, year: A.season.year, fe: A.frameErrors() };
     });
     // A reading is taken once the leaf pass the scrub started has completed (a pass in flight finishes first), not after a fixed delay.
     const settle = async (k) => {
@@ -510,8 +510,14 @@ try {
         && st.thin.n < 0.5 * st.summer.n && st.thin.n > 0 && st.winter.n === 0 && st.spring2.n > st.flush.n
         && st.summer2.n === st.summer.n && Math.abs(st.summer2.rg - st.summer.rg) < 0.01 && st.winter.name.includes('winter') && st.flush.name.includes('spring'),
       JSON.stringify({ ...st, off: o0 }));
-    check('phone: "hold this season" freezes the date, colour and leaf count (within the 1 % the tree grows) while time runs; released, the year moves on',
-      h0.phase === h1.phase && Math.abs(h0.n - h1.n) < 0.01 * h0.n && Math.abs(h0.rg - h1.rg) < 0.02 * h0.rg && h2.phase > h1.phase + 0.003 && h2.n < h1.n,
+    // Colour is compared as the share of turned leaves (instance r > 1.5 g), not as the summed r/g or the luminance: the
+    // safe-path instance colours carry the view-dependent lighting bake (clamped at 8x), so with the light constant the
+    // sums still move with the orbiting camera and the growing crown (measured in a held season: luminance 8.9..13.8
+    // around one orbit, summed r/g +-3 % pass to pass, 17 % once), while the share stayed within 0.012 over 3 s.
+    // Leaf count: at 0.62 many leaves sit near their fall date, which reads `nd.light`; every 2 Hz light-grid update of the
+    // growing tree moves the drawn count by up to 2 % either way (23866..24835 over 25 s held), release drops it 9 % in 3 s.
+    check('phone: "hold this season" freezes the date, colour (share of turned leaves) and leaf count (within 4 %) while time runs; released, the year moves on',
+      h0.phase === h1.phase && Math.abs(h0.n - h1.n) < 0.04 * h0.n && h0.red > 0.4 && Math.abs(h0.red - h1.red) < 0.03 && h2.phase > h1.phase + 0.003 && h2.n < 0.96 * h1.n,
       JSON.stringify({ h0, h1, h2 }));
     await on.ctx.close(); await off.ctx.close();
   }

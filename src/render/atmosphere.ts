@@ -81,6 +81,12 @@ export class Atmosphere {
   private envStarsCol = new THREE.Color();
   private pmrem: THREE.PMREMGenerator;
   private envRT: THREE.WebGLRenderTarget | null = null;
+  /** Calm sky values the env map is baked with (the drawn sky on Low departs from them at low sun). */
+  private envU = { turbidity: 2.5, rayleigh: 1.2, mieCoefficient: 0.004, horizonK: 9, skyTint: 0, skyGain: 1, fogCol: new THREE.Color(), tintCol: new THREE.Color() };
+  private envKeep = new THREE.Color();
+  private envKeepT = new THREE.Color();
+  private lowWarm = new THREE.Color(1.0, 0.66, 0.4);
+  private lowQ = false;
   private lastEnvDir = new THREE.Vector3(9, 9, 9);
   private envAge = 1e9;
   /** ?sky=basic (diagnostics): no Preetham sky, no PMREM bakes; scene background is the fog colour. */
@@ -221,6 +227,25 @@ export class Atmosphere {
     // Preetham radiance grows strongly with sun height; normalise so noon doesn't blow out.
     this.skyUniforms.skyGain.value = k.skyGain * (0.3 + 0.15 * (1 - smooth(0.03, 0.55, h)));
 
+    // Low (no bloom / grade / vignette to shape it): toward a low sun the Mie forward lobe is about 10x over the 1.8
+    // clamp, so the whole sun side tone-maps to flat 238 white. Existing uniforms only (the shader text is frozen), all
+    // exactly the values above while h >= 0.6: little Mie at low sun (pale blue with a gradient, the disc separates),
+    // and toward sunset a taller horizon blend into a warmer horizon colour plus a pale blue cast on the dull upper sky.
+    // The env map keeps the values above (`envU`, `regenEnv`), so the landscape light is unchanged.
+    const E = this.envU;
+    E.turbidity = u.turbidity.value; E.rayleigh = u.rayleigh.value; E.mieCoefficient = u.mieCoefficient.value;
+    E.horizonK = this.skyUniforms.horizonK.value = 9; E.skyGain = this.skyUniforms.skyGain.value;
+    E.skyTint = k.skyTint; E.fogCol.copy(this.fogColor); E.tintCol.copy(tint);
+    this.lowQ = k.quality === 'Low';
+    if (this.lowQ) {
+      const w = 1 - smooth(0.4, 0.6, h), set = (1 - smooth(0.05, 0.3, h)) * smooth(-0.1, 0.0, h);
+      u.mieCoefficient.value += (0.0006 - u.mieCoefficient.value) * w;
+      this.skyUniforms.horizonK.value = 9 - 5.5 * set;
+      this.skyUniforms.fogCol.value.lerp(this.lowWarm, (0.2 * w + 0.4 * set) * smooth(-0.1, 0.05, h));
+      this.skyUniforms.skyGain.value *= 1 - 0.6 * set;
+      if (k.skyTint <= 0) { this.skyUniforms.skyTintCol.value.setRGB(0.42, 0.58, 0.95); this.skyUniforms.skyTint.value = 0.45 * set; }
+    }
+
     // Environment map: regenerate on significant sun change or every few seconds.
     this.envAge += dt;
     // Low quality (phones): at most one PMREM bake every 3 s, so a fast day cycle doesn't churn GPU memory.
@@ -233,7 +258,13 @@ export class Atmosphere {
 
   private regenEnv() {
     const s = this.envSky.material.uniforms, d = this.sky.material.uniforms;
-    for (const key of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG'] as const) s[key].value = d[key].value;
+    const E = this.envU, U = this.skyUniforms;
+    for (const key of ['turbidity', 'rayleigh', 'mieCoefficient'] as const) s[key].value = E[key];
+    s.mieDirectionalG.value = d.mieDirectionalG.value;
+    // The patched uniforms are shared with the drawn sky: bake with the calm, quality-independent values, then restore.
+    const kH = U.horizonK.value, kT = U.skyTint.value, kG = U.skyGain.value;
+    this.envKeep.copy(U.fogCol.value); this.envKeepT.copy(U.skyTintCol.value);
+    if (this.lowQ) { U.skyGain.value = E.skyGain; U.horizonK.value = E.horizonK; U.skyTint.value = E.skyTint; U.fogCol.value.copy(E.fogCol); U.skyTintCol.value.copy(E.tintCol); }
     s.sunPosition.value.copy(this.sunDir);
     // Night: the Preetham sky goes black; give the env a faint blue floor so moonlit scenes still read.
     const n = this.night;
@@ -244,6 +275,7 @@ export class Atmosphere {
     const rt = this.pmrem.fromScene(this.envScene, 0, 1, 2000);
     tel.phase('pmrem done');
     this.bakes++;
+    U.horizonK.value = kH; U.skyTint.value = kT; U.skyGain.value = kG; U.fogCol.value.copy(this.envKeep); U.skyTintCol.value.copy(this.envKeepT);
     this.envRT?.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;
