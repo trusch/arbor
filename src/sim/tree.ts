@@ -70,6 +70,31 @@ export interface Leaf {
   tint: number;
 }
 
+/** A limb or twig that came off (`TreeSim.breakAt`); renderers drain `TreeSim.breaks`. */
+export interface BreakEvent {
+  /** First detached node; its parent is the stub end and the hinge point. */
+  root: number;
+  /** All detached node ids, ascending (root first). */
+  nodeIds: number[];
+  /** Chains that went with it (all pruned); the first one starts at the stub end. */
+  chains: number[];
+  time: number;
+  /** Leaves that sat on the detached nodes. */
+  leaves: number;
+  /** Radius at the break. */
+  radius: number;
+}
+
+/** What the breakage rule reads from the wind (`src/wind.ts`; kept structural so the sim stays import-free of it). */
+export interface WindLike { base: number; dirX: number; dirZ: number; gust(x: number, z: number): number }
+/** Load model constants: sail area per leaf, wood sail/weight factor, gravity moment factor. */
+const A_LEAF = 0.012, C_WOOD = 1, G_W = 0.08;
+/**
+ * Strength scale: `params.breakage.strength` 1 = this sigma, the 98th percentile of u at gust 1.0 on the t = 90 default
+ * oak (scripts/breakcalib.mjs): a 120 s full-strength storm (wind.base 1.0) takes about 4 twigs and 1 small limb.
+ */
+export const SIGMA_REF = 9.94e6;
+
 const UP: [number, number, number] = [0, 1, 0];
 
 export class TreeSim {
@@ -84,6 +109,14 @@ export class TreeSim {
   lightVersion = 0;
   /** Bumps whenever topology (node/leaf count) changes. */
   topology = 0;
+  /** Break events not yet consumed by the renderer (debris). */
+  breaks: BreakEvent[] = [];
+  /** Per-node accumulated overload (breakage rule), grown on demand. */
+  damage = new Float32Array(0);
+  /** Last load evaluation: ratio u per evaluated chain base (for calibration), and counters. */
+  loadStats = { evals: 0, n: 0, max: 0, over: 0, twigs: 0, limbs: 0 };
+  private loadTimer = 0;
+  private ld = { leaf: new Float32Array(0), w: new Float32Array(0), cx: new Float32Array(0), cy: new Float32Array(0), cz: new Float32Array(0) };
   bboxMin = [0, 0, 0];
   bboxMax = [0, 0, 0];
 
@@ -111,6 +144,8 @@ export class TreeSim {
     this.lightVersion++;
     this.time = 0;
     this.topology++;
+    this.breaks = [];
+    this.damage = new Float32Array(0);
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -430,6 +465,126 @@ export class TreeSim {
       if (L < thr) ch.shade++; else ch.shade = 0;
       if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; }
     }
+  }
+
+  /**
+   * Snap the limb at node `id` off the tree (audit 3.5 "Breakage rule"). The break is made at a chain base: `id` is
+   * resolved to its chain, and the chain keeps its first segment as a stub when it is long enough (the remainder moves
+   * to a new, pruned chain so every node keeps a valid chain index). Every chain rooted in the detached set is pruned,
+   * buds on detached nodes are dropped, topology bumps and a `BreakEvent` is pushed. Returns null when nothing can
+   * break there (trunk, already pruned, unknown node).
+   */
+  breakAt(id: number): BreakEvent | null {
+    const nodes = this.nodes, chains = this.chains, N = nodes.length;
+    const nd0 = nodes[id];
+    if (!nd0 || nd0.parent < 0) return null;
+    const ci = nd0.chain, ch = chains[ci];
+    if (!ch || ch.order < 1 || ch.pruned || ch.nodes.length < 2) return null;
+    const list: number[] = [];
+    let root: number;
+    if (ch.nodes.length >= 4) {
+      // Stub: the chain keeps [branch point, first node]; the rest becomes a pruned chain of its own.
+      const rest = ch.nodes.splice(2);
+      root = rest[0];
+      const nc = chains.length;
+      chains.push({ nodes: [ch.nodes[1], ...rest], order: ch.order, alive: false, starve: 0, pruned: true, shade: 0, wx: ch.wx, wy: ch.wy, wz: ch.wz });
+      for (const j of rest) nodes[j].chain = nc;
+      ch.alive = false;
+      list.push(nc);
+    } else {
+      root = ch.nodes[1];
+      ch.pruned = true; ch.alive = false;
+      list.push(ci);
+    }
+    // Children have larger ids than parents: one forward scan marks the subtree.
+    const inSub = new Uint8Array(N);
+    inSub[root] = 1;
+    const nodeIds = [root];
+    for (let j = root + 1; j < N; j++) if (inSub[nodes[j].parent]) { inSub[j] = 1; nodeIds.push(j); }
+    for (let c = 0; c < chains.length; c++) {
+      const cc = chains[c];
+      if (cc.nodes.length < 2 || !inSub[cc.nodes[1]]) continue;
+      if (!cc.pruned) { cc.pruned = true; cc.alive = false; }
+      if (c !== list[0]) list.push(c);
+    }
+    for (let i = this.buds.length - 1; i >= 0; i--) {
+      const b = this.buds[i];
+      if (inSub[b.node] || chains[b.chain].pruned) { this.buds[i] = this.buds[this.buds.length - 1]; this.buds.pop(); }
+    }
+    let lv = 0;
+    for (const lf of this.leaves) if (inSub[lf.node]) lv++;
+    this.topology++;
+    this.lightTimer = 0; // the light grid (leaf bake, canopy shadow, meadow shade) follows on the next step
+    const ev: BreakEvent = { root, nodeIds, chains: list, time: this.time, leaves: lv, radius: nodes[root].radius };
+    this.breaks.push(ev);
+    if (this.breaks.length > 16) this.breaks.shift();
+    return ev;
+  }
+
+  /**
+   * Wind-load ratio u = M / S at every chain base of order >= 1 (audit 3.5 "Breakage rule"). One bottom-up pass
+   * accumulates leaf count, weight and the weighted centroid per subtree. Wind force F = q (A_LEAF subLeaf + C_WOOD
+   * subLen 2r), q = gust^2 at the node; lever = node-to-centroid distance perpendicular to the wind; M = F d + G_W subW
+   * d_horizontal; S = sigma r^3. `gustOverride` evaluates at a fixed gust (calibration). `out(id, u, subtreeLen)` is
+   * called per evaluated chain base.
+   */
+  loadRatios(wind: WindLike, sigma: number, out: (id: number, u: number, subLen: number) => void, gustOverride = -1) {
+    const nodes = this.nodes, chains = this.chains, N = nodes.length, L = this.ld;
+    if (L.w.length < N) {
+      const cap = Math.ceil(N * 1.5) + 64;
+      L.leaf = new Float32Array(cap); L.w = new Float32Array(cap); L.cx = new Float32Array(cap); L.cy = new Float32Array(cap); L.cz = new Float32Array(cap);
+    }
+    const lf = L.leaf, sw = L.w, cx = L.cx, cy = L.cy, cz = L.cz;
+    lf.fill(0, 0, N); sw.fill(0, 0, N); cx.fill(0, 0, N); cy.fill(0, 0, N); cz.fill(0, 0, N);
+    for (const l of this.leaves) lf[l.node] += 1;
+    for (let i = N - 1; i > 0; i--) {
+      const nd = nodes[i];
+      if (chains[nd.chain].pruned) { lf[i] = 0; continue; }
+      const w = A_LEAF * lf[i] + C_WOOD * nd.len * nd.radius;
+      sw[i] += w; cx[i] += nd.wx * w; cy[i] += nd.wy * w; cz[i] += nd.wz * w;
+      const p = nd.parent;
+      lf[p] += lf[i]; sw[p] += sw[i]; cx[p] += cx[i]; cy[p] += cy[i]; cz[p] += cz[i];
+    }
+    for (let c = 1; c < chains.length; c++) {
+      const ch = chains[c];
+      if (ch.pruned || ch.order < 1 || ch.nodes.length < 2) continue;
+      const i = ch.nodes[1], nd = nodes[i], W = sw[i];
+      if (W <= 0) continue;
+      const vx = cx[i] / W - nd.wx, vy = cy[i] / W - nd.wy, vz = cz[i] / W - nd.wz;
+      const al = vx * wind.dirX + vz * wind.dirZ;
+      const px = vx - al * wind.dirX, pz = vz - al * wind.dirZ;
+      const d = Math.sqrt(px * px + vy * vy + pz * pz), dh = Math.hypot(vx, vz);
+      const g = gustOverride >= 0 ? gustOverride : wind.gust(nd.wx, nd.wz);
+      const F = g * g * (A_LEAF * lf[i] + C_WOOD * nd.subLen * 2 * nd.radius);
+      const r = nd.radius;
+      out(i, (F * d + G_W * W * dh) / (sigma * SIGMA_REF * r * r * r), nd.subLen);
+    }
+  }
+
+  /**
+   * Breakage rule, call once per frame with real seconds. Evaluated at 4 Hz and only while `wind.base` > 0.6 (a calm
+   * or breezy day never breaks anything). Damage accumulates: damage += dt max(0, u - 1); a chain base whose damage
+   * passes 1 breaks (at most one per evaluation, the most damaged). Returns the break event or null.
+   */
+  windLoad(dt: number, wind: WindLike, sigma: number): BreakEvent | null {
+    if (wind.base <= 0.6 || sigma <= 0) { this.loadTimer = 0; return null; }
+    this.loadTimer += dt;
+    if (this.loadTimer < 0.25) return null;
+    const step = Math.min(0.5, this.loadTimer);
+    this.loadTimer = 0;
+    if (this.damage.length < this.nodes.length) { const d = new Float32Array(Math.ceil(this.nodes.length * 1.5) + 64); d.set(this.damage); this.damage = d; }
+    const D = this.damage, st = this.loadStats;
+    let worst = -1, wd = 1, n = 0, max = 0, over = 0;
+    this.loadRatios(wind, sigma, (i, u) => {
+      n++;
+      if (u > max) max = u;
+      if (u > 1) { over++; D[i] += step * (u - 1); if (D[i] > wd) { wd = D[i]; worst = i; } }
+    });
+    st.evals++; st.n = n; st.max = max; st.over = over;
+    if (worst < 0) return null;
+    const ev = this.breakAt(worst);
+    if (ev) { D[worst] = 0; if (ev.nodeIds.length < 30) st.twigs++; else st.limbs++; }
+    return ev;
   }
 
   /** Pipe-model radii, subtree loads, gravity sag and world positions. */

@@ -511,6 +511,38 @@ export class Leaves {
     return placed;
   }
 
+  /**
+   * Debris hand-over (breakage): copies the matrices and colours of every drawn instance whose node is in `inSub`
+   * (world space, as drawn this frame) and hides those instances in the live mesh (zero matrix, node id -1 so `place`
+   * and `follow` skip them until the next pass completes). Data-only: ranged matrix uploads, no material change.
+   * Call after `follow` in a frame (follow clears the update ranges), and restart an open pass afterwards.
+   */
+  takeInstances(inSub: Uint8Array): { n: number; matrices: Float32Array; colours: Float32Array } {
+    const n = this.followOk ? this.mesh.count : 0, ND = this.frontNode, N = inSub.length;
+    let k = 0;
+    for (let i = 0; i < n; i++) { const id = ND[i]; if (id >= 0 && id < N && inSub[id]) k++; }
+    const matrices = new Float32Array(k * 16), colours = new Float32Array(k * 3);
+    if (k === 0) return { n: 0, matrices, colours };
+    const M = this.mesh.instanceMatrix, arr = M.array as Float32Array, col = this.mesh.instanceColor!.array as Float32Array;
+    let a = -1, b = -1;
+    k = 0;
+    for (let i = 0; i < n; i++) {
+      const id = ND[i];
+      if (id < 0 || id >= N || !inSub[id]) continue;
+      const o = i * 16;
+      for (let j = 0; j < 16; j++) { matrices[k * 16 + j] = arr[o + j]; arr[o + j] = 0; }
+      colours[k * 3] = col[i * 3]; colours[k * 3 + 1] = col[i * 3 + 1]; colours[k * 3 + 2] = col[i * 3 + 2];
+      ND[i] = -1;
+      k++;
+      // Upload in runs (gaps under 256 instances are merged) instead of one range per leaf.
+      if (a < 0) a = i; else if (i - b > 256) { M.addUpdateRange(a * 16, (b - a + 1) * 16); a = i; }
+      b = i;
+    }
+    M.addUpdateRange(a * 16, (b - a + 1) * 16);
+    M.needsUpdate = true;
+    return { n: k, matrices, colours };
+  }
+
   /** Per-node moved verdict for one follow sweep: 1 when the node left its reference state by more than the epsilons. */
   private markMoved(sim: TreeSim) {
     const nodes = sim.nodes, N = nodes.length;

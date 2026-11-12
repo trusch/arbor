@@ -19,8 +19,9 @@ export class BranchMesh {
   private lastTopology = -1;
   private ringCache = new Map<number, { c: Float32Array; s: Float32Array }>();
 
-  constructor(bark: BarkTextures) {
-    const mat = new THREE.MeshStandardMaterial({
+  /** Pass the bark textures, or an existing bark material to share (debris: same program, P-BARK). */
+  constructor(bark: BarkTextures | THREE.Material) {
+    const mat = bark instanceof THREE.Material ? bark : new THREE.MeshStandardMaterial({
       map: bark.map,
       normalMap: bark.normalMap,
       normalScale: new THREE.Vector2(1.4, 1.4),

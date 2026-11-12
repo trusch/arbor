@@ -29,6 +29,8 @@ export function diagSwitches(q: URLSearchParams) {
     meadow: !off('meadow'),
     /** ?rain=0: no rain sheets and no lightning bolt plane (storm light, sky and wind stay). */
     rain: !off('rain'),
+    /** ?breakage=0: no wind breakage (limbs never snap; dev hooks still work). */
+    breakage: !off('breakage'),
     skyBasic: safe || q.get('sky') === 'basic',
     grow: !off('grow'),
     antialias: !off('antialias'),
