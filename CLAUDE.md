@@ -1,6 +1,6 @@
 # Arbor: project notes
 
-- Stack: Vite + TS + three r187; controls panel is own DOM (`src/ui.ts` + `src/ui.css`; lil-gui is still in package.json but unused). Local git only, no remote. Repo has `commit.gpgsign=false` locally.
+- Stack: Vite + TS + three r187; controls panel is own DOM (`src/ui.ts` + `src/ui.css`; lil-gui is still in package.json but unused). Remote `origin` = github.com/trusch/arbor (public); only the coordinator or the user pushes, workers never push. GitHub Pages (https://trusch.github.io/arbor/) serves the `gh-pages` branch, published with `scripts/publish-pages.sh` (clean checkout of a commit; the token has no `workflow` scope, so there is no Actions workflow). On `*.github.io` `public/telemetry.js` sends nothing. Repo has `commit.gpgsign=false` locally.
 - All tunables live in `src/params.ts` (`ArborParams`); sim/render read them live. Add new params there and in `src/ui.ts`.
 - Sim is three-free (`src/sim/`); renderer reads `TreeNode.w*` (sagged world) fields.
 - Children always have larger node ids than parents; `updateStructure` relies on this for its bottom-up and top-down passes.
