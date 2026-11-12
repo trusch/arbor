@@ -119,7 +119,7 @@ export interface LeafSeason {
 
 /** Per leaf form (`LEAF_FORMS` ids). Unknown ids behave like the oak. */
 const FORM_SEASON: Record<string, LeafSeason> = {
-  oak: { drop: true, pal: { h0: 0.045, h1: 0.105, s: 0.62, l: 1.05, brown: 0.4 } },
+  oak: { drop: true, pal: { h0: 0.05, h1: 0.11, s: 0.7, l: 1.15, brown: 0.35 } },
   maple: { drop: true, pal: { h0: 0.0, h1: 0.075, s: 0.88, l: 1.3, brown: 0.06 } },
   birch: { drop: true, pal: { h0: 0.125, h1: 0.155, s: 0.9, l: 1.7, brown: 0.05 } },
   ginkgo: { drop: true, pal: { h0: 0.135, h1: 0.152, s: 0.95, l: 1.8, brown: 0 } },
@@ -161,12 +161,13 @@ const out3 = [0, 0, 0];
  * Seasonal leaf colour: takes the summer colour (sRGB HSL) and returns the colour at year phase `ph` in a shared
  * array [h, s, l]. Spring: pale yellow-green, darkening over about a month. Autumn: the hue travels from green through
  * yellow-green to the leaf's own shade of the palette (`shade` 0..1; `dull` 0..1 picks the brown share), mottled by
- * the per-leaf dates rather than switched; a turned leaf dries duller until it falls.
+ * the per-leaf dates rather than switched; a turned leaf dries duller until it falls. `lift` scales the autumn
+ * lightness (the full leaf path keeps a much darker summer albedo than the safe path, which would turn russet into black).
  */
-export function leafSeasonColour(ph: number, fs: LeafSeason, tOn: number, tTurn: number, tFall: number, thisYear: boolean, shade: number, dull: number, h: number, s: number, l: number): number[] {
+export function leafSeasonColour(ph: number, fs: LeafSeason, tOn: number, tTurn: number, tFall: number, thisYear: boolean, shade: number, dull: number, h: number, s: number, l: number, lift = 1): number[] {
   if (!thisYear) {
     const pale = 1 - sm(tOn + 0.03, tOn + 0.2, ph);
-    if (pale > 0) { h -= 0.055 * pale; s = Math.min(1, s + 0.2 * pale); l *= 1 + 0.75 * pale; }
+    if (pale > 0) { h -= 0.045 * pale; s = Math.min(1, s + 0.1 * pale); l *= 1 + 0.32 * pale; }
   }
   const P = fs.pal;
   if (P && ph > tTurn) {
@@ -175,7 +176,7 @@ export function leafSeasonColour(ph: number, fs: LeafSeason, tOn: number, tTurn:
     if (!fs.drop) c *= 1 - sm(0.9, 0.995, ph);
     const brown = dull < P.brown;
     let th = brown ? 0.07 + 0.03 * shade : P.h0 + (P.h1 - P.h0) * shade;
-    const ts = brown ? 0.42 : P.s * (0.85 + 0.3 * dull), tl = l * (brown ? 0.8 : P.l * (0.85 + 0.3 * shade));
+    const ts = brown ? 0.42 : P.s * (0.85 + 0.3 * dull), tl = l * lift * (brown ? 0.8 : P.l * (0.85 + 0.3 * shade));
     // Shortest way round the hue circle (green to red goes through yellow).
     let dh = th - h; if (dh > 0.5) dh -= 1; else if (dh < -0.5) dh += 1;
     th = h + dh;

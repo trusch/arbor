@@ -804,7 +804,7 @@ export class Leaves {
         // the painted texture adds detail without brightening. Dark interior via the light grid.
         const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
         let hh = lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05, ss = Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12), ll = (0.19 + lf.tint * 0.1 + young * 0.1) * lp.lightness;
-        if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll); hh = c[0]; ss = c[1]; ll = c[2]; }
+        if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll, 2.1); hh = c[0]; ss = c[1]; ll = c[2]; }
         this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
         carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
