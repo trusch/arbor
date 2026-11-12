@@ -183,6 +183,11 @@ export class Blossom {
   private rec: Float32Array;
   private node: Int32Array;
   private falling: Int32Array;
+  /** Scale of each cluster at `lastPh` (0 = not drawn). */
+  private sc: Float32Array;
+  private lastPh = NaN;
+  private tick = 0;
+  private nf = 0;
   private n = 0;
   private key = '';
   private formId = '';
@@ -200,6 +205,7 @@ export class Blossom {
     this.rec = new Float32Array(this.cap * R);
     this.node = new Int32Array(this.cap);
     this.falling = new Int32Array(this.cap);
+    this.sc = new Float32Array(this.cap);
     const live = leaves.mesh.material as THREE.MeshLambertMaterial;
     const safe = live.isMeshLambertMaterial || (live as unknown as THREE.MeshBasicMaterial).isMeshBasicMaterial;
     const tex = this.tex = this.paint(blossomForm('oak')!);
@@ -316,7 +322,7 @@ export class Blossom {
       if (pass === 1) this.n = n;
     }
     this.stats.clusters = this.n; this.stats.rebuilds++;
-    this.colKey = NaN;
+    this.colKey = NaN; this.lastPh = NaN;
   }
 
   /** Once per frame, after the sway offsets of the frame are known. */
@@ -334,8 +340,31 @@ export class Blossom {
     this.simT = sim.time;
     const n = this.n, rec = this.rec, D = e.D, ND = this.node;
     const a = mesh.instanceMatrix.array as Float32Array;
-    const ck = Math.round(ph * 800) + Math.round(e.night * 20) * 1000 + Math.floor(performance.now() / 500) * 1e5;
-    const paintCol = ck !== this.colKey;
+    // Sizes move with the year: all matrices are rewritten when the phase moved 0.0005 (or jumped). In between only the
+    // translations follow the sway, like `Leaves.sway`; on Low every second frame (the sway itself is updated that often).
+    // Colours (view- and light-dependent) are repainted with a full pass once a second.
+    const ck = Math.round(e.night * 20) + Math.floor(performance.now() / 1000) * 100;
+    const full = !(Math.abs(ph - this.lastPh) < 0.0005) || season.jumped || ck !== this.colKey;
+    this.tick++;
+    if (!full) {
+      if (!e.low || (this.tick & 1)) {
+        const SC = this.sc;
+        for (let i = 0, o = 0, q = 12; i < n; i++, o += R, q += 16) {
+          const s = SC[i];
+          const d = ND[i] * 3, an = rec[o + 15] * s;
+          if (s === 0 || d + 2 >= D.length) continue;
+          a[q] = rec[o] - rec[o + 6] * an + D[d]; a[q + 1] = rec[o + 1] - rec[o + 7] * an + D[d + 1]; a[q + 2] = rec[o + 2] - rec[o + 8] * an + D[d + 2];
+        }
+        const M = mesh.instanceMatrix;
+        M.clearUpdateRanges(); M.addUpdateRange(0, n * 16); M.needsUpdate = true;
+      }
+      this.petals(dt, e, f, n, this.nf, st.open);
+      st.lastMs = performance.now() - t0; st.sumMs += st.lastMs; st.frames++;
+      if (st.lastMs > st.maxMs) st.maxMs = st.lastMs;
+      return;
+    }
+    this.lastPh = ph;
+    const paintCol = true;
     this.colKey = ck;
     const col = mesh.instanceColor!.array as Float32Array, dim = 0.74 * (1 - 0.5 * e.night);
     // Lights as the Lambert shader of the card will see them.
@@ -351,6 +380,7 @@ export class Blossom {
     let drawn = 0, open = 0, nf = 0;
     for (let i = 0, o = 0, q = 0; i < n; i++, o += R, q += 16) {
       const tOpen = rec[o + 12], tFall = rec[o + 13], s = blossomScale(ph, tOpen, tFall);
+      this.sc[i] = s;
       if (s === 0) { if (a[q + 15] !== 0) { for (let j = 0; j < 16; j++) a[q + j] = 0; } continue; }
       drawn++;
       if (ph >= tFall) this.falling[nf++] = i; else if (ph >= tOpen + OPENING) open++;
@@ -380,10 +410,16 @@ export class Blossom {
     const M = mesh.instanceMatrix;
     M.clearUpdateRanges(); M.addUpdateRange(0, n * 16); M.needsUpdate = true;
     if (paintCol) { const C = mesh.instanceColor!; C.clearUpdateRanges(); C.addUpdateRange(0, n * 3); C.needsUpdate = true; }
-    st.drawn = drawn; st.open = open; st.falling = nf;
+    st.drawn = drawn; st.open = open; st.falling = this.nf = nf;
+    this.petals(dt, e, f, n, nf, open);
+    st.lastMs = performance.now() - t0;
+    st.sumMs += st.lastMs; st.frames++;
+    if (st.lastMs > st.maxMs) st.maxMs = st.lastMs;
+  }
 
-    // Petal fall: shedding clusters (and, sparsely, open ones in a gust) let petals go into the falling-leaf system.
-    const fall = e.fall;
+  /** Petal fall: shedding clusters (and, sparsely, open ones in a gust) let petals go into the falling-leaf system. */
+  private petals(dt: number, e: BlossomEnv, f: BlossomForm, n: number, nf: number, open: number) {
+    const fall = e.fall, rec = this.rec, ND = this.node, st = this.stats, a = this.mesh.instanceMatrix.array as Float32Array;
     if (fall && f.fall && !season.jumped && nf + open > 0) {
       const w = e.wind, cxz = ND[nf > 0 ? this.falling[0] : 0] >= 0 ? rec : rec;
       const g0 = w.base > 1e-3 ? w.gust(cxz[0], cxz[2]) / w.base : 0, g3 = g0 * g0 * g0;
@@ -414,8 +450,5 @@ export class Blossom {
       }
       if (k > 0) { fall.adoptRaw(pm, pc, k, e.violence); st.petals += k; }
     }
-    st.lastMs = performance.now() - t0;
-    st.sumMs += st.lastMs; st.frames++;
-    if (st.lastMs > st.maxMs) st.maxMs = st.lastMs;
   }
 }
