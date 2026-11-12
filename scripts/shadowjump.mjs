@@ -3,7 +3,7 @@
 // fill counter and the shadow camera bounds. Prints the largest frame-to-frame steps and what changed at each.
 // Usage: node scripts/shadowjump.mjs URL prefix [extraQuery]
 //   env: MODE=phone|desktop  SPEED=1  DUR=60 (sim s)  FPS=8  AUTO=1 (app camera, tree visible, lower 40 % of the frame)
-//        THROTTLE=n  GPU=vulkan
+//        HOUR=h  CYCLE=1 (day cycle on; the app default is off, hour 17.6)  THROTTLE=n  GPU=vulkan
 // Output: shots/<prefix>-curve.png (mean |dL| per sample, bake events marked), shots/<prefix>-jumpN-{a,b}.png, /tmp/<prefix>.json
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
@@ -21,8 +21,10 @@ try {
   await page.goto(`${url}?nogui=1&hideui=1&speed=0&weather=calm&season.on=false${AUTO ? '' : '&autoRotate=false&cinema=false'}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(1500);
-  const info = await page.evaluate(([auto, fps]) => {
+  const info = await page.evaluate(([auto, fps, hour, cycle]) => {
     const a = window.__arbor, st = a.stage;
+    if (hour >= 0) a.params.sky.timeOfDay = hour;
+    if (cycle) a.params.sky.cycle = true;
     if (!auto) {
       a.params.camera.autoFrame = false; a.params.sky.wind = 0;
       st.controls.target.set(0, 0, 0); st.camera.position.set(0.01, 30, 0.01); st.controls.update?.();
@@ -80,7 +82,7 @@ try {
     };
     requestAnimationFrame(tick);
     return { cycle: a.params.sky.cycle, hour: a.params.sky.timeOfDay, dayLength: a.params.sky.dayLength, quality: a.params.sky.quality, leafCast: a.leaves.mesh.castShadow, hidden: window.__sjMats?.size };
-  }, [AUTO, FPS]);
+  }, [AUTO, FPS, Number(E.HOUR ?? -1), E.CYCLE === '1']);
   console.log(PRE, JSON.stringify(info));
   await page.evaluate((sp) => { const a = window.__arbor; for (const m of window.__sjMats ?? []) { m.colorWrite = false; m.depthWrite = false; } if (a.stage.post?.gtao && window.__sjMats) a.stage.post.gtao.enabled = false; window.__sj.on = true; a.params.time.speed = sp; }, SPEED);
   const t0 = Date.now();
@@ -103,7 +105,7 @@ try {
     g.strokeStyle = '#000'; g.beginPath();
     R.forEach((r, i) => { const x = (r.t / tMax) * W, y = H - 4 - (r.d / dMax) * (H - 50); i ? g.lineTo(x, y) : g.moveTo(x, y); });
     g.stroke(); g.fillStyle = '#000'; g.font = '11px sans-serif'; g.fillText(`max ${dMax.toFixed(2)} L/255 mean |dL| per sample; t 0..${tMax.toFixed(0)} s; red decal bake, blue shade fill, green frustum`, 4, 52);
-    return { rows: R, top: idx.map((i) => ({ i, a: png(S.frames[i - 1]), b: png(S.frames[i]) })), curve: c.toDataURL('image/png'), canopy: { bakes: a.canopy.bakes, maxMs: a.canopy.maxMs }, programs: a.stage.renderer.info.programs.length };
+    return { rows: R, top: idx.map((i) => ({ i, a: png(S.frames[i - 1]), b: png(S.frames[i]) })), curve: c.toDataURL('image/png'), canopy: { bakes: a.canopy.bakes, maxMs: a.canopy.maxMs, fadeMs: a.canopy.fadeMs, fadeUploads: a.canopy.fadeUploads }, programs: a.stage.renderer.info.programs.length };
   });
   const save = (p, u) => writeFileSync(p, Buffer.from(u.split(',')[1], 'base64'));
   save(`shots/${PRE}-curve.png`, out.curve);

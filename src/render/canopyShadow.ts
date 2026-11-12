@@ -53,6 +53,8 @@ export class CanopyShadow {
   private fadeStep = 0;
   /** Texture uploads of fade steps (profiling). */
   fadeUploads = 0;
+  /** Summed ms of all fade steps incl. the one inside each bake (pixel blend + canvas write). */
+  fadeMs = 0;
   private key = '';
   private lastT = -1e9;
   private ver = -1;
@@ -211,14 +213,21 @@ export class CanopyShadow {
     // Sun flecks: small soft ellipses (stretched along u like the shadow) punched into the crown shadow where it is
     // only moderately dense (gaps between clumps), not under the trunk/core.
     holes.fill(0);
-    // Candidates sit on a world-anchored 0.5 m lattice in the (u, w) frame (one hashed fleck per cell), so a fleck
-    // keeps its place on the ground from bake to bake.
+    // Candidates sit on a 0.5 m lattice in WORLD x/z (one hashed fleck per cell), so a fleck keeps its place on the
+    // ground from bake to bake, also while the sun turns; only its stretch follows the sun.
     let f = 1;
     const fr = () => { f = Math.imul(f ^ (f >>> 15), 2246822519); f = Math.imul(f ^ (f >>> 13), 3266489917); f ^= f >>> 16; return (f >>> 8) / 16777216; };
-    const FL = 0.5, fe = Math.min(2.2, stretch), i1 = Math.ceil(u1 / FL), j1 = Math.ceil(w1 / FL);
-    for (let jj = Math.floor(w0 / FL); jj < j1; jj++) for (let ii = Math.floor(u0 / FL); ii < i1; ii++) {
+    const FL = 0.5, fe = Math.min(2.2, stretch);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let c = 0; c < 4; c++) {
+      const u = c & 1 ? u1 : u0, w = c & 2 ? w1 : w0, x = u * ux - w * uz, z = u * uz + w * ux;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    const i1 = Math.ceil(x1 / FL), j1 = Math.ceil(z1 / FL);
+    for (let jj = Math.floor(z0 / FL); jj < j1; jj++) for (let ii = Math.floor(x0 / FL); ii < i1; ii++) {
       f = (Math.imul(ii, 374761393) ^ Math.imul(jj, 668265263)) | 0;
-      const gx = ((ii + fr()) * FL - u0) * toU, gz = ((jj + fr()) * FL - w0) * toW;
+      const fx = (ii + fr()) * FL, fz = (jj + fr()) * FL;
+      const gx = (fx * ux + fz * uz - u0) * toU, gz = (-fx * uz + fz * ux - w0) * toW;
       if (!(gx >= 0 && gz >= 0 && gx < S && gz < S)) continue;
       const t = tau[(gz | 0) * S + (gx | 0)];
       if (t < 0.15 || t > 2.2) continue;
@@ -295,10 +304,12 @@ export class CanopyShadow {
 
   private fadeTo(step: number) {
     this.fadeStep = step;
+    const t0 = performance.now();
     const k = Math.round((256 * step) / FADE_STEPS), from = this.from, to = this.to, shown = this.shown, px8 = this.img.data, n = this.S * this.S;
     for (let i = 0; i < n; i++) { const a = from[i], v = a + (((to[i] - a) * k) >> 8); shown[i] = v; px8[i * 4 + 3] = v; }
     this.ctx.putImageData(this.img, 0, 0);
     this.tex.needsUpdate = true;
+    this.fadeMs += performance.now() - t0;
   }
 
   /**
