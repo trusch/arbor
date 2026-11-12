@@ -38,9 +38,27 @@ Which trees have seasons is decided by the leaf form: oak, willow, birch, maple,
 deciduous; the cypress spray is evergreen; the alien frond turns violet and sheds; the Crimson world ring turns gold
 for the cold months and keeps its leaves; the bioluminescent spiral has no seasons.
 
+### Blossom
+
+In spring the tree flowers. Pink buds show on the bare outer twigs right at the start of spring, open over a few days
+from the top and the sunny side of the crown, and at the peak (about a fifth of the way through spring, while the new
+leaves are still small and pale) the crown is white-pink with green coming through. Then the clusters shed: petals
+drift down through the falling-leaf system, more in a gust, and lie under the tree as a pale scatter. Only last
+year's wood on a grown tree flowers (a seedling or sapling does not), and a limb that breaks off loses its blossom.
+
+The blossom follows the leaf form: the oak and the round leaf get a showy apple-like blossom (white-pink, cream; a
+real oak only has catkins, but the default tree has to be seen to bloom), the maple small yellow-green flower
+clusters, willow, birch and ginkgo hanging catkins (yellow-green, tan, pale green; fewer), the conifer spray none,
+and the alien forms star-shaped flowers (turquoise on the frond, pale gold on the ring, cold blue-white on the
+spiral). The "Blossom" slider in the Seasons tab sets the amount (0 = off, up to 150 %).
+
+URL: `?season.blossom=0` (amount), `?blossom=0` (system not built at all). Scripts: `node scripts/blossomshots.mjs
+[prefix] [desk,phone] [form] [name:date,...]` (bud, opening, peak, petal fall, early summer framed; twig close-up at
+peak; ground after the fall; stats and program count), `node scripts/blossomcost.mjs` (frame cost at peak, on / off).
+
 URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
 winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
-(frame cost summer vs autumn). Not built yet: blossom, growth tied to the year, the meadow's seasons, snow, seasonal
+(frame cost summer vs autumn). Not built yet: growth tied to the year, the meadow's seasons, snow, seasonal
 weather, sun height by season.
 
 ## Controls panel
