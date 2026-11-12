@@ -176,7 +176,7 @@ export class CanopyShadow {
     for (let k = 0; k < nF; k++) {
       const gx = fr() * S, gz = fr() * S, t = tau[(gz | 0) * S + (gx | 0)];
       if (t < 0.15 || t > 2.2) continue;
-      const rr = 0.06 + 0.11 * fr(), ru = Math.max(0.8, rr * fe * toU), rw = Math.max(0.8, rr * toW), wgt = 0.55 + 0.45 * fr();
+      const rr = 0.06 + 0.11 * fr(), ru = Math.min(2.5 * fe, Math.max(0.8, rr * fe * toU)), rw = Math.min(2.5, Math.max(0.8, rr * toW)), wgt = 0.55 + 0.45 * fr();
       const eu = Math.ceil(ru * 1.6), ew = Math.ceil(rw * 1.6), iu2 = 1 / (ru * ru), iw2 = 1 / (rw * rw);
       for (let z = Math.max(0, (gz | 0) - ew); z <= Math.min(S - 1, (gz | 0) + ew); z++) for (let x = Math.max(0, (gx | 0) - eu); x <= Math.min(S - 1, (gx | 0) + eu); x++) {
         const du = x - gx, dw = z - gz, q = du * du * iu2 + dw * dw * iw2;
