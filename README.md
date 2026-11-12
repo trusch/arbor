@@ -18,6 +18,31 @@ The leaf is a choice, not only the oak: oak, willow, birch, maple, ginkgo, a rou
 
 How it is built: each form is painted into the same square leaf map and carries its own proportions (a willow leaf is long and narrow, a ginkgo fan is wide), which stretch the leaf card together with the existing blade-shape value. A change of form writes new pixels into the texture the leaf material already uses and new card proportions into the instance matrices; the material, its shader program and the geometry stay the same, on the phone path and on desktop (`npm run smoke` switches through all forms on both and checks the program count: phone 9, desktop High unchanged). Falling leaves, litter and broken limbs use the same material, so they change with the crown; leaves already on the ground keep their old proportions. `PORT=5440 node scripts/formshots.mjs` renders every form on the real GPU (contact sheet, framed view, close-up, picker).
 
+## Seasons
+
+The tree lives through a year. One year takes 5 minutes at normal growth speed (the growth-speed control scales it; the
+day and night cycle is separate), and a new tree starts in spring.
+
+- Spring: the crown flushes over a few weeks, leaves unfolding small and pale yellow-green, then darkening.
+- Summer: full green.
+- Autumn: leaves turn one by one, the top and the sunlit outside of the crown first, the interior last, each to its own
+  shade (oak russet, gold and brown; maple red and orange; birch and ginkgo yellow; willow pale yellow). Then they fall
+  through the falling-leaf system, thinning the crown until it is bare, and collect as litter that fades over winter.
+- Winter: a bare crown. Wood that grew meanwhile flushes next spring.
+
+The "Seasons" tab has: seasons on/off, a "Time of year" slider that scrubs the year (the season is named), "Hold this
+season", and the length of a year. The current season and year show in the corner readout and the panel header.
+Every seasonal look is computed from the date alone, so scrubbing to a date shows the same tree as waiting for it.
+
+Which trees have seasons is decided by the leaf form: oak, willow, birch, maple, ginkgo and the round leaf are
+deciduous; the cypress spray is evergreen; the alien frond turns violet and sheds; the Crimson world ring turns gold
+for the cold months and keeps its leaves; the bioluminescent spiral has no seasons.
+
+URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
+winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
+(frame cost summer vs autumn). Not built yet: blossom, growth tied to the year, the meadow's seasons, snow, seasonal
+weather, sun height by season.
+
 ## Controls panel
 
 `src/ui.ts` + `src/ui.css` (own DOM, no lil-gui). Desktop: side panel on the right, open by default. Phone (≤ 700 px wide): a "Controls" button opens a bottom sheet (47% of the height) that the chevron collapses again. `?panel=open|closed`, `?tab=grow|shape|colours|sky|more`, `?nogui=1`.
@@ -90,7 +115,8 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `src/render/canopyShadow.ts` | CPU-baked dappled crown shadow decal for the safe leaf path (no shadow-map leaves). |
 | `src/render/textures.ts` | Procedural bark (color/normal/roughness), painted 512 px leaf maps for ten leaf forms (`LEAF_FORMS`: outline, base-to-tip gradient, veins, blotches, sheen; procedural, no external assets), grass textures. |
 | `src/render/stage.ts` | Renderer, light rig, meadow ground (multi-scale, no tiling, trunk contact darkening), terrain (or the old hill ring with `?backdrop=0`), haze, shadow frustum, camera framing, Low/High render path. |
-| `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon, key-light colour/intensity, PMREM env regenerated on sun change. |
+| `src/render/celestial.ts` | Sun glow, phased moon with markings, moon halo (camera-facing planes cloned from the canopy decal material, drawn at the far plane), star twinkle/colour written into the star colour attribute. `scripts/skyshots.mjs` aims a camera at the sun or moon. |
+| `src/render/atmosphere.ts` | Day/night: sun arc from `sky.timeOfDay` + latitude, Preetham sky (three `Sky`) blended into fog colour at the horizon, stars + milky-way band, moon orbit and phase (`sky.moonPhase`), key-light colour/intensity (sun by day, moon by night), PMREM env regenerated on sun change. |
 | `src/render/post.ts` | EffectComposer (High): GTAO, screen-space god rays, bloom, OutputPass (ACES), grade (split-tone, vignette, grain). |
 | `src/ui.ts`, `src/ui.css` | Controls panel (tabs Grow / Shape / Leaves / Sky / More), declarative control lists. |
 | `src/automation.ts` | `Automation`: journey keyframes + per-param drift, applied before every sim step (`main.ts advance`). |
@@ -116,7 +142,7 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 
 - Sky radiance is clamped at 1.8 (HDR); the sun disc(s) are added in the sky shader after the clamp (sprites drew as solid quads in the GTAO pass).
 - God rays are screen-space and only appear with the sun on screen. They are not tuned yet (default strength is low).
-- Stars are point sprites; the moon is an unlit sphere with no phases.
+- Stars are point sprites of one size that turn about the vertical axis (they do not rise or set). The moon is a painted map (about 2.3x its real size so the markings survive on a phone); its markings turn with the lit limb. The automatic camera cannot look up more than about 18 degrees, so sun and moon are only in frame while they are low. The Low-quality sun glare does not know whether the crown hides the sun.
 - Ground/hills colours and the noon sky are still somewhat desaturated and flat.
 
 - The branch mesh and leaf matrices are rebuilt on the CPU at about 8 Hz while growing (4 Hz when paused), not every frame. Leaf sway runs in the shader. Headless SwiftShader at t=90 (about 5k nodes, 10k drawn leaves) runs at 26 fps; it ran at 12–17 fps before the throttle. Incremental (dirty-subtree) rebuilds are not done yet.
@@ -144,6 +170,14 @@ Beyond the meadow the land rolls away in ridges with scattered trees, bushes, he
 How it is built (`src/render/backdrop.ts`, `Stage.makeGround`, far and scenery patches in `src/render/meadow.ts`): one technique on phone and desktop, made only of geometry, texture pixels and clones of materials that are already in use, so no shader program is added (the phone compiles one fewer than before, 9 at noon, because the old hill ring is gone; `npm run smoke` checks it against `?backdrop=0`). The terrain is a polar height grid drawn with the ground material, with its normals tilted by a streaky noise so the sun shades the far ground in patches; the ground texture has stronger low-frequency contrast for dry and lush patches; trees and bushes are alpha-cut crossed cards with painted crowns, drawn by the meadow (about 4000 instances, static). The haze is 0.3 x its former density, because the land now has depth. `?backdrop=0` (also on `diag.html`) restores the level disc, the hill ring, the 26 m meadow and the old haze. `PROF_DIST=/tmp/dist node scripts/backdropshots.mjs desk|phone [prefix] [query]` takes wide, low and far views at noon, golden hour, night and in a storm and prints program counts.
 
 Known limits: the hills carry no grass texture of their own (smooth green at noon), the level meadow's far edge can read as a line against a paler slope behind it, the tree cards do not take the sun's direction (their shading is painted, top-lit), and nothing here has been seen on the real phone GPU.
+
+## Sun, moon and stars
+
+The sun is a small hot core (drawn in the sky shader, about 0.3 degrees radius) with a soft glow that widens and warms as it sinks; toward the horizon the core dims and reddens, and after sunset the glow lingers behind the hills. The moon has surface markings and a phase: it trails the sun by its phase (new moon travels with the sun, a first-quarter moon stands in the south at sunset, a full moon rises at sunset and rides low in summer), the lit limb faces the sun, the dark part shows faint earthshine, and it turns warm and a little larger near the horizon, with a soft halo. The phase moves on by one month per 29.5 days of the day cycle; the Sky tab has a "Moon" slider (`sky.moonPhase`, 0 new, 0.5 full).
+
+Night follows the moon. While it is up the scene has a cool, dim key light from the moon's direction with soft shadows, brighter at full moon; with the moon down or new there is no key light and no tree shadow, only dim starlight. Sun and moon hand over while both are at zero brightness (sun 2.3 degrees below the horizon), so nothing pops. Stars vary in brightness and colour, twinkle (more near the horizon), thin out toward the horizon and around a bright moon, and fade at dawn. Storm cloud hides sun glow, moon and stars.
+
+`?celestial=0` turns the glow, moon and star detail off (comparison and the smoke program gate). `PROF_DIST=<build dir> node scripts/skyshots.mjs desk|phone [prefix] [cases]` takes the fixed-camera shots (noon, h1730, crown, sunset, dusk, full, half, new, moonrise, storm) and prints program counts.
 
 ## Meadow and wind
 

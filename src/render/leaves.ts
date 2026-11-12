@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { TreeSim } from '../sim/tree';
 import type { ArborParams } from '../params';
+import { season, leafSeason, leafOnDate, leafTurnDate, leafFallDate, leafSeasonScale, leafSeasonColour, LEAF_EPS, type LeafSeason } from '../season';
 
 /** Slightly cupped, bent leaf blade: base at origin, tip along +Y, face toward +Z. */
 function leafGeometry(): THREE.BufferGeometry {
@@ -193,7 +194,7 @@ export function leafOpen(age: number, grow = GROW_TIME): typeof leafOpenState {
   o.swing = 0.1 + 0.9 * smooth(0.1, 0.85, u);
   return o;
 }
-const LEAF_D = 9; // floats per instance placement record (see `Leaves.place`)
+const LEAF_D = 11; // floats per instance placement record (see `Leaves.place`); 9 = bud-break date, 10 = fall date (seasons)
 const FOLLOW_EPS = 0.0015; // node travel (world units; leaf ≈ 0.1) below which its leaves are not re-placed
 const FOLLOW_EPS_R = 0.0002; // same for the node radius (drives the fade on thickening wood)
 
@@ -256,6 +257,15 @@ export class Leaves {
   private nodeRef = new Float32Array(0);
   private nodeMoved = new Uint8Array(0);
   /** Camera position and crown height of the last unconditional placement (size LOD inputs). */
+  private lodPhase = NaN;
+  /** Seasons (`src/season.ts`): snapshot of the open pass. */
+  private passPhase = 0; private passSpring = -1e9; private passSeasonOn = false; private passFs: LeafSeason = leafSeason('oak');
+  /**
+   * Autumn drop: instances `follow` saw cross their fall date this frame (world matrix + colour as drawn), thinned by
+   * `dropChance` (set by the caller from the falling-leaf caps). The caller hands them to `LeafFall` and sets n = 0.
+   */
+  drops = { n: 0, m: new Float32Array(48 * 16), c: new Float32Array(48 * 3) };
+  dropChance = 0;
   private lodX = 0; private lodY = 0; private lodZ = 0; private lodH = 0; private lodShape = NaN; private lodFade = NaN; private lodForm = '';
   /** Leaf form (`LEAF_FORMS` in textures.ts): id and card stretch on top of `leaves.shape`. Changed by `setForm` only. */
   formId = 'oak';
@@ -507,6 +517,7 @@ export class Leaves {
     this.passT = this.variant ? this.sunTransmittance(sim) : null;
     this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0;
     this.passTime = sim.time; this.passRs = this.rankScale;
+    this.passPhase = season.phase; this.passSpring = season.springTime; this.passSeasonOn = season.active; this.passFs = leafSeason(this.formId);
     this.passAcc = 0;
     this.passOpen = true;
     // Emergence clock per sim leaf (see `emerge`): a shorter leaf list means a new tree.
@@ -540,6 +551,8 @@ export class Leaves {
     // Drawn matrices also record their rest translation (wind sway adds its offset to it, see `sway`).
     const RT = this.mesh && out === this.mesh.instanceMatrix.array ? this.restT : null;
     let placed = 0, mv = true;
+    const sOn = season.active, ph = season.phase, spr = season.springTime, DQ = this.drops;
+    const dropP = RT && moved !== null && !season.jumped ? this.dropChance : 0;
     const H = Math.max(2, sim.bboxMax[1]);
     const sh = lp.shape, kx = (sh >= 0 ? 1 - 0.7 * sh : 1 - 0.6 * sh) * this.formKx, ky = (sh >= 0 ? 1 + 0.9 * sh : 1 + 0.15 * sh) * this.formKy;
     const f0 = lp.maxBranchRadius * 0.7, f1 = lp.maxBranchRadius, l0 = 0.9 * H, l1 = 2.6 * H;
@@ -564,8 +577,22 @@ export class Leaves {
       if (!ok) continue;
       const k = i * LEAF_D;
       // Node at rest: only a leaf that is still unfolding changes.
-      if (!mv && now - D[k + 8] > GROW_TIME + 1) continue;
+      // (or passing its bud-break or fall date)
+      if (!mv && now - D[k + 8] > GROW_TIME + 1 && !(sOn && ((ph >= D[k + 10] && ph < D[k + 10] + LEAF_EPS) || (ph > D[k + 9] && ph < D[k + 9] + 0.05 + LEAF_EPS)))) continue;
       placed++;
+      const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr) : 1;
+      if (ks === 0) {
+        // Not in leaf (bud, or fallen). A leaf that lets go now is handed to the falling-leaf system as it was drawn.
+        if (dropP > 0 && ph >= D[k + 10] && DQ.n < 48 && out[o + 4] * out[o + 4] + out[o + 5] * out[o + 5] + out[o + 6] * out[o + 6] > 1e-8 && Math.random() < dropP) {
+          const q = DQ.n++, col = this.mesh.instanceColor!.array as Float32Array;
+          for (let j = 0; j < 16; j++) DQ.m[q * 16 + j] = out[o + j];
+          DQ.c[q * 3] = col[i * 3]; DQ.c[q * 3 + 1] = col[i * 3 + 1]; DQ.c[q * 3 + 2] = col[i * 3 + 2];
+        }
+        for (let j = 0; j < 12; j++) out[o + j] = 0;
+        out[o + 15] = 1;
+        if (RT) { const q = i * 3; RT[q] = out[o + 12]; RT[q + 1] = out[o + 13]; RT[q + 2] = out[o + 14]; }
+        continue;
+      }
       const t = D[k], ca = D[k + 1], sa = D[k + 2], ct = D[k + 3], st = D[k + 4], cr = D[k + 5], sr = D[k + 6];
       // Position along the segment, offset to the bark surface.
       const ox = rx * ca + bx * sa, oy = by * sa, oz = rz * ca + bz * sa;
@@ -595,7 +622,7 @@ export class Leaves {
       const rzx = axx * sr + azx * cr, rzy = azy * cr, rzz = axz * sr + azz * cr;
       // Size: unfolding, fade on thickening wood, distance LOD (up to 1.5x far from the camera so the silhouette fills).
       const ddx = x - cx, ddy = y - cy, ddz = z - cz;
-      const s = D[k + 7] * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
+      const s = D[k + 7] * ks * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
       const sx = s * kx * gw, sy = s * ky * gl, sz = s * gl;
       out[o] = rxx * sx; out[o + 1] = rxy * sx; out[o + 2] = rxz * sx; out[o + 3] = 0;
       out[o + 4] = ayx * sy; out[o + 5] = ayy * sy; out[o + 6] = ayz * sy; out[o + 7] = 0;
@@ -718,7 +745,7 @@ export class Leaves {
         done = this.place(this.frontD, this.frontNode, from, n, sim, p, cam.x, cam.y, cam.z, arr, from * 16);
         M.addUpdateRange(from * 16, (n - from) * 16);
       }
-      if (from === 0) { this.lodX = cam.x; this.lodY = cam.y; this.lodZ = cam.z; this.lodH = Math.max(2, sim.bboxMax[1]); this.lodShape = p.leaves.shape; this.lodFade = p.leaves.maxBranchRadius; this.lodForm = this.formId; }
+      if (from === 0) { this.lodX = cam.x; this.lodY = cam.y; this.lodZ = cam.z; this.lodH = Math.max(2, sim.bboxMax[1]); this.lodShape = p.leaves.shape; this.lodFade = p.leaves.maxBranchRadius; this.lodForm = this.formId; this.lodPhase = season.active ? season.phase : -1; }
     } else {
       // Round-robin in chunks of 1024 instances until the budget is spent (a whole sweep when it fits). Each sweep
       // starts with a per-node moved verdict; leaves on nodes at rest are skipped, only touched chunks are uploaded.
@@ -762,6 +789,7 @@ export class Leaves {
     const G = sim.lightGrid;
     const Lt = this.lit, L = Lt.sun, mm = this.mapMean;
     const rs = this.passRs, now = this.passTime;
+    const sOn = this.passSeasonOn, sPh = this.passPhase, fs = this.passFs, sH = Math.max(2, sim.bboxMax[1]);
     let n = this.passN;
     let cand = this.passCand;
     const cap = this.capacity;
@@ -789,6 +817,19 @@ export class Leaves {
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
       const size = lp.size * lf.size * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
       if (size * fade < 1e-4) continue;
+      // Seasons: this leaf's own dates. Leaves that have fallen (or are still in bud) are not in the instance set.
+      let tOn = -1, tFall = 2, tTurn = 2, su = 0, sv = 0, thisYear = true;
+      if (sOn && (fs.drop || fs.pal)) {
+        const q = li * 2 + cp;
+        su = h01(q * 3 + 1); sv = h01(q * 3 + 2);
+        const ex = Math.min(1, 0.5 * smooth(0.05, 0.4, nd.light) + 0.5 * Math.min(1, Math.max(0, (nd.wy / sH - 0.3) / 0.6)));
+        tTurn = leafTurnDate(ex, su);
+        if (fs.drop) {
+          thisYear = lf.born > this.passSpring;
+          tOn = leafOnDate(h01(q * 3)); tFall = leafFallDate(tTurn, sv);
+          if (sPh >= tFall || (!thisYear && sPh < tOn - LEAF_EPS)) continue;
+        }
+      }
       const t = cp === 0 ? lf.t : 0.45 + 0.55 * hr();
       // Emergence start: first draw of this sim leaf (stamped at the swap) + its turn within the node (tip last).
       let em = EM[li];
@@ -803,7 +844,7 @@ export class Leaves {
       const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
       const k = n * LEAF_D;
       D[k] = t; D[k + 1] = Math.cos(around); D[k + 2] = Math.sin(around); D[k + 3] = Math.cos(tilt); D[k + 4] = Math.sin(tilt);
-      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = em < 0 ? -1 - stag : em + stag;
+      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
       ND[n] = lf.node;
       // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
       this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0);
@@ -818,23 +859,17 @@ export class Leaves {
         // instance colour × map; normalise by the map mean to the pale reference map the albedo was tuned against, so
         // the painted texture adds detail without brightening. Dark interior via the light grid.
         const ao = 0.45 + 0.55 * Math.min(1, nd.light * 1.4);
-        this.col.setHSL(
-          lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05 - flush * 0.05,
-          Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12),
-          Math.min(0.85, (0.19 + lf.tint * 0.1 + young * 0.1 + flush * 0.1) * ao * lp.lightness),
-          THREE.SRGBColorSpace,
-        );
+        let hh = lp.hue + (lf.tint - 0.5) * 0.06 - young * 0.05 - flush * 0.05, ss = Math.min(1, lp.saturation * (0.8 + lf.tint * 0.35) + young * 0.12), ll = (0.19 + lf.tint * 0.1 + young * 0.1 + flush * 0.1) * lp.lightness;
+        if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll, 2.1); hh = c[0]; ss = c[1]; ll = c[2]; }
+        this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
         carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
         n++;
         continue;
       }
-      this.col.setHSL(
-        lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05 - flush * 0.05,
-        Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12 + flush * 0.15),
-        Math.min(0.85, (0.3 + lf.tint * 0.12 + fresh * 0.12 - flush * 0.04) * lp.lightness),
-        THREE.SRGBColorSpace,
-      );
+      let hh = lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05 - flush * 0.05, ss = Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12 + flush * 0.15), ll = (0.3 + lf.tint * 0.12 + fresh * 0.12 - flush * 0.04) * lp.lightness;
+      if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll); hh = c[0]; ss = c[1]; ll = c[2]; }
+      this.col.setHSL(hh, ss, Math.min(0.85, ll), THREE.SRGBColorSpace);
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
       const occ = 0.42 + 0.78 * smooth(0.15, 0.85, nd.light);
       let kr: number, kg: number, kb: number;
@@ -894,12 +929,12 @@ export class Leaves {
     }
     let same = 0;
     const H = Math.max(2, sim.bboxMax[1]);
-    if (this.followOk && budgetMs !== Infinity && lp.shape === this.lodShape && this.formId === this.lodForm && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
+    if (this.followOk && budgetMs !== Infinity && !(season.active ? Math.abs(season.phase - this.lodPhase) > 0.02 : this.lodPhase !== -1) && lp.shape === this.lodShape && this.formId === this.lodForm && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
       && Math.hypot(cam.x - this.lodX, cam.y - this.lodY, cam.z - this.lodZ) < 0.05 * H) {
       const oD = this.frontD, oN = this.frontNode, m = Math.min(n, this.mesh.count);
       for (let k = 0; same < m; same++, k += LEAF_D) {
         if (oN[same] !== ND[same] || oD[k] !== D[k] || oD[k + 1] !== D[k + 1] || oD[k + 3] !== D[k + 3] || oD[k + 5] !== D[k + 5]
-          || oD[k + 7] !== D[k + 7] || oD[k + 8] !== D[k + 8]) break;
+          || oD[k + 7] !== D[k + 7] || oD[k + 8] !== D[k + 8] || oD[k + 10] !== D[k + 10]) break;
       }
     }
     this.backD = this.frontD; this.frontD = D;
@@ -924,6 +959,9 @@ interface LeafFormInfo { id: string; kx: number; ky: number; preserve: boolean }
 /** Per-leaf hash state for the render-only shell copies (module level: no closure per leaf). */
 let hs = 0;
 function hr() { hs ^= hs << 13; hs >>>= 0; hs ^= hs >>> 17; hs ^= hs << 5; hs >>>= 0; return hs / 4294967296; }
+
+/** Hash of an integer to 0..1 (per-leaf season dates; independent of the `hr` stream so leaf shapes are unchanged). */
+function h01(a: number) { a = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b); a ^= a >>> 13; a = Math.imul(a, 0xc2b2ae35); a ^= a >>> 16; return (a >>> 0) / 4294967296; }
 
 /** One colour channel of the safe-path bake: wanted irradiance over what the Lambert shader will add, over the map mean. */
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
