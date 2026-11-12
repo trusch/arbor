@@ -32,14 +32,17 @@ try {
   // A leaf on the crown's rim on the camera side (across the wind), low enough to follow to the ground.
   const leaf = await page.evaluate(() => { const A = window.__arbor, L = A.leafFall, w = A.wind; let best = null, bs = -1e9; for (let i = 0; i < 400; i++) { if (!A.leaves.sampleInstance(Math.random(), window.__m ??= new Float32Array(16), window.__c ??= new Float32Array(3))) continue; const m = window.__m; const sc = -m[12] * w.dirZ + m[14] * w.dirX - Math.abs(m[13] - 3); if (sc > bs) { bs = sc; best = [m.slice(), window.__c.slice()]; } } L.launch(best[0], 0, best[1], 0, 0); const s = L.state.air; return { p: s[s.length - 1] }; });
   console.log('forced leaf', JSON.stringify(leaf));
-  await cam(leaf.p, 2.0);
+  // Fixed camera upwind of the leaf, looking downwind along the crown's rim: the leaf drifts away over the meadow.
+  await page.evaluate((p) => {
+    const A = window.__arbor, w = A.wind;
+    A.stage.controls.target.set(p[0] + w.dirX * 2 - w.dirZ * 0.3, p[1] - 1.3, p[2] + w.dirZ * 2 + w.dirX * 0.3);
+    A.stage.camera.position.set(p[0] - w.dirX * 2.2 - w.dirZ * 0.9, p[1] - 0.2, p[2] - w.dirZ * 2.2 + w.dirX * 0.9);
+    A.stage.controls.update?.();
+  }, leaf.p);
   let lp = leaf.p;
-  for (const [n, ms] of [['calm-a', 350], ['calm-b', 700], ['calm-c', 900]]) {
+  for (const [n, ms] of [['calm-a', 500], ['calm-b', 700], ['calm-c', 800]]) {
     await page.waitForTimeout(ms);
-    // Follow the leaf: the air leaf nearest to where it was.
     lp = await page.evaluate((q) => { let b = q, bd = 1e9; for (const p of window.__arbor.leafFall.state.air) { const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); if (d < bd) { bd = d; b = p; } } return b; }, lp);
-    await cam([lp[0], lp[1] + 0.6, lp[2]], 2.0);
-    await page.waitForTimeout(120);
     await shot(page, n);
     console.log(n, JSON.stringify(lp));
   }

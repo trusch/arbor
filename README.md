@@ -136,6 +136,14 @@ How it is built: `src/weather.ts` is a three-free state machine (calm, breeze, f
 
 `node scripts/weathershots.mjs [phone|desk] [hour]` takes calm, storm (two frames 0.5 s apart), forced-flash and after-the-storm shots on the real GPU and compares the light values and the frame before and after. `node scripts/wxprograms.mjs 'weather=storm'` lists the compiled programs in phone emulation. Dev hooks: `__arbor.weather` (`trigger()`, `snapStorm()`, `strike()`, `holdFlash`), `__arbor.rain`.
 
+## Falling leaves
+
+- Calm and breeze: now and then a single crown leaf lets go (about one every 8 s on the grown oak, more in gusts and around dusk and dawn, none from a sapling), falls at about 1 m/s with a tumble and a drift that follows the gust at its position, and settles in the grass.
+- Storm: leaves are torn off continuously, mostly from the windward and outer crown, at a rate that follows the gusts (High up to about 110 per second in a peak, Low 40). They fly downwind at up to 80 % of the local wind speed, some are lifted first, and land 2 to 14 m downwind of the trunk. Measured over 120 s of held storm: High 3199 torn off, 231 in the air at peak, 1541 on the ground; Low (pixel ratio stepped down under 4x CPU throttle) 705 / 81 / 239. Calm 120 s: 15 / 3 / 14.
+- Litter: landed leaves stay, brown over two minutes, are lifted into short hops by strong gusts and are recycled oldest-first at the cap (High 2000, Low 600; in the air 320 / 110; both halved once the adaptive pixel ratio has stepped down).
+- Twigs that break in a storm hand their leaves to the same system. The crown keeps the leaf that fell (it is one of about 30,000).
+- `params.leaffall` (`enabled`, `rate`, `litter`), "Falling leaves" switch in the Sky tab, `?leaffall=0`, `__arbor.leafFall` (`force(n, storm)`, `stats`, `state`). Code: `src/render/leaffall.ts`. Same leaf geometry and material instance as the crown, so no extra shader program (smoke gate).
+
 ## Breakage
 
 In storm-strength wind (`wind.base` above 0.6; the Wind slider near its top, or a storm) overloaded twigs and small limbs snap. A limb gives at its junction, hinges down for a moment while still attached, comes free, falls with its leaves, lands and stays on the ground; its leaves dry to brown over a minute. The tree keeps a stub. At most 3 fallen limbs are kept (older ones shrink away); twigs under 12 segments fall as loose leaves only.

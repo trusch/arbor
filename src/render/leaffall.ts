@@ -57,7 +57,7 @@ export class LeafFall {
   private n = 0;
   /** Colours as copied from the crown; the drawn colour brightens to open-air light over the first second of flight. */
   private aBase = new Float32Array(AIR_ALLOC * 3);
-  /** Luminance of the brightest crown leaves seen lately (what a leaf in the open looks like). */
+  /** Running mean luminance of the crown leaves that let go. */
   private refLum = 0;
   /** Litter: ring of slots; age < 0 = empty. */
   private lAge = new Float32Array(LITTER_ALLOC).fill(-1);
@@ -69,7 +69,7 @@ export class LeafFall {
   private acc = 0;
   private seed = 0x9e3779b9;
   private colDirty = false;
-  stats = { spawned: 0, landed: 0, gone: 0, relaunched: 0, adopted: 0, air: 0, airPeak: 0, ground: 0, recycled: 0, rate: 0, airCap: 0, litterCap: 0, lastMs: 0, maxMs: 0 };
+  stats = { spawned: 0, landed: 0, gone: 0, relaunched: 0, adopted: 0, air: 0, airPeak: 0, ground: 0, recycled: 0, rate: 0, airCap: 0, litterCap: 0, lastMs: 0, maxMs: 0, sumMs: 0, frames: 0 };
 
   constructor(private leaves: Leaves) {
     this.group.name = 'leaffall';
@@ -117,8 +117,10 @@ export class LeafFall {
     B[i * 3] = col[i * 3] = c[co]; B[i * 3 + 1] = col[i * 3 + 1] = c[co + 1]; B[i * 3 + 2] = col[i * 3 + 2] = c[co + 2];
     // A leaf from the shaded inside of the crown carries its baked occlusion: outside it is lit like the outer leaves.
     const lum = 0.3 * c[co] + 0.6 * c[co + 1] + 0.1 * c[co + 2] + 1e-5;
-    if (!hop) this.refLum = Math.max(this.refLum * 0.998, lum);
-    s[o + 14] = hop ? 1 : Math.min(3, Math.max(1, (0.8 * this.refLum) / lum));
+    // (and on the safe path the baked colour compensates the Lambert term of the crown orientation: up to 8x on a leaf
+    // edge-on to the sun, which glows once the leaf turns). Pull the luminance into [0.9, 1.3] x the running mean.
+    if (!hop) this.refLum = this.refLum > 0 ? this.refLum + (Math.min(lum, 3 * this.refLum) - this.refLum) * 0.04 : lum;
+    s[o + 14] = hop ? 1 : Math.min(1.3 * this.refLum, Math.max(0.9 * this.refLum, lum)) / lum;
     const r = () => this.rnd();
     s[o] = 0; s[o + 1] = hop ? 0.9 + 1.4 * r() : 0; s[o + 2] = 0;
     // Fall speed: calm 0.7..1.3 m/s (a slow flutter), storm up to 3 m/s (wet, driven down between the lifts).
@@ -204,6 +206,7 @@ export class LeafFall {
     this.stats.air = this.n;
     if (this.n > this.stats.airPeak) this.stats.airPeak = this.n;
     this.stats.lastMs = performance.now() - t0;
+    this.stats.sumMs += this.stats.lastMs; this.stats.frames++;
     if (this.stats.lastMs > this.stats.maxMs) this.stats.maxMs = this.stats.lastMs;
   }
 
@@ -234,7 +237,7 @@ export class LeafFall {
         }
       } else {
         const x = a[q + 12], y = a[q + 13], z = a[q + 14];
-        if (s[o + 14] > 1 && age < 1.2) {
+        if (s[o + 14] !== 1 && age < 1.2) {
           const gk = 1 + (s[o + 14] - 1) * Math.min(1, age);
           col[i * 3] = B[i * 3] * gk; col[i * 3 + 1] = B[i * 3 + 1] * gk; col[i * 3 + 2] = B[i * 3 + 2] * gk;
           this.colDirty = true;
