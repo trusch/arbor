@@ -446,3 +446,25 @@ requestAnimationFrame(loop);
     return { nodes: sim.nodes.length, leaves: sim.leaves.length, time: sim.time, height: +sim.bboxMax[1].toFixed(2), width: +Math.max(sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]).toFixed(2) };
   },
 };
+
+/** Breakage dev hooks (WP10): `__arbor.breakLimb(id?)` snaps the given node's limb or a random order-1 limb, `breakTwig()` a small twig. */
+{
+  const pick = (twig: boolean, big = false): number => {
+    const cand: number[] = [];
+    let best = -1, bestLen = 0;
+    for (const ch of sim.chains) {
+      if (ch.pruned || ch.nodes.length < 4) continue;
+      const base = sim.nodes[ch.nodes[1]];
+      if (twig ? ch.order >= 2 && ch.nodes.length <= 10 && base.subLen < 3 : ch.order === 1 && base.subLen > 4) {
+        cand.push(ch.nodes[1]);
+        if (base.subLen > bestLen) { bestLen = base.subLen; best = ch.nodes[1]; }
+      }
+    }
+    return big ? best : cand.length ? cand[Math.floor(Math.random() * cand.length)] : -1;
+  };
+  Object.assign((window as unknown as { __arbor: object }).__arbor, {
+    /** Break at a node id, the biggest order-1 limb ('big') or a random order-1 limb (no argument). Returns the event. */
+    breakLimb: (id?: number | 'big') => sim.breakAt(typeof id === 'number' ? id : pick(false, id === 'big')),
+    breakTwig: () => sim.breakAt(pick(true)),
+  });
+}
