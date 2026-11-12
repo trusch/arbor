@@ -102,7 +102,7 @@ const UP: [number, number, number] = [0, 1, 0];
  * of its whole path, reached the 1.3 rad cap and hung as a bare whip to the ground while its rest pose, where growth
  * decisions are made, was still inside the crown.
  */
-const SAG_RIGHT = 1.5;
+const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
 
@@ -373,7 +373,7 @@ export class TreeSim {
     // No plunging shoots: without a weeping habit the wanted direction is never steeper than DOWN_MAX below the
     // horizontal (attractors below a high branch used to pull order 1 shoots metres straight down through the crown).
     // A shoot that starts steeper (bud angle on a descending parent) levels out at maxTurn per segment.
-    const minDy = -(DOWN_MAX + (1 - DOWN_MAX) * Math.min(1, weep));
+    const minDy = -(DOWN_MAX + (1 - DOWN_MAX) * Math.min(1, Math.max(0, g.weeping)));
     if (dy < minDy) {
       const h = Math.hypot(dx, dz);
       if (h > 1e-4) { const f = Math.sqrt(1 - minDy * minDy) / h; dx *= f; dz *= f; dy = minDy; }
@@ -639,6 +639,8 @@ export class TreeSim {
     }
     // Forward pass: accumulate sag (bend toward -Y) and world positions.
     const gk = p.growth.gravity * p.growth.sag * 4e-6;
+    // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).
+    const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
     const mn = this.bboxMin, mx = this.bboxMax;
     mn[0] = mn[1] = mn[2] = Infinity;
     mx[0] = mx[1] = mx[2] = -Infinity;
@@ -653,7 +655,7 @@ export class TreeSim {
         const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
         // Inherited sag fades over SAG_RIGHT metres of wood (each new internode rights itself toward the direction it
         // grew in), so droop is local to the loaded stretch instead of piling up along the whole path to the cap.
-        nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len / SAG_RIGHT) + bend);
+        nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
         bendDown(nd.dx, nd.dy, nd.dz, nd.sag, this.tmp);
         nd.wdx = this.tmp[0]; nd.wdy = this.tmp[1]; nd.wdz = this.tmp[2];
         nd.wx = pn.wx + nd.wdx * nd.len;
