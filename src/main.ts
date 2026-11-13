@@ -531,11 +531,12 @@ function updateWx() {
   const icon = night && (k === 'clear' || k === 'fair') ? 'moon' : WX_KIND_ICON[k];
   if (icon !== wxIcon) { wxIcon = icon; wxEl.children[0].innerHTML = WX_ICON[icon]; }
   const t = Math.round(weather.temp);
-  wxEl.children[1].textContent = weather.label;
+  const label = night && k === 'cloudy' ? 'Passing clouds' : weather.label;
+  wxEl.children[1].textContent = label;
   wxEl.children[2].textContent = `${t < 0 ? '\u2212' : ''}${Math.abs(t)} \u00b0C`;
   wxEl.children[3].textContent = `${windWord(wind.base)} ${windFrom(wind.dirX, wind.dirZ)}`;
   wxEl.dataset.kind = k;
-  wxEl.setAttribute('aria-label', `${weather.label}, ${t} degrees, ${windWord(wind.base).toLowerCase()} from ${windFrom(wind.dirX, wind.dirZ)}`);
+  wxEl.setAttribute('aria-label', `${label}, ${t} degrees, ${windWord(wind.base).toLowerCase()} from ${windFrom(wind.dirX, wind.dirZ)}`);
 }
 applyUi();
 /** Keys H/C/D stay live on sliders, switches and buttons; only real text entry swallows them. */

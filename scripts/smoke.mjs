@@ -325,7 +325,7 @@ try {
       await ctx.close();
       return { ...out, errs: merr.length };
     };
-    const on = await progs('?cycle=false&speed=0'), off = await progs('?cycle=false&speed=0&meadow=0');
+    const on = await progs('?cycle=false&speed=0&weather=calm'), off = await progs('?cycle=false&speed=0&weather=calm&meadow=0');
     check('phone: meadow adds no shader program (noon and night), tufts and flowers drawn',
       on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.grass > 1000 && on.noon.flowers > 100 && off.noon.grass === 0 && on.noon.leaves > 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
@@ -333,7 +333,7 @@ try {
     // Backdrop gate (PowerVR rule): terrain, far meadow and tree cards are geometry, texture pixels and clones of live
     // materials, so the phone compiles no more programs than with the old background (?backdrop=0); it is one fewer,
     // because the hill ring's program is gone.
-    const old = await progs('?cycle=false&speed=0&backdrop=0');
+    const old = await progs('?cycle=false&speed=0&weather=calm&backdrop=0');
     check('phone: backdrop adds no shader program (noon and night) and draws far tufts',
       on.noon.programs <= old.noon.programs && on.night.programs <= old.night.programs && on.noon.grass > old.noon.grass && on.noon.meshes > old.noon.meshes && old.noon.fe === 0 && old.night.fe === 0 && old.errs === 0,
       `backdrop ${on.noon.programs}/${on.night.programs} old ${old.noon.programs}/${old.night.programs} grass ${on.noon.grass} vs ${old.noon.grass} meshes ${on.noon.meshes} vs ${old.noon.meshes}`);
@@ -416,7 +416,7 @@ try {
   // once the page has settled (three re-keys the bark program by itself a few seconds after the first frames), then in
   // flight and at rest; a twig break (leaf fall) on top must not add one either.
   {
-    const { ctx, mp, merr } = await phone('?cycle=false&speed=0');
+    const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=calm');
     const st = () => mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phases: A.debris.state.map((l) => l.phase), lowest: A.debris.state.map((l) => l.lowest), stats: A.debris.stats, fe: A.frameErrors() }; });
     await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await mp.waitForTimeout(7000);
