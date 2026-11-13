@@ -48,7 +48,7 @@ function butterflyCanvas() {
   for (const w of [hind, fore]) {
     wing(w); g.fillStyle = '#ffffff'; g.fill();
     g.save(); g.clip();
-    g.strokeStyle = '#1c1612'; g.lineWidth = 20; wing(w); g.stroke();
+    g.strokeStyle = '#2a1e16'; g.lineWidth = 11; wing(w); g.stroke();
     g.strokeStyle = 'rgba(40,30,22,0.55)'; g.lineWidth = 2.5;
     for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(2, 64); g.lineTo(128, 4 + k * 24); g.stroke(); }
     g.restore();
@@ -295,7 +295,7 @@ export class Critters {
   /** Size boost with camera distance, so a creature still reads from the framing distance. */
   private boost(env: CritterEnv, x: number, y: number, z: number, k: number) {
     const d = Math.hypot(x - env.cam.x, y - env.cam.y, z - env.cam.z);
-    return 1 + k * Math.max(0, Math.min(1, (d - 4) / 14));
+    return 1 + k * Math.max(0, Math.min(1, (d - 3) / 20));
   }
 
   private pickFlower(env: CritterEnv, b: Butterfly) {
@@ -307,7 +307,7 @@ export class Critters {
       if (sy < 0.05) continue;
       const x = a[o + 12], z = a[o + 14], r = Math.hypot(x, z);
       if (r > 17 || r < 1.2) continue;
-      const d = Math.abs(Math.hypot(x - b.x, z - b.z) - 4);
+      const d = Math.abs(Math.hypot(x - b.x, z - b.z) - 6);
       if (d < best) { best = d; b.tx = x; b.tz = z; b.ty = a[o + 13] + sy * 0.9; found = true; }
     }
     if (!found) { const an = this.rnd() * TAU, r = 3 + 10 * this.rnd(); b.tx = Math.cos(an) * r; b.tz = Math.sin(an) * r; b.ty = 0.45; }
@@ -360,10 +360,10 @@ export class Critters {
         if (hv > 0.2) { const hk = Math.min(1, dt * 7); b.hx += (b.vx / hv - b.hx) * hk; b.hz += (b.vz / hv - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl; }
         b.flap += dt * TAU * b.rate;
         th = 0.3 + 0.95 * Math.sin(b.flap);
-        if (w && d < 0.1 && Math.abs(b.y - b.ty) < 0.12) { b.sit = true; b.timer = 3 + 6 * this.rnd(); }
+        if (w && d < 0.1 && Math.abs(b.y - b.ty) < 0.12) { b.sit = true; b.timer = 2 + 4.5 * this.rnd(); }
       }
       // Two wings hinged on the body axis; the stroke lifts and drops the body a little.
-      const s = 0.075 * b.size * b.a * this.boost(env, b.x, b.y, b.z, 1.3), c = Math.cos(th), sn = Math.sin(th);
+      const s = 0.075 * b.size * b.a * this.boost(env, b.x, b.y, b.z, 3), c = Math.cos(th), sn = Math.sin(th);
       const fx = b.hx, fz = b.hz, rx = -fz, rz = fx, y = b.y + (b.sit ? 0.01 : -0.035 * sn);
       const col = BF_COL[b.col];
       for (let side = 0; side < 2; side++) {
@@ -423,7 +423,7 @@ export class Critters {
     geo.attributes.position.needsUpdate = true;
     geo.attributes.uv.needsUpdate = true;
     // Warm yellow-green; the night exposure is high, so keep the core just under white.
-    (mesh.material as THREE.MeshBasicMaterial).color.setRGB(1.25, 1.5, 0.3);
+    (mesh.material as THREE.MeshBasicMaterial).color.setRGB(0.85, 1.05, 0.14);
   }
 
   /** World position of a perch (rest pose + sway offset), top of the twig. */
@@ -546,7 +546,7 @@ export class Critters {
         if (u >= 1) { b.st = 0; b.wait = (winter ? 18 : 6) + 14 * this.rnd() + i * 1.5; continue; }
       }
       // Body: crossed side and top view, feet on the perch.
-      const L = 0.17 * this.boost(env, b.x, b.y, b.z, 1.2), cp = Math.cos(b.pitch), sn = Math.sin(b.pitch);
+      const L = 0.17 * this.boost(env, b.x, b.y, b.z, 2.6), cp = Math.cos(b.pitch), sn = Math.sin(b.pitch);
       const fx = b.hx, fz = b.hz, rx = -fz, rz = fx, o = i * 16;
       const Xx = fx * cp, Xy = sn, Xz = fz * cp, Yx = -fx * sn, Yy = cp, Yz = -fz * sn;
       const cx = b.x + Yx * L * 0.48, cy = b.y + Yy * L * 0.48, cz = b.z + Yz * L * 0.48;
@@ -566,7 +566,7 @@ export class Critters {
     S.birds = out; S.perched = perched;
     if (out || this.bodies.visible) {
       const C = this.bodies.instanceColor!.array as Float32Array, WC = this.birdWings.instanceColor!.array as Float32Array;
-      C.fill(lit * 0.8); WC.fill(lit * 0.8);
+      C.fill(lit * 1.7); WC.fill(lit * 1.9);
       this.bodies.visible = this.birdWings.visible = out > 0;
       this.bodies.instanceMatrix.needsUpdate = this.birdWings.instanceMatrix.needsUpdate = true;
       this.bodies.instanceColor!.needsUpdate = this.birdWings.instanceColor!.needsUpdate = true;
