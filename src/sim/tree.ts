@@ -155,6 +155,28 @@ export class TreeSim {
   private tmp: [number, number, number] = [0, 0, 0];
   private lightTimer = 0;
 
+  // Incremental structure pass (see `updateStructure`). Per node id: parent, child list (descending ids: first child,
+  // next sibling), last pipe target and its contribution target^n to the parent, flags and a moved stamp.
+  private sCap = 0;
+  private sPar = new Int32Array(0);
+  private sFirst = new Int32Array(0);
+  private sNext = new Int32Array(0);
+  private sT = new Float64Array(0);
+  private sC = new Float64Array(0);
+  /** Bit 1: an input of the bottom-up values changed (recompute); bit 2: radius still below its target (thickening). */
+  private sUp = new Uint8Array(0);
+  /** Own sag inputs changed (len, radius, subtree length, new node). */
+  private sDown = new Uint8Array(0);
+  private sStamp = new Int32Array(0);
+  private sStampNow = 0;
+  private sDownLo = Infinity;
+  /** Next `updateStructure` recomputes every node (reset, break, parameter change, node list replaced). */
+  private sFull = true;
+  private sLen = 0;
+  private sParams = [NaN, NaN, NaN, NaN];
+  /** Counters of the last `updateStructure`: full pass or not, nodes recomputed bottom-up, thickening-only, forward, moved. */
+  structStats = { full: 0, fullPasses: 0, up: 0, thick: 0, down: 0, moved: 0 };
+
   constructor(public params: ArborParams) {
     this.rng = new Rng(params.seed.seed);
     this.reset();
@@ -174,6 +196,7 @@ export class TreeSim {
     this.breaks = [];
     this.damage = new Float32Array(0);
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
+    this.sFull = true; this.sLen = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -228,7 +251,38 @@ export class TreeSim {
     };
     this.nodes.push(n);
     this.topology++;
-    return this.nodes.length - 1;
+    const id = this.nodes.length - 1;
+    if (id >= this.sCap) this.sGrow(id + 1);
+    if (this.sLen === id) {
+      this.sLen = id + 1;
+      this.sPar[id] = parent; this.sFirst[id] = -1; this.sT[id] = 0; this.sC[id] = NaN; this.sStamp[id] = 0;
+      this.sUp[id] = 1; this.sDown[id] = 1;
+      if (id < this.sDownLo) this.sDownLo = id;
+      if (parent >= 0) { this.sNext[id] = this.sFirst[parent]; this.sFirst[parent] = id; this.sUp[parent] |= 1; } else this.sNext[id] = -1;
+    }
+    return id;
+  }
+
+  private sGrow(need: number) {
+    const cap = Math.ceil(need * 1.5) + 256;
+    const i32 = (a: Int32Array) => { const b = new Int32Array(cap); b.set(a); return b; };
+    const f64 = (a: Float64Array) => { const b = new Float64Array(cap); b.set(a); return b; };
+    const u8 = (a: Uint8Array) => { const b = new Uint8Array(cap); b.set(a); return b; };
+    this.sPar = i32(this.sPar); this.sFirst = i32(this.sFirst); this.sNext = i32(this.sNext); this.sStamp = i32(this.sStamp);
+    this.sT = f64(this.sT); this.sC = f64(this.sC); this.sUp = u8(this.sUp); this.sDown = u8(this.sDown);
+    this.sCap = cap;
+  }
+
+  /** A chain's pruned flag changed: its nodes drop out of (or enter) the pipe and subtree-length sums. */
+  private sChainDirty(ch: Chain) {
+    const up = this.sUp, nodes = this.nodes;
+    if (this.sLen !== nodes.length) { this.sFull = true; return; }
+    for (let j = 1; j < ch.nodes.length; j++) {
+      const id = ch.nodes[j];
+      up[id] |= 1;
+      const p = nodes[id].parent;
+      if (p >= 0) up[p] |= 1;
+    }
   }
 
   /** Append a new growing segment to the end of chain c. */
@@ -287,6 +341,8 @@ export class TreeSim {
         // A seedling starts slowly: juvenile wood elongates at JUV_SPEED..1 of the adult rate.
         const jv = tip.juv < 1 ? JUV_SPEED + (1 - JUV_SPEED) * (tip.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
         tip.len += g.segmentLength * g.growthRate * vigor * jv * dt;
+        this.sUp[tipId] |= 1; this.sDown[tipId] = 1;
+        if (tipId < this.sDownLo) this.sDownLo = tipId;
         if (tip.len >= tip.targetLen) {
           tip.len = tip.targetLen;
           this.updateRest(tipId);
@@ -534,12 +590,12 @@ export class TreeSim {
     for (const ch of this.chains) {
       if (ch.pruned) continue;
       const parentChain = this.chains[nodes[ch.nodes[0]].chain];
-      if (parentChain !== ch && parentChain.pruned) { ch.pruned = true; ch.alive = false; continue; }
+      if (parentChain !== ch && parentChain.pruned) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); continue; }
       if (thr <= 0 || ch.order < 2 || ch.nodes.length < 2) { ch.shade = 0; continue; }
       let L = 0;
       for (let j = 1; j < ch.nodes.length; j++) L = Math.max(L, nodes[ch.nodes[j]].light);
       if (L < thr) ch.shade++; else ch.shade = 0;
-      if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; }
+      if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); }
     }
   }
 
@@ -562,6 +618,7 @@ export class TreeSim {
     if (pick < 0) return;
     const ch = chains[pick];
     ch.pruned = true; ch.alive = false;
+    this.sChainDirty(ch);
     const nodeIds = ch.nodes.slice(1);
     const inSub = new Set(nodeIds);
     let lv = 0;
@@ -619,6 +676,7 @@ export class TreeSim {
     let lv = 0;
     for (const lf of this.leaves) if (inSub[lf.node]) lv++;
     this.topology++;
+    this.sFull = true; // chain membership and pruned flags of a whole subtree changed
     this.lightTimer = 0; // the light grid (leaf bake, canopy shadow, meadow shade) follows on the next step
     const ev: BreakEvent = { root, nodeIds, chains: list, time: this.time, leaves: lv, radius: nodes[root].radius };
     this.breaks.push(ev);
@@ -693,19 +751,128 @@ export class TreeSim {
     return ev;
   }
 
-  /** Pipe-model radii, subtree loads, gravity sag and world positions. */
-  updateStructure(dt: number) {
+  /**
+   * Pipe-model radii, subtree loads, gravity sag and world positions. Incremental: only nodes whose inputs changed are
+   * recomputed, with the arithmetic and summation order of the full pass, so the result is bit-equal to recomputing
+   * everything. Bottom-up (pipe, subtree length, radius target): a node is redone when its length changed, a child was
+   * added, a child's contribution changed or a chain at it was pruned; a node whose radius is still below its target
+   * only gets the thickening step. Top-down (sag, world position): a node is redone when its own length, radius or
+   * subtree length changed or its parent's sag or position changed; a redone node whose values come out the same stops
+   * the cascade. `full` (also: after reset, `breakAt`, a change of the parameters read here, a replaced node list)
+   * recomputes every node with the plain loops.
+   */
+  updateStructure(dt: number, full = false) {
     const p = this.params;
     const nodes = this.nodes;
     const N = nodes.length;
     const n = Math.max(1.2, p.thickness.exponent);
     const r0 = p.thickness.twigRadius;
+    const k = 1 - Math.exp(-dt * p.thickness.thickeningRate * 4);
+    const gk = p.growth.gravity * p.growth.sag * 4e-6;
+    // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).
+    const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
+    const sp = this.sParams, st = this.structStats;
+    if (sp[0] !== n || sp[1] !== r0 || sp[2] !== gk || sp[3] !== right) { sp[0] = n; sp[1] = r0; sp[2] = gk; sp[3] = right; full = true; }
+    if (full || this.sFull || this.sLen !== N) { this.structureFull(dt, n, r0, k, gk, right); return; }
+    st.full = 0;
+    const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, first = this.sFirst, next = this.sNext;
+    let lo = this.sDownLo, nUp = 0, nThick = 0;
+    const inv = 1 / n, kk = dt > 0 ? k : 1, snap = dt <= 0;
+    for (let i = N - 1; i >= 0; i--) {
+      const f = up[i];
+      if (f === 0) continue;
+      const nd = nodes[i];
+      let target: number;
+      if (f & 1) {
+        nUp++;
+        let pipe = 0, sub = 0;
+        for (let c = first[i]; c >= 0; c = next[c]) {
+          const cn = nodes[c];
+          if (chains[cn.chain].pruned) continue;
+          pipe += C[c]; sub += cn.subLen;
+        }
+        const rj = nd.juv < 1 ? r0 * (JUV_RADIUS + (1 - JUV_RADIUS) * nd.juv) : r0;
+        if (pipe === 0) {
+          const fl = nd.targetLen > 0 ? nd.len / nd.targetLen : 1;
+          target = rj * (0.35 + 0.65 * fl);
+        } else {
+          target = Math.max(rj, Math.pow(pipe, inv));
+        }
+        if (!chains[nd.chain].pruned) sub += nd.len;
+        const c = Math.pow(target, n);
+        let chg = c !== C[i];
+        if (sub !== nd.subLen) { nd.subLen = sub; chg = true; down[i] = 1; if (i < lo) lo = i; }
+        nd.pipe = pipe; T[i] = target; C[i] = c;
+        if (chg && nd.parent >= 0) up[nd.parent] |= 1;
+      } else { target = T[i]; nThick++; }
+      const r = nd.radius;
+      if (target > r) nd.radius += (target - r) * kk;
+      if (snap) nd.radius = Math.max(nd.radius, target * 0.999);
+      if (nd.radius !== r) { down[i] = 1; if (i < lo) lo = i; }
+      up[i] = target > nd.radius ? 2 : 0;
+    }
+    st.up = nUp; st.thick = nThick;
+    // Forward pass over the nodes at and below the lowest changed id.
+    let nDown = 0, moved = 0;
+    if (lo < N) {
+      const par = this.sPar, stamp = this.sStamp, now = ++this.sStampNow, tmp = this.tmp;
+      for (let i = lo; i < N; i++) {
+        const pi = par[i];
+        const own = down[i];
+        if (own === 0 && (pi < 0 || stamp[pi] !== now)) continue;
+        down[i] = 0; nDown++;
+        const nd = nodes[i];
+        if (pi < 0) {
+          nd.wx = nd.rx; nd.wy = nd.ry; nd.wz = nd.rz; nd.sag = 0;
+          nd.wdx = 0; nd.wdy = 1; nd.wdz = 0;
+          stamp[i] = now; moved++;
+          continue;
+        }
+        const pn = nodes[pi];
+        const h = Math.hypot(nd.dx, nd.dz);
+        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+        const sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
+        bendDown(nd.dx, nd.dy, nd.dz, sag, tmp);
+        const wx = pn.wx + tmp[0] * nd.len, wy = pn.wy + tmp[1] * nd.len, wz = pn.wz + tmp[2] * nd.len;
+        if (own !== 0 || sag !== nd.sag || wx !== nd.wx || wy !== nd.wy || wz !== nd.wz) { stamp[i] = now; moved++; }
+        nd.sag = sag;
+        nd.wdx = tmp[0]; nd.wdy = tmp[1]; nd.wdz = tmp[2];
+        nd.wx = wx; nd.wy = wy; nd.wz = wz;
+      }
+    }
+    this.sDownLo = Infinity;
+    st.down = nDown; st.moved = moved;
+    if (moved > 0) {
+      const mn = this.bboxMin, mx = this.bboxMax;
+      mn[0] = mn[1] = mn[2] = Infinity;
+      mx[0] = mx[1] = mx[2] = -Infinity;
+      for (let i = 0; i < N; i++) {
+        const nd = nodes[i];
+        if (nd.wx < mn[0]) mn[0] = nd.wx; if (nd.wy < mn[1]) mn[1] = nd.wy; if (nd.wz < mn[2]) mn[2] = nd.wz;
+        if (nd.wx > mx[0]) mx[0] = nd.wx; if (nd.wy > mx[1]) mx[1] = nd.wy; if (nd.wz > mx[2]) mx[2] = nd.wz;
+      }
+    }
+  }
+
+  /** The plain pass over every node (the reference the incremental pass must equal); also rebuilds the incremental state. */
+  private structureFull(dt: number, n: number, r0: number, k: number, gk: number, right: number) {
+    const nodes = this.nodes, N = nodes.length;
+    if (N > this.sCap) this.sGrow(N);
+    const T = this.sT, C = this.sC, up = this.sUp, par = this.sPar, first = this.sFirst, next = this.sNext;
+    first.fill(-1, 0, N); this.sDown.fill(0, 0, N);
+    for (let i = 0; i < N; i++) {
+      const pi = nodes[i].parent;
+      par[i] = pi;
+      if (pi >= 0) { next[i] = first[pi]; first[pi] = i; } else next[i] = -1;
+    }
+    this.sLen = N; this.sFull = false; this.sDownLo = Infinity;
+    const st = this.structStats;
+    st.full = 1; st.fullPasses++; st.up = N; st.thick = 0; st.down = N; st.moved = N;
     for (let i = 0; i < N; i++) {
       nodes[i].pipe = 0;
       nodes[i].subLen = 0;
     }
     // Children always have larger ids than parents: reverse pass is bottom-up.
-    const k = 1 - Math.exp(-dt * p.thickness.thickeningRate * 4);
     for (let i = N - 1; i >= 0; i--) {
       const nd = nodes[i];
       let target: number;
@@ -720,18 +887,16 @@ export class TreeSim {
       // Secondary growth only ever adds wood: radii never shrink (pruned twigs leave their girth behind).
       if (target > nd.radius) nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
       if (dt <= 0) nd.radius = Math.max(nd.radius, target * 0.999);
+      T[i] = target; C[i] = Math.pow(target, n); up[i] = target > nd.radius ? 2 : 0;
       if (this.chains[nd.chain].pruned) continue;
       nd.subLen += nd.len;
       if (nd.parent >= 0) {
         const pn = nodes[nd.parent];
-        pn.pipe += Math.pow(target, n);
+        pn.pipe += C[i];
         pn.subLen += nd.subLen;
       }
     }
     // Forward pass: accumulate sag (bend toward -Y) and world positions.
-    const gk = p.growth.gravity * p.growth.sag * 4e-6;
-    // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).
-    const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
     const mn = this.bboxMin, mx = this.bboxMax;
     mn[0] = mn[1] = mn[2] = Infinity;
     mx[0] = mx[1] = mx[2] = -Infinity;
@@ -756,6 +921,35 @@ export class TreeSim {
       if (nd.wx < mn[0]) mn[0] = nd.wx; if (nd.wy < mn[1]) mn[1] = nd.wy; if (nd.wz < mn[2]) mn[2] = nd.wz;
       if (nd.wx > mx[0]) mx[0] = nd.wx; if (nd.wy > mx[1]) mx[1] = nd.wy; if (nd.wz > mx[2]) mx[2] = nd.wz;
     }
+  }
+
+  /**
+   * Debug: is the incremental state stale? Runs `updateStructure(0)` incrementally and as a full pass from the same
+   * state and returns the largest differences (all 0 = bit-equal). Leaves the tree in the full-pass state.
+   */
+  structureCheck() {
+    const nodes = this.nodes, N = nodes.length;
+    const snap = () => { const a = new Float64Array(N * 10); for (let i = 0; i < N; i++) { const d = nodes[i], o = i * 10; a[o] = d.radius; a[o + 1] = d.sag; a[o + 2] = d.wx; a[o + 3] = d.wy; a[o + 4] = d.wz; a[o + 5] = d.wdx; a[o + 6] = d.wdy; a[o + 7] = d.wdz; a[o + 8] = d.subLen; a[o + 9] = d.pipe; } return a; };
+    const s0 = snap();
+    const wasFull = this.sFull || this.sLen !== N;
+    this.updateStructure(0);
+    const inc = snap(), bb = [...this.bboxMin, ...this.bboxMax];
+    for (let i = 0; i < N; i++) { const d = nodes[i], o = i * 10; d.radius = s0[o]; d.sag = s0[o + 1]; d.wx = s0[o + 2]; d.wy = s0[o + 3]; d.wz = s0[o + 4]; d.wdx = s0[o + 5]; d.wdy = s0[o + 6]; d.wdz = s0[o + 7]; d.subLen = s0[o + 8]; d.pipe = s0[o + 9]; }
+    this.updateStructure(0, true);
+    const ref = snap(), bb2 = [...this.bboxMin, ...this.bboxMax];
+    const out = { nodes: N, incremental: !wasFull, radius: 0, sag: 0, pos: 0, dir: 0, subLen: 0, bbox: 0, differing: 0 };
+    for (let i = 0; i < N; i++) {
+      const o = i * 10; let any = false;
+      for (let j = 0; j < 10; j++) {
+        const d = Math.abs(inc[o + j] - ref[o + j]);
+        if (!(d === 0)) any = true;
+        const key = j === 0 ? 'radius' : j === 1 ? 'sag' : j < 5 ? 'pos' : j < 8 ? 'dir' : 'subLen';
+        if (!(d <= out[key])) out[key] = d;
+      }
+      if (any) out.differing++;
+    }
+    for (let j = 0; j < 6; j++) out.bbox = Math.max(out.bbox, Math.abs(bb[j] - bb2[j]));
+    return out;
   }
 }
 
