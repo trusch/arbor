@@ -551,6 +551,26 @@ try {
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
   }
+  // Wildlife gate (PowerVR rule): butterflies, birds (leaf material clones) and fireflies (canopy decal clone) add no
+  // shader program on the phone: same count as ?critters=0 with all three forced out, by day and at night.
+  {
+    const progs = async (q) => {
+      const { ctx, mp, merr } = await phone(`?speed=0&weather=calm&season.date=0.3&season.hold=true${q}`);
+      const out = {};
+      for (const [name, hour] of [['noon', 13], ['night', 23.5]]) {
+        await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 90); window.__ffDone = true; if (A.critters) A.critters.force = { butterflies: 1, fireflies: 1, birds: 1 }; }, hour);
+        await mp.waitForTimeout(name === 'noon' ? 9000 : 3000);
+        out[name] = await mp.evaluate(() => { const A = window.__arbor, s = A.critters?.stats; return { programs: A.stage.renderer.info.programs.length, bf: s?.butterflies ?? 0, lit: s?.fireflies ?? 0, birds: s?.birds ?? 0, drawn: A.critters ? [A.critters.wings, A.critters.bodies, A.critters.glow].filter((m) => m.visible).length : 0, fe: A.frameErrors() }; });
+      }
+      await ctx.close();
+      return { ...out, errs: merr.length };
+    };
+    const on = await progs(''), off = await progs('&critters=0');
+    check('phone: wildlife (butterflies, birds, fireflies out) adds no shader program (noon and night)',
+      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.bf > 0 && on.noon.birds > 0 && on.noon.lit > 0 && on.noon.drawn === 3 && on.night.drawn === 3 && off.noon.drawn === 0
+        && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
+      `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
+  }
   // Leaf form gate (PowerVR rule): switching the leaf form on a living tree is data only. Same program count, same
   // leaf material and map objects (new pixels, version bump), falling-leaf meshes still on the live material, meadow
   // maps untouched; on the phone path (safe leaves) and on desktop High (full leaves, GTAO g-buffer material).

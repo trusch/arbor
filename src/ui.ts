@@ -385,6 +385,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     slider(SKY[3]),
     slider(SKY[2]),
     toggle('sky.meadow', 'Meadow', 'Grass tufts and wildflowers around the tree.'),
+    slider({ key: 'critters.amount', name: 'Wildlife', help: 'Butterflies over the flowers, fireflies at dusk, a pair of birds in the crown. 0 = none.', min: 0, max: 1.5, step: 0.25, fmt: (v) => (v <= 0 ? 'Off' : `${Math.round(v * 100)} %`) }),
     h('h3', { class: 'ap-sub', text: 'Weather' }),
     weatherRow,
     toggle('weather.lightning', 'Lightning', 'Bright flashes during a storm. Turn off if flashing light bothers you.'),

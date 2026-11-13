@@ -347,3 +347,13 @@ In storm-strength wind (`wind.base` above 0.6; the Wind slider near its top, or 
 - Rule (`TreeSim.windLoad`, 4 Hz): load ratio `u = M / S` at every chain base, wind moment (gust² × leaf and wood sail area × lever arm across the wind) plus a gravity moment, against `S = strength × SIGMA_REF × r³`. Damage accumulates while `u > 1` and the limb breaks when it passes 1. `params.breakage.strength` (default 1) scales the wood strength, `params.breakage.enabled` and `?breakage=0` turn the rule off.
 - By hand: `__arbor.breakLimb()` (random order-1 limb), `__arbor.breakLimb('big')`, `__arbor.breakLimb(nodeId)`, `__arbor.breakTwig()`. `__arbor.debris.state` / `.stats` show what is falling or resting.
 - Scripts (against the built app, e.g. `HOST=127.0.0.1 PORT=5401 node server/serve.mjs`): `node scripts/breakcheck.mjs URL` (sim assertions), `node scripts/breakshots.mjs URL` (frame times at the break, program counts, screenshots `shots/break-*`), `node scripts/breakcalib.mjs URL` (load-ratio distribution and 120 s storm/calm runs).
+
+## Wildlife
+
+Small life goes about its business around the tree (`src/render/critters.ts`):
+
+- **Butterflies** flutter between the meadow flowers on warm, calm, bright days from spring to early autumn, settle on a flower and open and close their wings. Gusts carry them; rain, strong wind, night and winter send them away.
+- **Fireflies** drift low over the grass and under the crown at dusk and at night in late spring and summer, each glowing and fading in its own rhythm; the darker it is, the more there are.
+- **A pair of small birds** arrives from the distance with a bounding flight, lands on a twig of the crown once the tree is big enough, sits, turns, hops and leaves again. They ride the swaying branch and flush together when a storm front or a limb break comes. One bird in winter, none at night.
+
+Sky tab, "Wildlife": amount (0 = off). `?critters.amount=0` turns them off, `?critters=0` does not build the system. They are decoration only and never touch the tree. Test hooks: `__arbor.critters.force = { butterflies: 1, fireflies: 1, birds: 1 }`, `__arbor.critters.stats`, `__arbor.critters.flush()`; `node scripts/crittershots.mjs` renders contact sheets.
