@@ -163,6 +163,8 @@ export class TreeSim {
   private sNext = new Int32Array(0);
   private sT = new Float64Array(0);
   private sC = new Float64Array(0);
+  /** Copy of `radius` as of the node's last structure visit, so the thickening-only loop touches no node object at rest. */
+  private sR = new Float64Array(0);
   /** Bit 1: an input of the bottom-up values changed (recompute); bit 2: radius still below its target (thickening). */
   private sUp = new Uint8Array(0);
   /** Own sag inputs changed (len, radius, subtree length, new node). */
@@ -174,8 +176,19 @@ export class TreeSim {
   private sFull = true;
   private sLen = 0;
   private sParams = [NaN, NaN, NaN, NaN];
+  /**
+   * Sim seconds between forward passes (sag, world positions) inside `step`; 0 = every step. Between two passes only
+   * the elongating tips are placed (on their parents' last positions). Radii and subtree loads are current every step.
+   */
+  structureInterval = 0.1;
+  private sAcc = 0;
+  /** Nodes that elongated or were created since the last forward pass of any kind, parents before children. */
+  private sTips: number[] = [];
+  private sBox = false;
+  /** A pass has run on this tree (false between `reset` and the first pass). */
+  private sValid = false;
   /** Counters of the last `updateStructure`: full pass or not, nodes recomputed bottom-up, thickening-only, forward, moved. */
-  structStats = { full: 0, fullPasses: 0, up: 0, thick: 0, down: 0, moved: 0 };
+  structStats = { full: 0, fullPasses: 0, up: 0, thick: 0, down: 0, moved: 0, forwardPasses: 0, tipPasses: 0 };
 
   constructor(public params: ArborParams) {
     this.rng = new Rng(params.seed.seed);
@@ -196,7 +209,8 @@ export class TreeSim {
     this.breaks = [];
     this.damage = new Float32Array(0);
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
-    this.sFull = true; this.sLen = 0;
+    this.sFull = true; this.sLen = 0; this.sValid = false;
+    this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -257,6 +271,7 @@ export class TreeSim {
       this.sLen = id + 1;
       this.sPar[id] = parent; this.sFirst[id] = -1; this.sT[id] = 0; this.sC[id] = NaN; this.sStamp[id] = 0;
       this.sUp[id] = 1; this.sDown[id] = 1;
+      this.sTips.push(id);
       if (id < this.sDownLo) this.sDownLo = id;
       if (parent >= 0) { this.sNext[id] = this.sFirst[parent]; this.sFirst[parent] = id; this.sUp[parent] |= 1; } else this.sNext[id] = -1;
     }
@@ -269,7 +284,7 @@ export class TreeSim {
     const f64 = (a: Float64Array) => { const b = new Float64Array(cap); b.set(a); return b; };
     const u8 = (a: Uint8Array) => { const b = new Uint8Array(cap); b.set(a); return b; };
     this.sPar = i32(this.sPar); this.sFirst = i32(this.sFirst); this.sNext = i32(this.sNext); this.sStamp = i32(this.sStamp);
-    this.sT = f64(this.sT); this.sC = f64(this.sC); this.sUp = u8(this.sUp); this.sDown = u8(this.sDown);
+    this.sT = f64(this.sT); this.sC = f64(this.sC); this.sR = f64(this.sR); this.sUp = u8(this.sUp); this.sDown = u8(this.sDown);
     this.sCap = cap;
   }
 
@@ -329,6 +344,9 @@ export class TreeSim {
     const g = p.growth;
     this.time += dt;
     const full = this.nodes.length >= g.maxNodes;
+    // The light tick of this step (shading, self-pruning, juvenile shedding) reads world positions: bring them to the
+    // state of the last step before anything elongates, which is exactly what a forward pass every step had left.
+    if (this.lightTimer - dt <= 0) this.flushStructure();
 
     // 1. Elongate growing tips; finished segments spawn the next one.
     if (!full) {
@@ -342,6 +360,7 @@ export class TreeSim {
         const jv = tip.juv < 1 ? JUV_SPEED + (1 - JUV_SPEED) * (tip.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
         tip.len += g.segmentLength * g.growthRate * vigor * jv * dt;
         this.sUp[tipId] |= 1; this.sDown[tipId] = 1;
+        this.sTips.push(tipId);
         if (tipId < this.sDownLo) this.sDownLo = tipId;
         if (tip.len >= tip.targetLen) {
           tip.len = tip.targetLen;
@@ -365,7 +384,7 @@ export class TreeSim {
       tel.phase('sim step', true);
     }
 
-    this.updateStructure(dt);
+    this.updateStructure(dt, false, true);
   }
 
   private updateRest(id: number) {
@@ -697,6 +716,7 @@ export class TreeSim {
       const cap = Math.ceil(N * 1.5) + 64;
       L.leaf = new Float32Array(cap); L.w = new Float32Array(cap); L.cx = new Float32Array(cap); L.cy = new Float32Array(cap); L.cz = new Float32Array(cap);
     }
+    this.flushStructure();
     const lf = L.leaf, sw = L.w, cx = L.cx, cy = L.cy, cz = L.cz;
     lf.fill(0, 0, N); sw.fill(0, 0, N); cx.fill(0, 0, N); cy.fill(0, 0, N); cz.fill(0, 0, N);
     for (const l of this.leaves) lf[l.node] += 1;
@@ -761,7 +781,7 @@ export class TreeSim {
    * the cascade. `full` (also: after reset, `breakAt`, a change of the parameters read here, a replaced node list)
    * recomputes every node with the plain loops.
    */
-  updateStructure(dt: number, full = false) {
+  updateStructure(dt: number, full = false, defer = false) {
     const p = this.params;
     const nodes = this.nodes;
     const N = nodes.length;
@@ -773,17 +793,26 @@ export class TreeSim {
     const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
     const sp = this.sParams, st = this.structStats;
     if (sp[0] !== n || sp[1] !== r0 || sp[2] !== gk || sp[3] !== right) { sp[0] = n; sp[1] = r0; sp[2] = gk; sp[3] = right; full = true; }
-    if (full || this.sFull || this.sLen !== N) { this.structureFull(dt, n, r0, k, gk, right); return; }
+    if (full || this.sFull || this.sLen !== N) { this.structureFull(dt, n, r0, k, gk, right); this.sTips.length = 0; this.sAcc = 0; this.sBox = false; return; }
     st.full = 0;
-    const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, first = this.sFirst, next = this.sNext;
+    const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, R = this.sR, first = this.sFirst, next = this.sNext;
     let lo = this.sDownLo, nUp = 0, nThick = 0;
     const inv = 1 / n, kk = dt > 0 ? k : 1, snap = dt <= 0;
     for (let i = N - 1; i >= 0; i--) {
       const f = up[i];
       if (f === 0) continue;
+      if (f === 2) {
+        // Thickening only: inputs unchanged, the radius approaches its stored target (same two lines as below).
+        nThick++;
+        const target = T[i], r = R[i];
+        let nr = target > r ? r + (target - r) * kk : r;
+        if (snap) nr = Math.max(nr, target * 0.999);
+        if (nr !== r) { nodes[i].radius = nr; R[i] = nr; down[i] = 1; if (i < lo) lo = i; if (!(target > nr)) up[i] = 0; }
+        continue;
+      }
       const nd = nodes[i];
       let target: number;
-      if (f & 1) {
+      {
         nUp++;
         let pipe = 0, sub = 0;
         for (let c = first[i]; c >= 0; c = next[c]) {
@@ -804,15 +833,34 @@ export class TreeSim {
         if (sub !== nd.subLen) { nd.subLen = sub; chg = true; down[i] = 1; if (i < lo) lo = i; }
         nd.pipe = pipe; T[i] = target; C[i] = c;
         if (chg && nd.parent >= 0) up[nd.parent] |= 1;
-      } else { target = T[i]; nThick++; }
+      }
       const r = nd.radius;
       if (target > r) nd.radius += (target - r) * kk;
       if (snap) nd.radius = Math.max(nd.radius, target * 0.999);
       if (nd.radius !== r) { down[i] = 1; if (i < lo) lo = i; }
+      R[i] = nd.radius;
       up[i] = target > nd.radius ? 2 : 0;
     }
     st.up = nUp; st.thick = nThick;
-    // Forward pass over the nodes at and below the lowest changed id.
+    this.sDownLo = lo;
+    if (defer && this.structureInterval > 0 && (this.sAcc += dt) < this.structureInterval - 1e-9) this.structureTips(gk, right);
+    else this.structureForward(gk, right);
+  }
+
+  /**
+   * Bring sag and world positions up to date now (no radius change). `step` defers the forward pass
+   * (`structureInterval`); a reader that needs exact positions between two passes calls this first.
+   */
+  flushStructure() {
+    if (!this.sValid || this.sLen !== this.nodes.length) return;
+    if (this.sDownLo === Infinity && !this.sBox) return;
+    this.structureForward(this.sParams[2], this.sParams[3]);
+  }
+
+  /** Forward pass over the nodes at and below the lowest changed id: sag and world position of every node whose inputs moved. */
+  private structureForward(gk: number, right: number) {
+    const nodes = this.nodes, N = nodes.length, down = this.sDown, st = this.structStats;
+    const lo = this.sDownLo;
     let nDown = 0, moved = 0;
     if (lo < N) {
       const par = this.sPar, stamp = this.sStamp, now = ++this.sStampNow, tmp = this.tmp;
@@ -840,9 +888,10 @@ export class TreeSim {
         nd.wx = wx; nd.wy = wy; nd.wz = wz;
       }
     }
-    this.sDownLo = Infinity;
-    st.down = nDown; st.moved = moved;
-    if (moved > 0) {
+    this.sDownLo = Infinity; this.sTips.length = 0; this.sAcc = 0;
+    st.down = nDown; st.moved = moved; st.forwardPasses++;
+    if (moved > 0 || this.sBox) {
+      this.sBox = false;
       const mn = this.bboxMin, mx = this.bboxMax;
       mn[0] = mn[1] = mn[2] = Infinity;
       mx[0] = mx[1] = mx[2] = -Infinity;
@@ -854,18 +903,44 @@ export class TreeSim {
     }
   }
 
+  /**
+   * Between two forward passes: only the segments that elongated or were created in this step are placed, on their
+   * parents' positions of the last pass, so a growing tip moves every step. Everything else (sag of loaded wood, what
+   * hangs below it) waits for the next forward pass, which also redoes these nodes if their parents moved.
+   */
+  private structureTips(gk: number, right: number) {
+    const nodes = this.nodes, tips = this.sTips, down = this.sDown, tmp = this.tmp, mn = this.bboxMin, mx = this.bboxMax;
+    for (let j = 0; j < tips.length; j++) {
+      const i = tips[j], nd = nodes[i];
+      if (nd.parent < 0 || down[i] === 0) continue;
+      const pn = nodes[nd.parent];
+      const h = Math.hypot(nd.dx, nd.dz);
+      const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+      nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
+      bendDown(nd.dx, nd.dy, nd.dz, nd.sag, tmp);
+      nd.wdx = tmp[0]; nd.wdy = tmp[1]; nd.wdz = tmp[2];
+      nd.wx = pn.wx + tmp[0] * nd.len; nd.wy = pn.wy + tmp[1] * nd.len; nd.wz = pn.wz + tmp[2] * nd.len;
+      if (nd.wx < mn[0]) mn[0] = nd.wx; if (nd.wy < mn[1]) mn[1] = nd.wy; if (nd.wz < mn[2]) mn[2] = nd.wz;
+      if (nd.wx > mx[0]) mx[0] = nd.wx; if (nd.wy > mx[1]) mx[1] = nd.wy; if (nd.wz > mx[2]) mx[2] = nd.wz;
+    }
+    if (tips.length) this.sBox = true;
+    tips.length = 0;
+    const st = this.structStats;
+    st.down = 0; st.moved = 0; st.tipPasses++;
+  }
+
   /** The plain pass over every node (the reference the incremental pass must equal); also rebuilds the incremental state. */
   private structureFull(dt: number, n: number, r0: number, k: number, gk: number, right: number) {
     const nodes = this.nodes, N = nodes.length;
     if (N > this.sCap) this.sGrow(N);
-    const T = this.sT, C = this.sC, up = this.sUp, par = this.sPar, first = this.sFirst, next = this.sNext;
+    const T = this.sT, C = this.sC, R = this.sR, up = this.sUp, par = this.sPar, first = this.sFirst, next = this.sNext;
     first.fill(-1, 0, N); this.sDown.fill(0, 0, N);
     for (let i = 0; i < N; i++) {
       const pi = nodes[i].parent;
       par[i] = pi;
       if (pi >= 0) { next[i] = first[pi]; first[pi] = i; } else next[i] = -1;
     }
-    this.sLen = N; this.sFull = false; this.sDownLo = Infinity;
+    this.sLen = N; this.sFull = false; this.sValid = true; this.sDownLo = Infinity;
     const st = this.structStats;
     st.full = 1; st.fullPasses++; st.up = N; st.thick = 0; st.down = N; st.moved = N;
     for (let i = 0; i < N; i++) {
@@ -887,7 +962,7 @@ export class TreeSim {
       // Secondary growth only ever adds wood: radii never shrink (pruned twigs leave their girth behind).
       if (target > nd.radius) nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
       if (dt <= 0) nd.radius = Math.max(nd.radius, target * 0.999);
-      T[i] = target; C[i] = Math.pow(target, n); up[i] = target > nd.radius ? 2 : 0;
+      T[i] = target; C[i] = Math.pow(target, n); R[i] = nd.radius; up[i] = target > nd.radius ? 2 : 0;
       if (this.chains[nd.chain].pruned) continue;
       nd.subLen += nd.len;
       if (nd.parent >= 0) {

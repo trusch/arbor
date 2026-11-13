@@ -48,6 +48,7 @@ function run(B, c) {
       sim.step(dt); steps++;
     }
     cost.push(+((performance.now() - t0) / steps).toFixed(3)); t0 = performance.now(); steps = 0;
+    if (process.env.FLUSH !== '0') sim.flushStructure?.(); // deferred forward pass (structureInterval): bring positions to this instant
     const N = sim.nodes.length, a = new Float64Array(N * 9);
     for (let i = 0; i < N; i++) { const d = sim.nodes[i], o = i * 9; a[o] = d.wx; a[o + 1] = d.wy; a[o + 2] = d.wz; a[o + 3] = d.wdx; a[o + 4] = d.wdy; a[o + 5] = d.wdz; a[o + 6] = d.radius; a[o + 7] = d.sag; a[o + 8] = d.subLen; }
     snaps.push({ t: T, N, a, pruned: sim.chains.map((x) => (x.pruned ? 1 : 0)).join(''), leaves: sim.leaves.length, bbox: [...sim.bboxMin, ...sim.bboxMax], height: +sim.bboxMax[1].toFixed(2) });
