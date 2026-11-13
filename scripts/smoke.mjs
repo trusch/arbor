@@ -30,7 +30,7 @@ try {
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));
   // Low quality keeps SwiftShader frame times sane; the app path under test is the same.
-  await page.goto(`${url}?quality=Low`);
+  await page.goto(`${url}?cycle=false&quality=Low`);
   await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
   await page.waitForTimeout(1500);
   check('loads without console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
@@ -219,7 +219,7 @@ try {
     check(`reload ${i + 1} runs`, errors.length === before && t1.t > t0 && t1.fe === 0, `sim ${t0.toFixed(2)}→${t1.t.toFixed(2)} frameErrors=${t1.fe}`);
   }
   // Junk query values must not poison params with NaN.
-  await page.goto(`${url}?quality=Low&t=abc&speed=xyz`);
+  await page.goto(`${url}?cycle=false&quality=Low&t=abc&speed=xyz`);
   await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
   const junk = await page.evaluate(() => ({ s: window.__arbor.params.time.speed, t: window.__arbor.sim.time }));
   check('junk query values ignored', Number.isFinite(junk.s) && Number.isFinite(junk.t), JSON.stringify(junk));
@@ -236,7 +236,7 @@ try {
     const merr = [];
     mp.on('pageerror', (e) => merr.push(e.message));
     const t0 = Date.now();
-    await mp.goto(url + (q || '?start=0'), { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
+    await mp.goto(url + (q || '?cycle=false&start=0'), { waitUntil: 'domcontentloaded', timeout: opts.timeout ?? 30000 });
     await mp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
     return { ctx, mp, merr, loadMs: Date.now() - t0 };
   };
@@ -254,7 +254,7 @@ try {
   // Phone, real touch: open the bottom sheet, drag Gravity while the journey keys it. The value must stick, the page
   // must not scroll and the camera must not take the gesture.
   {
-    const { ctx, mp, merr } = await phone('?preset=' + encodeURIComponent('Journey: Earth → alien'));
+    const { ctx, mp, merr } = await phone('?cycle=false&preset=' + encodeURIComponent('Journey: Earth → alien'));
     await mp.waitForTimeout(1500);
     const closed = await mp.evaluate(() => !document.querySelector('#arbor-panel').classList.contains('open'));
     await mp.tap('#arbor-panel-open');
@@ -325,7 +325,7 @@ try {
       await ctx.close();
       return { ...out, errs: merr.length };
     };
-    const on = await progs('?speed=0'), off = await progs('?speed=0&meadow=0');
+    const on = await progs('?cycle=false&speed=0'), off = await progs('?cycle=false&speed=0&meadow=0');
     check('phone: meadow adds no shader program (noon and night), tufts and flowers drawn',
       on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.grass > 1000 && on.noon.flowers > 100 && off.noon.grass === 0 && on.noon.leaves > 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
@@ -333,13 +333,13 @@ try {
     // Backdrop gate (PowerVR rule): terrain, far meadow and tree cards are geometry, texture pixels and clones of live
     // materials, so the phone compiles no more programs than with the old background (?backdrop=0); it is one fewer,
     // because the hill ring's program is gone.
-    const old = await progs('?speed=0&backdrop=0');
+    const old = await progs('?cycle=false&speed=0&backdrop=0');
     check('phone: backdrop adds no shader program (noon and night) and draws far tufts',
       on.noon.programs <= old.noon.programs && on.night.programs <= old.night.programs && on.noon.grass > old.noon.grass && on.noon.meshes > old.noon.meshes && old.noon.fe === 0 && old.night.fe === 0 && old.errs === 0,
       `backdrop ${on.noon.programs}/${on.night.programs} old ${old.noon.programs}/${old.night.programs} grass ${on.noon.grass} vs ${old.noon.grass} meshes ${on.noon.meshes} vs ${old.noon.meshes}`);
     // Same gate for the storm (WP9): rain sheets and the bolt are clones of the canopy-shadow decal material, everything
     // else is uniforms and intensities. Forced storm with a held flash (bolt drawn) against the calm run above.
-    const storm = await progs('?speed=0&weather=storm', true), dry = await progs('?speed=0&weather=storm&rain=0', true);
+    const storm = await progs('?cycle=false&speed=0&weather=storm', true), dry = await progs('?cycle=false&speed=0&weather=storm&rain=0', true);
     check('phone: storm adds no shader program (noon and night; fewer is fine: stars hide under cloud), rain sheets and bolt drawn once the decal is',
       storm.noon.programs <= on.noon.programs && storm.night.programs <= on.night.programs && (!storm.noon.decal || (storm.noon.rain >= 2 && storm.noon.bolt)) && (!storm.night.decal || (storm.night.rain >= 2 && storm.night.bolt))
         && storm.noon.cloud === 1 && on.noon.cloud === 0 && on.noon.rain === 0 && dry.noon.rain === 0 && !dry.noon.bolt && dry.noon.programs === on.noon.programs && dry.night.programs <= on.night.programs
@@ -365,8 +365,8 @@ try {
         await ctx.close();
         return { ...out, errs: merr.length };
       };
-      const on = await sky('?speed=0&weather=calm'), off = await sky('?speed=0&weather=calm&celestial=0');
-      const son = await sky('?speed=0&weather=storm'), soff = await sky('?speed=0&weather=storm&celestial=0');
+      const on = await sky('?cycle=false&speed=0&weather=calm'), off = await sky('?cycle=false&speed=0&weather=calm&celestial=0');
+      const son = await sky('?cycle=false&speed=0&weather=storm'), soff = await sky('?cycle=false&speed=0&weather=storm&celestial=0');
       const T = ['noon', 'golden', 'night'];
       check('phone: sun glow, moon and star detail add no shader program (noon, golden hour, night, storm), planes drawn in calm and hidden under the storm cloud',
         T.every((t) => on[t].programs <= off[t].programs && son[t].programs <= soff[t].programs && on[t].fe === 0 && son[t].fe === 0)
@@ -376,7 +376,7 @@ try {
     }
     // Lightning off means no flash and no bolt at all, even when one is forced.
     {
-      const { ctx, mp } = await phone('?speed=0&weather=storm&lightning=0');
+      const { ctx, mp } = await phone('?cycle=false&speed=0&weather=storm&lightning=0');
       const r = await mp.evaluate(async () => { const A = window.__arbor; A.weather.holdFlash = true; A.weather.strike(); await new Promise((res) => setTimeout(res, 600)); return { flash: A.weather.flash, bolt: A.weather.bolt.on, vis: !!A.rain?.bolt.visible, lightning: A.params.weather.lightning }; });
       await ctx.close();
       check('phone: lightning off gives no flash and no bolt', r.lightning === false && r.flash === 0 && !r.bolt && !r.vis, JSON.stringify(r));
@@ -405,8 +405,8 @@ try {
       await ctx.close();
       return { ...r, errs: merr.length };
     };
-    const calm = await run('?speed=0&weather=calm'), calm0 = await run('?speed=0&weather=calm&sway=0');
-    const storm = await run('?speed=0&weather=storm&lightning=0'), storm0 = await run('?speed=0&weather=storm&lightning=0&sway=0');
+    const calm = await run('?cycle=false&speed=0&weather=calm'), calm0 = await run('?cycle=false&speed=0&weather=calm&sway=0');
+    const storm = await run('?cycle=false&speed=0&weather=storm&lightning=0'), storm0 = await run('?cycle=false&speed=0&weather=storm&lightning=0&sway=0');
     check('phone: wind sway adds no shader program (calm and storm), moves, and returns exactly to rest',
       calm.programs === calm0.programs && storm.programs === storm0.programs && calm.live && storm.live && !calm0.live && !storm0.live
         && calm.max > 0.005 && storm.max > calm.max && [calm, storm].every((r) => !r.restLive && r.offRest === 0 && !r.nonZero && r.fe === 0 && r.errs === 0 && r.leaves > 0),
@@ -416,7 +416,7 @@ try {
   // once the page has settled (three re-keys the bark program by itself a few seconds after the first frames), then in
   // flight and at rest; a twig break (leaf fall) on top must not add one either.
   {
-    const { ctx, mp, merr } = await phone('?speed=0');
+    const { ctx, mp, merr } = await phone('?cycle=false&speed=0');
     const st = () => mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phases: A.debris.state.map((l) => l.phase), lowest: A.debris.state.map((l) => l.lowest), stats: A.debris.stats, fe: A.frameErrors() }; });
     await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await mp.waitForTimeout(7000);
@@ -446,7 +446,7 @@ try {
   {
     const out = {};
     for (const name of ['calmOn', 'calmOff', 'stormOn', 'stormOff']) {
-      const { ctx, mp, merr } = await phone(`?speed=0&weather=${name.startsWith('storm') ? 'storm' : 'calm'}${name.endsWith('Off') ? '&leaffall=0' : ''}`);
+      const { ctx, mp, merr } = await phone(`?cycle=false&speed=0&weather=${name.startsWith('storm') ? 'storm' : 'calm'}${name.endsWith('Off') ? '&leaffall=0' : ''}`);
       await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); A.leafFall?.force(6); });
       await mp.waitForTimeout(9000);
       out[name] = await mp.evaluate(() => { const A = window.__arbor, L = A.leafFall; return { programs: A.stage.renderer.info.programs.length, fe: A.frameErrors(), on: !!L, spawned: L?.stats.spawned ?? 0, air: L?.stats.air ?? 0, ground: L?.stats.ground ?? 0, maxMs: L?.stats.maxMs ?? 0 }; });
@@ -480,7 +480,7 @@ try {
       if (k === 1) await on.mp.waitForFunction(() => !window.__arbor.leaves.passOpen, null, { timeout: 30000 });
       await on.mp.waitForTimeout(300);
     };
-    const on = await phone('?speed=0&weather=calm'), off = await phone('?speed=0&weather=calm&season.on=false');
+    const on = await phone('?cycle=false&speed=0&weather=calm'), off = await phone('?cycle=false&speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
     const st = {}, offP = [], land = {};
@@ -535,7 +535,7 @@ try {
   // the phone compiles as many programs at peak bloom as without the blossom system (?blossom=0), at noon and at night.
   {
     const progs = async (q) => {
-      const { ctx, mp, merr } = await phone(`?speed=0&weather=calm&season.date=0.056&season.hold=true${q}`);
+      const { ctx, mp, merr } = await phone(`?cycle=false&speed=0&weather=calm&season.date=0.056&season.hold=true${q}`);
       const out = {};
       for (const [name, hour] of [['noon', 13], ['night', 23.5]]) {
         await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 90); window.__ffDone = true; }, hour);
@@ -575,7 +575,7 @@ try {
         && r.shared === before.shared && r.fe === 0 && r.leaves > 0 && r.textures === before.textures && r.ver > (i ? steps[i - 1].ver : before.ver)) && errs.length === 0;
       return { ok, before, detail: `programs ${before.programs} -> ${steps.map((r) => r.programs).join('/')} forms ${steps.map((r) => r.form).join(',')} shared meshes ${before.shared} gbuffer ${before.gb} textures ${before.textures} -> ${steps[steps.length - 1].textures} errs ${errs.length}` };
     };
-    const { ctx, mp, merr } = await phone('?speed=0&weather=calm');
+    const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=calm');
     const ph = await run(mp, merr);
     await ctx.close();
     check('phone: switching through every leaf form adds no shader program, keeps the leaf material and map objects, no errors', ph.ok && ph.before.shared >= 2, ph.detail);
@@ -583,7 +583,7 @@ try {
     const dp = await dctx.newPage(), derr = [];
     dp.on('pageerror', (e) => derr.push(e.message));
     dp.on('console', (m) => m.type() === 'error' && derr.push(m.text()));
-    await dp.goto(`${url}?speed=0&weather=calm&quality=High&autoRotate=false`);
+    await dp.goto(`${url}?cycle=false&speed=0&weather=calm&quality=High&autoRotate=false`);
     await dp.waitForFunction(() => window.__arbor !== undefined);
     const dk = await run(dp, derr);
     await dctx.close();
@@ -592,7 +592,7 @@ try {
   // Leaf emergence: no leaf may be first seen at a noticeable size. Per frame, the card length of every drawn instance
   // is tracked from a fresh seedling; the first length above 0 is compared with the largest the instance reaches.
   for (const sp of [1, 5]) {
-    const { ctx, mp, merr } = await phone('?speed=0&weather=calm&autoRotate=false');
+    const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=calm&autoRotate=false');
     await mp.waitForTimeout(1500);
     const r = await mp.evaluate((speed) => new Promise((done) => {
       const A = window.__arbor, m = new Map(), END = 13;
@@ -620,7 +620,7 @@ try {
   // WORLD points through the plane transform, from a fresh seedling over 22 s of growth. A bake that refits the plane,
   // moves the texel grid or the flecks, or is shown without the cross-fade steps a point by 10 to 27 of 255 in one frame.
   {
-    const { ctx, mp, merr } = await phone('?speed=0&weather=calm&autoRotate=false&season.on=false');
+    const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=calm&autoRotate=false&season.on=false');
     await mp.waitForTimeout(1500);
     const r = await mp.evaluate(() => new Promise((done) => {
       const A = window.__arbor, G = 24, A0 = new Float32Array(G * G), A1 = new Float32Array(G * G), b0 = A.canopy.bakes;
@@ -649,7 +649,7 @@ try {
     await ctx.close();
     check('phone: canopy decal changes continuously while growing (per-frame step at a fixed ground point <= 8 of 255, decal from the first second, >= 6 bakes)', r.maxStep <= 8 && r.firstDecalT >= 0 && r.firstDecalT <= 1.5 && r.bakes >= 6 && r.fe === 0 && merr.length === 0, JSON.stringify(r));
   }
-  for (const [q, want] of [['?leafsafe=1', 'MeshLambertMaterial'], ['?leafsafe=0', 'MeshStandardMaterial'], ['?leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
+  for (const [q, want] of [['?cycle=false&leafsafe=1', 'MeshLambertMaterial'], ['?cycle=false&leafsafe=0', 'MeshStandardMaterial'], ['?cycle=false&leafshader=basic&leafshadow=0', 'MeshBasicMaterial']]) {
     const { ctx, mp, merr, loadMs } = await phone(q);
     await mp.waitForTimeout(4000);
     const st = await leafState(mp);
@@ -659,7 +659,7 @@ try {
   // Context-loss guard (own context: sessionStorage counter + Chrome's post-loss WebGL state stay out of other steps):
   // first loss reloads into safe mode (no shadows), second loss stops reloading and shows links.
   {
-    const { ctx, mp } = await phone('?leafshader=basic');
+    const { ctx, mp } = await phone('?cycle=false&leafshader=basic');
     await mp.evaluate(() => { const c = window.__arbor.stage.renderer.getContext(); const x = c.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 300); });
     await mp.waitForTimeout(3000);
     await mp.waitForFunction(() => window.__arbor !== undefined && performance.getEntriesByType('navigation')[0]?.type === 'reload', null, { timeout: 60000, polling: 500 })
@@ -703,7 +703,7 @@ try {
       s2.t > 1 && s2.nodes > s1.nodes && !s2.paused && !s2.intro && el.hidden && el.pill && !el.starting && s2.seed === s1.seed && s2.form === 'ginkgo' && s2.h === 9 && s2.r === s1.r && s2.hue === s1.hue && s2.fe === 0 && serr.length === 0,
       `t=${s2.t.toFixed(1)} nodes=${s2.nodes} seed=${s2.seed} form=${s2.form} h=${s2.h} ${JSON.stringify(el)} ${serr[0] ?? ''}`);
     const by = [];
-    for (const q of ['?start=0', '?preset=Weeping%20willow&t=5', '?seed=7', '?gravity=1']) {
+    for (const q of ['?cycle=false&start=0', '?cycle=false&preset=Weeping%20willow&t=5', '?cycle=false&seed=7', '?cycle=false&gravity=1']) {
       await sp.goto(url + q, { waitUntil: 'domcontentloaded' });
       await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
       await sp.waitForTimeout(1200);
@@ -721,7 +721,7 @@ try {
     const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
     page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(`${url}?quality=High`);
+    await page.goto(`${url}?cycle=false&quality=High`);
     await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
     await page.evaluate(() => { const P = window.__arbor.params; P.time.speed = 8; P.sky.cycle = true; P.sky.dayLength = 20; });
     const sample = () => page.evaluate(() => { const r = window.__arbor.stage.renderer; return { geo: r.info.memory.geometries, tex: r.info.memory.textures, prog: r.info.programs.length, heapMB: Math.round((performance.memory?.usedJSHeapSize ?? 0) / 1e6), nodes: window.__arbor.sim.nodes.length }; });

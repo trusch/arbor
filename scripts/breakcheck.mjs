@@ -15,7 +15,7 @@ try {
     const errs = [];
     page.on('pageerror', (e) => errs.push(e.message));
     page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
-    await page.goto(`${url}?nogui=1&cinema=false&speed=0`);
+    await page.goto(`${url}?cycle=false&nogui=1&cinema=false&speed=0`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     const r = await page.evaluate((q) => {
       const A = window.__arbor, S = A.sim;

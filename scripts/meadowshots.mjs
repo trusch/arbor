@@ -16,7 +16,7 @@ try {
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${query}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${query}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate((h) => {
     const a = window.__arbor;

@@ -12,7 +12,7 @@ try {
     : { viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${hour}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
+  await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${hour}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(1500);
   const rows = await page.evaluate(([hour, RUN]) => new Promise((done) => {

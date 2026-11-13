@@ -311,7 +311,7 @@ export class Stage {
   nightFloor = 0;
   frame(sim: TreeSim, p: ArborParams, dt: number, snap = false) {
     const k = p.sky;
-    if (k.cycle && k.dayLength > 0) k.timeOfDay = (k.timeOfDay + (dt * 24) / k.dayLength) % 24;
+    if (k.cycle && k.dayLength > 0) k.timeOfDay = (k.timeOfDay + ((dt * 24) / k.dayLength) * (k.timeOfDay >= 21 || k.timeOfDay < 4.5 ? Math.max(1, k.nightSpeed || 1) : 1)) % 24;
     this.atmo.update(p, snap ? 0 : dt, this.camera.position);
     const A = this.atmo;
     const night = A.night;
@@ -484,7 +484,7 @@ export class Stage {
   }
 
   /** Storm inputs, written by `main.ts` from `src/weather.ts` each frame: cloud 0..1, flash 0..1. */
-  wx = { cloud: 0, flash: 0 };
+  wx = { cloud: 0, flash: 0, clear: 0, haze: 0 };
   private wxCool = new THREE.Color(0.5, 0.57, 0.68);
   private wxFog = new THREE.Color();
   private wxFlash = new THREE.Color(0.72, 0.82, 1.0);
@@ -497,10 +497,25 @@ export class Stage {
   private applyWeather(night: number) {
     this.wxFlashGain = 1 / (1 + 1.6 * night);
     const c = this.wx.cloud, su = this.atmo.sky.material.uniforms, U = this.atmo.skyUniforms;
-    su.cloudCoverage.value = 0.35 + 0.6 * c;
-    su.cloudDensity.value = 0.35 + 0.6 * c;
+    // Clear sky: fewer and thinner clouds than the calm sky (nothing else changes).
+    const cl = this.wx.clear * (1 - c), hz = this.wx.haze;
+    su.cloudCoverage.value = 0.35 + 0.6 * c - 0.27 * cl;
+    su.cloudDensity.value = 0.35 + 0.6 * c - 0.17 * cl;
+    const fc = this.fog.color;
+    if (hz > 0) {
+      // Haze / mist: much denser fog in a pale grey of the fog's own brightness, a paler sky, a softer sun.
+      const Lh = (fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11) * 1.08;
+      this.wxFog.setRGB(Lh, Lh, Lh * 1.04);
+      fc.lerp(this.wxFog, 0.7 * hz);
+      U.fogCol.value.copy(fc);
+      this.fog.density *= 1 + 7 * hz;
+      this.sun.intensity *= 1 - 0.3 * hz;
+      const h0 = U.skyTint.value, h1 = Math.max(h0, 0.45 * hz);
+      if (h1 > 0) U.skyTintCol.value.lerp(this.wxFog.setRGB(0.62, 0.65, 0.69), 1 - h0 / h1);
+      U.skyTint.value = h1;
+    }
     if (c <= 0) return;
-    const fc = this.fog.color, L = fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11;
+    const L = fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11;
     // Storm haze: grey-blue at the fog's own luminance, darkened (less at night, where it is already dark).
     this.wxFog.copy(this.wxCool).multiplyScalar(L * (0.4 + 0.4 * night) / 0.57);
     fc.lerp(this.wxFog, 0.85 * c);

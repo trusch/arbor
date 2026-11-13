@@ -13,7 +13,7 @@ import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
-import { weather, type WeatherEvent } from './weather';
+import { weather, windWord, windFrom, KINDS, type WeatherEvent, type WeatherKind } from './weather';
 import { season } from './season';
 import { Rain } from './render/rain';
 import { Celestial } from './render/celestial';
@@ -52,6 +52,8 @@ function loadPreset(name: string) {
 }
 loadPreset(presetName);
 applyQueryOverrides(params, location.search);
+// A link that names an hour without asking for the cycle holds that hour.
+if ((query.has('timeOfDay') || query.has('sky.timeOfDay')) && !query.has('cycle') && !query.has('sky.cycle')) params.sky.cycle = false;
 // Phones / weak GPUs default to Low (no post RTs, DPR 1, 1024 shadow map); ?quality=High overrides.
 const lowEnd = lowEndDevice();
 if (!query.has('quality') && !query.has('sky.quality') && lowEnd) params.sky.quality = 'Low';
@@ -186,13 +188,16 @@ if (celestial) stage.scene.add(celestial.group);
   const qw = query.get('weather');
   if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
   if (qw === 'storm') weather.snapStorm();
+  else if (params.weather.event === 'auto' && params.weather.kind in KINDS) weather.snap(params.weather.kind as WeatherKind);
 }
 let bakedCloud = 0, decalSeen = false;
 /** Before `stage.frame`: advance the weather and hand its scalars to the stage. */
 function weatherFrame(dt: number) {
   tel.phase('weather', true);
-  weather.update(dt, params.weather.event as WeatherEvent, params.weather.lightning);
+  weather.update(dt, params.weather.event as WeatherEvent, params.weather.lightning, { kind: params.weather.kind, phase: season.phase, hour: params.sky.timeOfDay, wind: wind.base });
   stage.wx.cloud = weather.cloud;
+  stage.wx.clear = weather.clear;
+  stage.wx.haze = weather.haze;
   stage.wx.flash = weather.flash;
   // The safe leaf path bakes the light into instance colours: rebake as the storm light moves (and once when it settles).
   if (Math.abs(weather.cloud - bakedCloud) > 0.06 || (weather.cloud !== bakedCloud && (weather.cloud === 0 || weather.cloud === 1))) { bakedCloud = weather.cloud; leavesDirty = true; }
@@ -214,7 +219,7 @@ function weatherRender(dt: number) {
   rain.frame(stage.camera, weather, wind, dt, 0.5 * (1 - night) + 0.05, night, low && stage.renderer.getPixelRatio() < 1.5 && window.devicePixelRatio >= 1.5 ? 2 : 3);
 }
 function meadowFrame(dt: number) {
-  wind.update(dt, params.sky.wind, stage.atmo.night, weather.wind);
+  wind.update(dt, params.sky.wind * weather.breeze, stage.atmo.night, weather.wind);
   if (!meadow) return;
   meadow.group.visible = params.sky.meadow;
   if (!params.sky.meadow) return;
@@ -481,6 +486,7 @@ if (query.get('nogui') !== '1') {
     simTime: () => sim.time,
     stormNow: () => { if (params.weather.event === 'calm') automation.userSet('weather.event', 'auto'); weather.trigger(); },
     weatherPhase: () => weather.phase,
+    weatherLabel: () => (params.weather.event === 'calm' ? 'Calm' : weather.label),
     // Fully grown: the node budget is used up, or no tip is alive any more (crown space is filled).
     growth: () => ({ nodes: sim.nodes.length, age: sim.time, grown: sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive)) }),
   }, { open: qp === 'open' ? true : qp === 'closed' ? false : undefined, tab: query.get('tab') ?? undefined });
@@ -504,6 +510,33 @@ const overlay = document.getElementById('overlay')!;
 let uiHidden = query.get('hideui') === '1';
 let activity = 0;
 const applyUi = () => document.body.classList.toggle('watch', uiHidden);
+/** Weather readout (temperature, wind, sky), above the corner overlay; it stays while the overlay fades. */
+const wxEl = document.getElementById('wx')!;
+const WX_ICON: Record<string, string> = {
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  moon: '<path d="M19 14.5A8 8 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/>',
+  part: '<circle cx="8" cy="8" r="3"/><path d="M8 1.8v1.6M1.8 8h1.6M3.6 3.6l1.1 1.1M12.4 3.6l-1.1 1.1"/><path d="M8.5 20h9a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6 1.2A3 3 0 0 0 8.5 20z"/>',
+  cloud: '<path d="M7 19h10.5a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 19z"/>',
+  drizzle: '<path d="M7 15h10.5a4 4 0 0 0 .5-8A6 6 0 0 0 6.500 8.500 3.300 3.300 0 0 0 7 15z"/><path d="M9 18.500v.01M13 18.500v.01M11 21.500v.01M15 21.500v.01"/>',
+  rain: '<path d="M7 15h10.5a4 4 0 0 0 .5-8A6 6 0 0 0 6.500 8.500 3.300 3.300 0 0 0 7 15z"/><path d="M9 18l-1 3M13 18l-1 3M17 18l-1 3"/>',
+  storm: '<path d="M7 14h10.5a4 4 0 0 0 .5-8A6 6 0 0 0 6.500 7.500 3.300 3.300 0 0 0 7 14z"/><path d="M12.500 15.500l-2.500 4h3l-2 3.500"/>',
+  wind: '<path d="M3 9h10.500a2.500 2.500 0 1 0-2.500-2.500M3 13h15a2.500 2.500 0 1 1-2.500 2.500M3 17h7"/>',
+  mist: '<path d="M4 8h16M6 12h14M4 16h13M8 20h10"/>',
+};
+const WX_KIND_ICON: Record<WeatherKind, string> = { clear: 'sun', fair: 'part', cloudy: 'part', overcast: 'cloud', drizzle: 'drizzle', shower: 'rain', rain: 'rain', storm: 'storm', windy: 'wind', mist: 'mist' };
+let wxIcon = '';
+wxEl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"></svg><span class="wx-sky"></span><span class="wx-temp"></span><span class="wx-wind"></span>';
+function updateWx() {
+  const night = stage.atmo.night > 0.6, k = weather.kind;
+  const icon = night && (k === 'clear' || k === 'fair') ? 'moon' : WX_KIND_ICON[k];
+  if (icon !== wxIcon) { wxIcon = icon; wxEl.children[0].innerHTML = WX_ICON[icon]; }
+  const t = Math.round(weather.temp);
+  wxEl.children[1].textContent = weather.label;
+  wxEl.children[2].textContent = `${t < 0 ? '\u2212' : ''}${Math.abs(t)} \u00b0C`;
+  wxEl.children[3].textContent = `${windWord(wind.base)} ${windFrom(wind.dirX, wind.dirZ)}`;
+  wxEl.dataset.kind = k;
+  wxEl.setAttribute('aria-label', `${weather.label}, ${t} degrees, ${windWord(wind.base).toLowerCase()} from ${windFrom(wind.dirX, wind.dirZ)}`);
+}
 applyUi();
 /** Keys H/C/D stay live on sliders, switches and buttons; only real text entry swallows them. */
 function typing(el: HTMLElement | null) {
@@ -590,6 +623,7 @@ function frame(now: number) {
     fpsT = 0;
     const hr = params.sky.timeOfDay, hh = Math.floor(hr), mm = Math.floor((hr - hh) * 60);
     overlay.textContent = `${presetName} · ${params.season.on ? `${season.name}, year ${season.year}` : `age ${sim.time.toFixed(0)} s`} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    updateWx();
     hud.textContent = `t ${sim.time.toFixed(1)}s  nodes ${sim.nodes.length}  leaves ${leaves.mesh.count}  free attractors ${sim.attractorCount}  ${fps.toFixed(0)} fps`;
   }
 }

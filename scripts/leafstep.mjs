@@ -65,7 +65,7 @@ try {
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   await page.addInitScript(sampler);
   const cdp = await ctx.newCDPSession(page);
-  await page.goto(`http://localhost:${PORT}/?nogui=1&${QUERY}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&${QUERY}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   const ff = await page.evaluate((s) => { const a = window.__arbor; a.params.time.paused = true; let r; for (let t = 0; t < s; t += 10) r = a.fastForward(Math.min(10, s - t)); a.params.time.paused = false; return { ...r, quality: a.params.sky.quality, mode: a.leaves.mode.shader, inst: a.leaves.mesh.count }; }, FF_S);
   if (THROTTLE > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });

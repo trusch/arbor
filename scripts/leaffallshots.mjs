@@ -16,7 +16,7 @@ try {
     : { viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm${mode === 'desk' ? '&quality=High' : ''}`);
+  await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm${mode === 'desk' ? '&quality=High' : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   const st = () => page.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, calls: A.stage.renderer.info.render.calls, quality: A.params.sky.quality, fe: A.frameErrors(), ...A.leafFall.stats, gust: +(A.wind.gust(0, 0) / A.wind.base).toFixed(2) }; });
   await page.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.params.camera.autoFrame = false; A.fastForward(90); }, hour);

@@ -6,7 +6,7 @@ const url = process.argv[2] ?? 'http://127.0.0.1:5401/';
 const browser = await chromium.launch({ executablePath: '/usr/sbin/chromium', args: ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.GPU ?? 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist'] });
 const open = async (q = '') => {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await page.goto(`${url}?nogui=1&cinema=false&speed=0&breakage=0${q}`);
+  await page.goto(`${url}?cycle=false&nogui=1&cinema=false&speed=0&breakage=0${q}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate(() => window.__arbor.fastForward(90));
   return page;

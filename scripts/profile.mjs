@@ -106,7 +106,7 @@ try {
   await page.addInitScript(instrument);
   const cdp = await ctx.newCDPSession(page);
   if (THROTTLE > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
-  await page.goto(`http://localhost:${PORT}/?nogui=1&speed=${SPEED}&${QUERY}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&speed=${SPEED}&${QUERY}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   const state = () => page.evaluate(() => {
     const a = window.__arbor, r = a.stage.renderer, gl = r.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');

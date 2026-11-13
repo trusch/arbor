@@ -12,7 +12,7 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' });
   const page = await ctx.newPage();
   await page.addInitScript(() => { const raf = window.requestAnimationFrame.bind(window); window.__js = []; window.requestAnimationFrame = (cb) => raf((t) => { const t0 = performance.now(); cb(t); window.__js.push(performance.now() - t0); }); });
-  await page.goto(`http://localhost:${PORT}/?speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate(() => window.__arbor.fastForward(90));
   await page.waitForTimeout(6000);

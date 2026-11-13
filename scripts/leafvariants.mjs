@@ -13,7 +13,7 @@ try {
     const errs = [];
     page.on('pageerror', (e) => errs.push('pageerror ' + e.message));
     page.on('console', (m) => { if (m.type() === 'error' || /THREE\.WebGLProgram|shader/i.test(m.text())) errs.push(m.type() + ' ' + m.text()); });
-    await page.goto(`http://localhost:${PORT}/?nogui=1&cinema=false&autoRotate=false&${q}`);
+    await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&cinema=false&autoRotate=false&${q}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(() => window.__arbor.fastForward(30));
     await page.waitForTimeout(1500);

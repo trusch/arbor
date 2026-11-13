@@ -22,7 +22,7 @@ const browser = await chromium.launch({
   args: ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.GPU ?? 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist'],
 });
 const PHONE = { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' };
-const base = `http://localhost:${PORT}/?speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${process.env.HOUR ?? 14}&form=${form}&nogui=1&hideui=1&${extra}`;
+const base = `http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${process.env.HOUR ?? 14}&form=${form}&nogui=1&hideui=1&${extra}`;
 const info = (page) => page.evaluate(() => {
   const A = window.__arbor, b = A.blossom?.stats;
   return { phase: +A.season.phase.toFixed(3), programs: A.stage.renderer.info.programs.length, leaves: A.leaves.mesh.count, clusters: b?.clusters, drawn: b?.drawn, open: b?.open, shedding: b?.falling, petals: b?.petals, ms: b && b.frames ? +(b.sumMs / b.frames).toFixed(3) : 0, fall: A.leafFall?.counts, fe: A.frameErrors() };

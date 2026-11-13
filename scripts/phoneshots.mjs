@@ -26,7 +26,7 @@ try {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   page.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.error('[console]', m.text()));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   let done = 0;
   for (const t of stages) {

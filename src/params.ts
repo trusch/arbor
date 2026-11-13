@@ -100,6 +100,8 @@ export interface ArborParams {
     timeOfDay: number;
     /** Advance timeOfDay automatically. */
     cycle: boolean;
+    /** The clock runs this many times faster through the deep night (21:00 to 04:30), so darkness is a short part of a day. */
+    nightSpeed: number;
     /** Real seconds per full day. */
     dayLength: number;
     /** Latitude in degrees; sets the height of the sun arc. */
@@ -170,6 +172,8 @@ export interface ArborParams {
   season: SeasonParams;
   weather: {
     event: 'auto' | 'calm' | 'storm';
+    /** Kind of weather held by hand while `event` is 'auto' ('auto' = the schedule decides; see `KINDS` in `src/weather.ts`). */
+    kind: string;
     /** Lightning flashes and bolts (off = none at all: photosensitivity). */
     lightning: boolean;
   };
@@ -205,9 +209,9 @@ export function defaultParams(): ArborParams {
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },
     leaves: { size: 0.145, density: 3.4, hue: 0.27, saturation: 0.55, maxBranchRadius: 0.03, shape: 0, lightness: 1, glow: 0, glowHue: 0.5, form: 'oak' },
     light: { azimuth: 35, elevation: 50 },
-    sky: { timeOfDay: 17.6, cycle: false, dayLength: 240, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, moonPhase: 0.42, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
+    sky: { timeOfDay: 17.6, cycle: true, nightSpeed: 3, dayLength: 96, latitude: 48, sunYaw: 311, exposure: 0.9, skyGain: 1, wind: 0.35, meadow: true, fog: 1, stars: 1, moonPhase: 0.42, godRays: 1, skyHue: 0.6, skyTint: 0, sunHue: 0.08, sunTint: 0, sun2: 0, sun2Hue: 0.55, sun2Yaw: 140, sunSize: 1, groundHue: 0.25, groundTint: 0, quality: 'High' },
     leaffall: { enabled: true, rate: 1, litter: 1 },
-    weather: { event: 'auto', lightning: true },
+    weather: { event: 'auto', kind: 'auto', lightning: true },
     sway: { amount: 1 },
     season: { on: true, yearLength: 300, date: 0.12, hold: false, blossom: 1 },
     breakage: { enabled: true, strength: 1 },

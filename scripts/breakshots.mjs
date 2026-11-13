@@ -16,7 +16,7 @@ const setup = async (mode, extra = '') => {
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false${mode === 'desktop' ? '&quality=High' : ''}${extra}`);
+  await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false${mode === 'desktop' ? '&quality=High' : ''}${extra}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   if (THROTTLE > 1) { const cdp = await ctx.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); }
   const info = await page.evaluate(([h, pick]) => {

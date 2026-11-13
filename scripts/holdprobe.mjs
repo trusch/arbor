@@ -5,7 +5,7 @@ const url = process.argv[2] ?? 'http://10.77.0.2:8050/', extra = process.argv[3]
 const browser = await chromium.launch({ executablePath: '/usr/sbin/chromium', args: ['--headless=new', '--use-gl=angle', '--use-angle=vulkan', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
 const mp = await ctx.newPage();
-await mp.goto(url + '?speed=0&weather=calm' + extra);
+await mp.goto(url + '?cycle=false&speed=0&weather=calm' + extra);
 await mp.waitForFunction(() => window.__arbor !== undefined);
 await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
 await mp.waitForTimeout(8000);

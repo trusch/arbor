@@ -15,7 +15,7 @@ const phone = { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isM
 async function open(ctxOpts, q) {
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
-  await page.goto(`${url}?cinema=false&t=${process.env.SHOT_T ?? 35}&${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.goto(`${url}?cycle=false&cinema=false&t=${process.env.SHOT_T ?? 35}&${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 120000 });
   await page.waitForTimeout(1500);
   return { ctx, page };

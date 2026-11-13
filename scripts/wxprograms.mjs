@@ -9,7 +9,7 @@ const browser = await chromium.launch({ executablePath: '/usr/sbin/chromium', ar
 try {
   const ctx = await browser.newContext({ viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' });
   const page = await ctx.newPage();
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${process.argv[2] ?? ''}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${process.argv[2] ?? ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate((h) => { const a = window.__arbor; a.params.sky.timeOfDay = h; a.fastForward(Number(new URLSearchParams(location.search).get('ff') ?? 60)); window.__t0 = performance.now(); if (a.weather.phase === 'rain') a.weather.holdFlash = true; }, Number(process.argv[3] ?? 13));
   await page.waitForTimeout(2500);

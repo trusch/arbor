@@ -24,7 +24,7 @@ const trace = async (name, page) => {
 };
 {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
-  await page.goto(`${url}?quality=Low&panel=closed`);
+  await page.goto(`${url}?cycle=false&quality=Low&panel=closed`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(3000);
   console.log('desktop before input  ' + fmt(await snap(page)));
@@ -38,7 +38,7 @@ const trace = async (name, page) => {
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
     userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36' });
   const page = await ctx.newPage();
-  await page.goto(`${url}?panel=closed`);
+  await page.goto(`${url}?cycle=false&panel=closed`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(3000);
   console.log('phone before input  ' + fmt(await snap(page)));

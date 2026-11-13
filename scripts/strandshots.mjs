@@ -19,7 +19,7 @@ try {
       : { viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-    await page.goto(`${url}?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=13${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
+    await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=13${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(() => { window.__arbor.params.sky.timeOfDay = 13; });
     const k = phone ? 1.9 : 1;

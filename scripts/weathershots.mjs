@@ -31,7 +31,7 @@ try {
     : { viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${query}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${query}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   const state = () => page.evaluate(() => {
     const a = window.__arbor, s = a.stage, su = s.atmo.sky.material.uniforms, U = s.atmo.skyUniforms, r = (v) => +v.toFixed(5);

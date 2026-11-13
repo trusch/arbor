@@ -58,7 +58,7 @@ try {
       : { viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-    await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${query}`);
+    await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${query}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(() => window.__arbor.fastForward(90));
     const info = await page.evaluate(setup, CASES[name]);

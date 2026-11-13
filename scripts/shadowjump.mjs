@@ -18,7 +18,7 @@ try {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   if (E.THROTTLE) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(E.THROTTLE) });
-  await page.goto(`${url}?nogui=1&hideui=1&speed=0&weather=calm&season.on=false${AUTO ? '' : '&autoRotate=false&cinema=false'}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
+  await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&weather=calm&season.on=false${AUTO ? '' : '&autoRotate=false&cinema=false'}${phone ? '' : '&quality=High'}${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.waitForTimeout(1500);
   const info = await page.evaluate(([auto, fps, hour, cycle]) => {

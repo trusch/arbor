@@ -20,7 +20,7 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({ viewport: { width: W, height: H } });
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&${extra}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate(() => window.__arbor.fastForward(90));
   if (process.env.NOAO) await page.evaluate(() => { window.__arbor.stage.post.gtao.enabled = false; });

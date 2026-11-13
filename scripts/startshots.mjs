@@ -23,7 +23,7 @@ async function open(mode, q) {
   const ctx = await browser.newContext(MODES[mode]);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message));
-  await page.goto(`${url}?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.goto(`${url}?cycle=false&${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 120000 });
   await page.waitForTimeout(2500);
   return { ctx, page };

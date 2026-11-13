@@ -25,7 +25,7 @@ try {
     window.__js = [];
     window.requestAnimationFrame = (cb) => raf((t) => { const t0 = performance.now(); cb(t); window.__js.push(performance.now() - t0); });
   });
-  await page.goto(`http://localhost:${PORT}/?speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1&${E.QUERY ?? ''}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1&${E.QUERY ?? ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate(() => window.__arbor.fastForward(90));
   await page.waitForTimeout(6000);

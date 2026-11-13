@@ -25,7 +25,7 @@ async function run(name, ctxOpts, hours) {
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   let done = 0;
   for (const t of [35, 90]) {

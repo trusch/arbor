@@ -12,7 +12,7 @@ try {
   for (const [name, opt, q] of [['desk-High', { viewport: { width: 1280, height: 800 } }, ''], ['desk-Low', { viewport: { width: 1280, height: 800 } }, 'quality=Low'], ['phone', phone, '']]) {
     if (only && only !== name) continue;
     const ctx = await browser.newContext(opt), page = await ctx.newPage();
-    await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${q}&${query}`);
+    await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&${q}&${query}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(() => window.__arbor.fastForward(90));
     const out = await page.evaluate(async (hour) => {

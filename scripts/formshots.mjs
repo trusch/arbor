@@ -19,7 +19,7 @@ const browser = await chromium.launch({
   args: ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.GPU ?? 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist'],
 });
 const PHONE = { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' };
-const base = `http://localhost:${PORT}/?speed=0&autoRotate=false&cinema=false&weather=calm&sway=0&leaffall=0`;
+const base = `http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&sway=0&leaffall=0`;
 try {
   for (const mode of modes) {
     const ctx = await browser.newContext(mode === 'phone' ? PHONE : { viewport: { width: 1024, height: 640 } });

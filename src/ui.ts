@@ -21,6 +21,8 @@ export interface UiActions {
   /** Start one storm sequence now. */
   stormNow(): void;
   weatherPhase(): string;
+  /** Name of the current kind of weather (optional hook). */
+  weatherLabel?(): string;
   /** Tree state for the status line. */
   growth(): { nodes: number; age: number; grown: boolean };
 }
@@ -97,6 +99,8 @@ const TREE: SliderDef[] = [
 
 /** Weather selector options (value of `weather.event`, label). */
 const WEATHER: [string, string][] = [['auto', 'Changes on its own'], ['calm', 'Always calm'], ['storm', 'Storm (stays)']];
+/** Hand-picked kind of weather (value of `weather.kind`, label); 'auto' hands it back to the schedule. */
+const WEATHER_KIND: [string, string][] = [['auto', 'Automatic'], ['clear', 'Clear'], ['fair', 'Fair'], ['cloudy', 'Sun and clouds'], ['overcast', 'Overcast'], ['mist', 'Mist'], ['windy', 'Windy'], ['drizzle', 'Drizzle'], ['shower', 'Shower'], ['rain', 'Rain'], ['storm', 'Thunderstorm']];
 
 const SKY: SliderDef[] = [
   { key: 'sky.timeOfDay', name: 'Time of day', help: 'Moves the sun. Try sunrise, noon, sunset or night.', min: 0, max: 24, step: 0.05, when: 'now', fmt: (v) => { const hh = Math.floor(v) % 24, mm = Math.floor((v - Math.floor(v)) * 60); return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; } },
@@ -345,14 +349,20 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   const wSel = h('select', { id: 'arbor-weather', 'aria-label': 'Weather', 'data-param': 'weather.event' });
   for (const [v, t] of WEATHER) wSel.append(h('option', { value: v, text: t }));
   wSel.addEventListener('change', () => { set('weather.event', wSel.value); refresh(); });
+  const kSel = h('select', { id: 'arbor-weather-kind', 'aria-label': 'Weather right now', 'data-param': 'weather.kind' });
+  for (const [v, t] of WEATHER_KIND) kSel.append(h('option', { value: v, text: t }));
+  // Picking a kind by hand needs the weather running on its own schedule underneath ('Always calm' would mute it).
+  kSel.addEventListener('change', () => { if (kSel.value !== 'auto' && get('weather.event') !== 'auto') set('weather.event', 'auto'); set('weather.kind', kSel.value); refresh(); });
   const wInfo = h('output', { id: 'arbor-weather-info', class: 'ap-info' });
   syncers.push(() => {
     wSel.value = String(get('weather.event'));
+    kSel.value = String(get('weather.kind'));
     const ph = a.weatherPhase();
-    wInfo.textContent = ph === 'calm' ? 'Calm now.' : ph === 'breeze' ? 'The wind is picking up.' : ph === 'front' ? 'A storm front is arriving.' : ph === 'rain' ? 'Storm.' : 'Clearing up.';
+    wInfo.textContent = ph === 'calm' ? (a.weatherLabel ? `${a.weatherLabel()} now.` : 'Calm now.') : ph === 'breeze' ? 'The wind is picking up.' : ph === 'front' ? 'A storm front is arriving.' : ph === 'rain' ? 'Storm.' : 'Clearing up.';
   });
   const weatherRow = h('div', { class: 'ap-weather' },
     h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-weather', text: 'Weather' }), wSel),
+    h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-weather-kind', text: 'Right now' }), kSel),
     h('div', { class: 'ap-row-actions' }, btn('Storm now', () => a.stormNow(), '', 'arbor-storm-now'), wInfo));
   // ---- Seasons ----
   const seasonInfo = h('p', { class: 'ap-note', id: 'arbor-season-info', role: 'status' });

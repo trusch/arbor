@@ -8,7 +8,7 @@ const browser = await chromium.launch({ executablePath: '/usr/sbin/chromium', ar
 try {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`${url}?nogui=1&cinema=false&speed=0&breakage=0&weather=calm${extra ? '&' + extra : ''}`);
+  await page.goto(`${url}?cycle=false&nogui=1&cinema=false&speed=0&breakage=0&weather=calm${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   let done = 0;
   for (const t of times) {
