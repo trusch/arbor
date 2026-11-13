@@ -32,16 +32,16 @@ interface KindDef {
   odds: [number, number, number, number];
 }
 export const KINDS: Record<WeatherKind, KindDef> = {
-  clear: { label: 'Clear', cloud: 0, flutter: 0, rain: 0, wind: 0, breeze: 0.5, clear: 1, haze: 0, min: 14, max: 24, type: 'none', base: 0, odds: [2, 3, 1.5, 1.5] },
-  fair: { label: 'Fair', cloud: 0, flutter: 0.14, rain: 0, wind: 0, breeze: 1, clear: 0, haze: 0, min: 12, max: 20, type: 'cumulus', base: 1500, odds: [2, 2.5, 1.5, 1] },
-  cloudy: { label: 'Sun and clouds', cloud: 0.16, flutter: 0.3, rain: 0, wind: 0, breeze: 1.25, clear: 0, haze: 0, min: 16, max: 26, type: 'stratocumulus', base: 1200, odds: [3, 2.5, 2, 1.5] },
-  overcast: { label: 'Overcast', cloud: 0.5, flutter: 0.06, rain: 0, wind: 0, breeze: 0.9, clear: 0, haze: 0.12, min: 14, max: 22, type: 'stratus', base: 700, odds: [1.5, 0.7, 2.5, 3] },
-  drizzle: { label: 'Drizzle', cloud: 0.58, flutter: 0, rain: 0.2, wind: 0, breeze: 0.5, clear: 0, haze: 0.3, min: 16, max: 26, type: 'stratus', base: 400, odds: [1.2, 0.4, 2, 2] },
-  shower: { label: 'Shower', cloud: 0.7, flutter: 0, rain: 0.62, wind: 0.22, breeze: 1.2, clear: 0, haze: 0.1, min: 10, max: 16, type: 'cumulonimbus', base: 900, odds: [2.5, 1.5, 1, 0.6] },
-  rain: { label: 'Rain', cloud: 0.84, flutter: 0, rain: 0.5, wind: 0.15, breeze: 1, clear: 0, haze: 0.25, min: 22, max: 34, type: 'nimbostratus', base: 500, odds: [1, 0.6, 2, 1.5] },
+  clear: { label: 'Clear', cloud: 0, flutter: 0, rain: 0, wind: 0, breeze: 0.5, clear: 1, haze: 0, min: 12, max: 20, type: 'none', base: 0, odds: [2, 3, 1.5, 1.5] },
+  fair: { label: 'Fair', cloud: 0, flutter: 0.14, rain: 0, wind: 0, breeze: 1, clear: 0, haze: 0, min: 10, max: 17, type: 'cumulus', base: 1500, odds: [2, 2.5, 1.5, 1] },
+  cloudy: { label: 'Sun and clouds', cloud: 0.06, flutter: 0.3, rain: 0, wind: 0, breeze: 1.25, clear: 0, haze: 0, min: 14, max: 22, type: 'stratocumulus', base: 1200, odds: [3, 2.5, 2, 1.5] },
+  overcast: { label: 'Overcast', cloud: 0.5, flutter: 0.06, rain: 0, wind: 0, breeze: 0.9, clear: 0, haze: 0.12, min: 12, max: 19, type: 'stratus', base: 700, odds: [1.5, 0.7, 2.5, 3] },
+  drizzle: { label: 'Drizzle', cloud: 0.58, flutter: 0, rain: 0.2, wind: 0, breeze: 0.5, clear: 0, haze: 0.3, min: 14, max: 22, type: 'stratus', base: 400, odds: [1.2, 0.4, 2, 2] },
+  shower: { label: 'Shower', cloud: 0.7, flutter: 0, rain: 0.62, wind: 0.22, breeze: 1.2, clear: 0, haze: 0.1, min: 8, max: 14, type: 'cumulonimbus', base: 900, odds: [2.5, 1.5, 1, 0.6] },
+  rain: { label: 'Rain', cloud: 0.84, flutter: 0, rain: 0.5, wind: 0.15, breeze: 1, clear: 0, haze: 0.25, min: 19, max: 29, type: 'nimbostratus', base: 500, odds: [1, 0.6, 2, 1.5] },
   storm: { label: 'Thunderstorm', cloud: 0, flutter: 0, rain: 0, wind: 0, breeze: 1, clear: 0, haze: 0, min: 0, max: 0, type: 'cumulonimbus', base: 600, odds: [0.5, 1.6, 0.4, 0.1] },
-  windy: { label: 'Windy', cloud: 0.06, flutter: 0.14, rain: 0, wind: 0.42, breeze: 1.5, clear: 0.3, haze: 0, min: 16, max: 26, type: 'cumulus', base: 1300, odds: [1.2, 0.5, 2, 1.5] },
-  mist: { label: 'Mist', cloud: 0.14, flutter: 0, rain: 0, wind: 0, breeze: 0.15, clear: 0, haze: 1, min: 14, max: 22, type: 'fog', base: 0, odds: [1.5, 0.5, 3, 2] },
+  windy: { label: 'Windy', cloud: 0.06, flutter: 0.14, rain: 0, wind: 0.42, breeze: 1.5, clear: 0.3, haze: 0, min: 14, max: 22, type: 'cumulus', base: 1300, odds: [1.2, 0.5, 2, 1.5] },
+  mist: { label: 'Mist', cloud: 0.14, flutter: 0, rain: 0, wind: 0, breeze: 0.15, clear: 0, haze: 1, min: 12, max: 19, type: 'fog', base: 0, odds: [1.5, 0.5, 3, 2] },
 };
 const WET: WeatherKind[] = ['drizzle', 'shower', 'rain', 'storm'];
 /** Longest dry spell / longest time without a thunderstorm the scheduler allows (seconds; a year is 300 s by default). */
@@ -79,10 +79,10 @@ export type WeatherPhase = 'calm' | 'breeze' | 'front' | 'rain' | 'clearing';
 /** Phase targets [wind, cloud, rain] and duration range in seconds. */
 const PHASES: Record<WeatherPhase, { wind: number; cloud: number; rain: number; min: number; max: number; next: WeatherPhase }> = {
   calm: { wind: 0, cloud: 0, rain: 0, min: 0, max: 0, next: 'breeze' },
-  breeze: { wind: 0.4, cloud: 0.45, rain: 0, min: 10, max: 16, next: 'front' },
-  front: { wind: 0.85, cloud: 1, rain: 0.12, min: 9, max: 14, next: 'rain' },
-  rain: { wind: 1, cloud: 1, rain: 1, min: 40, max: 75, next: 'clearing' },
-  clearing: { wind: 0.25, cloud: 0.3, rain: 0, min: 16, max: 22, next: 'calm' },
+  breeze: { wind: 0.4, cloud: 0.45, rain: 0, min: 8, max: 14, next: 'front' },
+  front: { wind: 0.85, cloud: 1, rain: 0.12, min: 8, max: 12, next: 'rain' },
+  rain: { wind: 1, cloud: 1, rain: 1, min: 34, max: 64, next: 'clearing' },
+  clearing: { wind: 0.25, cloud: 0.3, rain: 0, min: 14, max: 19, next: 'calm' },
 };
 
 export interface Bolt {
@@ -145,6 +145,7 @@ export class Weather {
   private quick = false;
   private wasWet = false;
   private held = '';
+  private seen: Partial<Record<WeatherKind, number>> = {};
 
   /** What the weather is right now, as one kind (a running storm sequence wins over the ambient kind). */
   get kind(): WeatherKind { return this.phase !== 'calm' && this.phase !== 'clearing' ? 'storm' : this.amb; }
@@ -174,7 +175,7 @@ export class Weather {
   private setKind(k: WeatherKind) {
     const K = KINDS[k];
     this.wasWet = WET.includes(this.amb);
-    this.amb = k; this.kindT = 0;
+    this.amb = k; this.kindT = 0; this.seen[k] = this.t;
     this.kindLen = K.min + this.rnd() * (K.max - K.min);
   }
   /** Odds of a kind now: the season mix of its four numbers; mist only forms in the early morning. */
@@ -182,8 +183,9 @@ export class Weather {
     const o = KINDS[k].odds;
     const w = (c: number) => Math.max(0, 1 - Math.min(Math.abs(phase - c), 1 - Math.abs(phase - c)) * 4);
     let v = o[0] * w(0.125) + o[1] * w(0.375) + o[2] * w(0.64) + o[3] * w(0.89);
-    if (k === 'mist') v *= hour >= 4.5 && hour <= 8.5 ? 4 : 0;
-    return v;
+    if (k === 'mist') v *= hour >= 4.5 && hour <= 8.5 ? 10 : 0;
+    // A kind not seen for a while becomes more likely (variety within a year).
+    return v * Math.min(4, 0.35 + (this.t - (this.seen[k] ?? -150)) / 110);
   }
   /** Next kind: weighted by season, never the same twice, rain at least every MAX_DRY s, thunder every MAX_NO_STORM s. */
   private pick(phase: number, hour: number) {
@@ -195,7 +197,7 @@ export class Weather {
     const ws = pool.map((k) => this.odds(k, phase, hour) + 1e-4);
     let r = this.rnd() * ws.reduce((a, b) => a + b, 0), k = pool[pool.length - 1];
     for (let i = 0; i < pool.length; i++) if ((r -= ws[i]) <= 0) { k = pool[i]; break; }
-    if (k === 'storm') { this.wasWet = WET.includes(this.amb); this.amb = 'fair'; this.kindT = 0; this.kindLen = 8 + this.rnd() * 8; this.quick = true; this.enter('breeze'); }
+    if (k === 'storm') { this.seen.storm = this.t; this.wasWet = WET.includes(this.amb); this.amb = 'fair'; this.kindT = 0; this.kindLen = 8 + this.rnd() * 8; this.quick = true; this.enter('breeze'); }
     else this.setKind(k);
   }
 
@@ -225,7 +227,7 @@ export class Weather {
     this.phase = ph;
     this.phaseT = 0;
     // A storm the scheduler started is shorter than one asked for by hand (it has to fit a 300 s year).
-    this.phaseLen = (P.min + Math.random() * (P.max - P.min)) * (this.quick ? (ph === 'rain' ? 0.45 : 0.65) : 1);
+    this.phaseLen = (P.min + Math.random() * (P.max - P.min)) * (this.quick ? (ph === 'rain' ? 0.4 : 0.55) : 1);
     if (ph === 'rain') this.nextStrike = 2 + Math.random() * 4;
   }
 
@@ -234,6 +236,8 @@ export class Weather {
     const forced = event === 'storm' || pickK === 'storm';
     const phase = env.phase ?? 0.375, hour = env.hour ?? 12;
     this.t += dt;
+    // A kind picked by hand takes over at once, also from a running storm sequence (its scalars ease out underneath).
+    if (pickK && pickK !== 'storm' && this.phase !== 'calm') { this.phase = 'calm'; this.quick = false; }
     if (forced && this.phase === 'calm') this.enter('breeze');
     if (event === 'calm' || (this.wasForced && !forced)) { if (this.phase !== 'calm' && this.phase !== 'clearing') this.enter('clearing'); }
     this.wasForced = forced;

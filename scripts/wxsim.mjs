@@ -36,7 +36,8 @@ for (let y = 0; y < YEARS; y++) {
   Y.strikes = W.strikes - s0;
   years.push(Y);
 }
-if (process.env.JSON) { console.log(JSON.stringify({ years })); process.exit(0); }
+const TEMPS = { summerAfternoon: temperature(0.375, 15, 0, 0, 0.35), summerNight: temperature(0.375, 3, 0, 0, 0.2), autumnNoonRain: temperature(0.64, 12, 0.84, 0.5, 0.4), winterNight: temperature(0.9, 3, 0, 0, 0.2), winterDay: temperature(0.9, 14, 0.5, 0, 0.35), springMorning: temperature(0.12, 9, 0.15, 0, 0.35) };
+if (process.env.JSON) { console.log(JSON.stringify({ years, temps: TEMPS })); process.exit(0); }
 const f = (v, n = 5) => String(Math.round(v)).padStart(n);
 console.log(`year ${kinds.map((k) => k.slice(0, 5).padStart(5)).join(' ')} | rains storms strikes changes sunFlips | longest same kind | sunny grey windy still dark days | tmin tmax   (seconds unless noted)`);
 for (const Y of years) console.log(`${f(Y.year, 4)} ${kinds.map((k) => f(Y.s[k])).join(' ')} | ${f(Y.rains)} ${f(Y.storms, 6)} ${f(Y.strikes, 7)} ${f(Y.changes, 7)} ${f(Y.sunFlips, 8)} | ${f(Y.longest, 4)} ${Y.longestKind.padEnd(9)} | ${f(Y.sunny)} ${f(Y.grey, 4)} ${f(Y.windy)} ${f(Y.still)} ${f(Y.dark, 4)} ${f(Y.days, 4)} | ${Y.tmin.toFixed(1).padStart(5)} ${Y.tmax.toFixed(1).padStart(5)}`);

@@ -1,7 +1,7 @@
 // Interaction smoke test in headless chromium (SwiftShader).
 // Usage: node scripts/smoke.mjs [url]   (default: the deployed app http://10.77.0.2:8050/; pass "dev" to start vite)
 // Checks: no console errors, reload survives, phone emulation picks Low (adaptive DPR start 2, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset chips, drift, journey keyframes + interpolation, hand-set values winning over journey/drift (mouse + touch), H/C keys, cinema camera motion.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
 
 let url = process.argv[2] ?? 'http://10.77.0.2:8050/';
@@ -715,6 +715,53 @@ try {
     await sp.close();
   }
 
+  // Weather kinds, default pacing, temperature, readout (weather2).
+  {
+    // Headless: the schedule and the clocks for 8 simulated years (fixed seed).
+    const sim = JSON.parse(execFileSync('node', [new URL('./wxsim.mjs', import.meta.url).pathname, '8', '5'], { env: { ...process.env, JSON: '1', NODE_NO_WARNINGS: '1' } }).toString());
+    const Y = sim.years, kinds = Object.keys(Y[0].s), never = kinds.filter((k) => Y.every((y) => y.s[k] === 0));
+    const minRain = Math.min(...Y.map((y) => y.rains)), minStorm = Math.min(...Y.map((y) => y.storms)), minDays = Math.min(...Y.map((y) => y.days)), longest = Math.max(...Y.map((y) => y.longest)), minChanges = Math.min(...Y.map((y) => y.changes));
+    check('weather schedule: every simulated year has rain >= 3 times, a thunderstorm, >= 3 days, >= 10 changes, no kind longer than 60 s; every kind occurs',
+      minRain >= 3 && minStorm >= 1 && minDays >= 3 && minChanges >= 10 && longest <= 60 && never.length === 0 && kinds.length === 10,
+      `rains>=${minRain} storms>=${minStorm} days>=${minDays} changes>=${minChanges} longest=${longest.toFixed(0)}s never=[${never}]`);
+    const T = sim.temps;
+    check('temperature is plausible: summer afternoon 22..32, summer night 8..16, rainy autumn noon 6..16, winter night -10..2, winter day -3..9, spring morning 3..14',
+      T.summerAfternoon >= 22 && T.summerAfternoon <= 32 && T.summerNight >= 8 && T.summerNight <= 16 && T.autumnNoonRain >= 6 && T.autumnNoonRain <= 16 && T.winterNight >= -10 && T.winterNight <= 2 && T.winterDay >= -3 && T.winterDay <= 9 && T.springMorning >= 3 && T.springMorning <= 14,
+      Object.entries(T).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', '));
+    // The untouched default: the day cycle runs, the readout shows and follows the weather, H hides it.
+    const { ctx, mp, merr } = await phone('?start=0');
+    await mp.waitForTimeout(2500);
+    const rd = () => mp.evaluate(() => { const A = window.__arbor, el = document.getElementById('wx'); return { cycle: A.params.sky.cycle, hour: A.params.sky.timeOfDay, event: A.params.weather.event, kind: A.weather.kind, temp: A.weather.temp, text: el.textContent, shown: getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 60, icon: el.querySelector('svg').childElementCount, cloud: A.weather.cloud, rain: A.weather.rain, programs: A.stage.renderer.info.programs.length, cover: A.weather.cover, snow: A.weather.snow }; });
+    const a = await rd();
+    await mp.waitForTimeout(3000);
+    const b = await rd();
+    const dh = (b.hour - a.hour + 24) % 24;
+    check('default: day cycle is on and the hour advances (about 0.75 h in 3 s at 96 s per day)', a.cycle && b.cycle && dh > 0.3 && dh < 3 && a.event === 'auto', `cycle=${a.cycle} hour ${a.hour.toFixed(2)} -> ${b.hour.toFixed(2)}`);
+    check('weather readout shows sky, temperature and wind', a.shown && /^\D+−?\d+ °C\D+ (N|NE|E|SE|S|SW|W|NW)$/.test(a.text) && a.icon > 0 && Number.isFinite(a.temp) && merr.length === 0, `"${a.text}" ${merr[0] ?? ''}`);
+    // Pick kinds by hand: the readout, the rain and the cloud follow; back to automatic; program count unchanged.
+    await mp.evaluate(() => { const A = window.__arbor; A.params.sky.cycle = false; A.params.sky.timeOfDay = 12; });
+    await mp.waitForTimeout(6000);
+    const p0 = (await rd()).programs, seen = [];
+    for (const k of ['rain', 'mist', 'windy', 'clear']) {
+      await mp.evaluate((k) => { const A = window.__arbor; A.params.weather.kind = k; A.weather.snap(k); }, k);
+      await mp.waitForTimeout(1500);
+      const r = await rd(), w = await mp.evaluate(() => ({ base: window.__arbor.wind.base, haze: window.__arbor.weather.haze, fe: window.__arbor.frameErrors() }));
+      seen.push({ k, ...r, ...w });
+    }
+    const [R, M, Wd, C] = seen;
+    check('hand-picked weather: rain falls under a dark sky, mist is still and hazy, windy blows, clear is cloudless; the readout names each; programs unchanged',
+      R.kind === 'rain' && R.rain > 0.3 && R.cloud > 0.6 && R.text.startsWith('Rain') && M.haze > 0.8 && M.base < 0.1 && M.text.startsWith('Mist') && Wd.base > 0.55 && Wd.rain < 0.3 && Wd.text.startsWith('Windy') && C.kind === 'clear' && C.text.startsWith('Clear') && C.temp > R.temp
+        && seen.every((s) => s.programs === p0 && s.fe === 0) && merr.length === 0,
+      seen.map((s) => `${s.k}: "${s.text}" cloud=${s.cloud.toFixed(2)} rain=${s.rain.toFixed(2)} wind=${s.base.toFixed(2)} prog=${s.programs}`).join(' | ') + ` p0=${p0} ${merr[0] ?? ''}`);
+    await mp.evaluate(() => { window.__arbor.params.weather.kind = 'auto'; window.__arbor.params.weather.event = 'calm'; });
+    await mp.waitForTimeout(400);
+    const calm = await mp.evaluate(() => { const W = window.__arbor.weather; return new Promise((res) => setTimeout(() => res({ cloud: W.cloud, rain: W.rain, wind: W.wind, clear: W.clear, haze: W.haze, breeze: W.breeze }), 45000)); });
+    check('weather=calm settles to exactly the calm sky (all weather scalars 0, breeze 1)', calm.cloud === 0 && calm.rain === 0 && calm.wind === 0 && calm.clear === 0 && calm.haze === 0 && calm.breeze === 1, JSON.stringify(calm));
+    await mp.keyboard.press('h');
+    const hid = await mp.evaluate(() => getComputedStyle(document.getElementById('wx')).display);
+    check('H hides the weather readout', hid === 'none', hid);
+    await ctx.close();
+  }
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.
   const SOAK = Number(process.env.SOAK_S ?? 120);
   if (SOAK > 0) {

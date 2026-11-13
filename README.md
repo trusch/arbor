@@ -43,6 +43,13 @@ camera, **D** shows a debug line. Most settings can also be given in the URL, fo
 (a grown tree held in mid autumn). A link that asks for a specific tree or state skips the start
 screen and grows exactly that; `?start=0` skips it for the default oak.
 
+What an untouched session shows: the sun moves on its own (a day takes about 76 seconds: 96 s on the clock, with the
+hours from 21:00 to 04:30 running three times faster so darkness is about a fifth of the time), a year takes five minutes
+(about four days per season year), and the weather changes every 10 to 30 seconds: clear spells, passing clouds, grey
+days, mist on some mornings, wind, drizzle, showers, rain four to five times a year and at least one thunderstorm a
+year. A small readout shows the weather, the temperature and the wind (bottom right on desktop, top right on phones). A
+link that names an hour (`?timeOfDay=12`) holds that hour; add `&cycle=true` to let it run from there.
+
 ## Status
 
 A work in progress. Not built yet: snow, growth tied to the year. Known weak spots are listed under
@@ -144,7 +151,7 @@ weather, sun height by season.
 | Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed, same settings), Regrow this one, Choose another tree (back to the start screen with a new proposal), preset chips |
 | Shape | Gravity, Reach for light, Branchiness, Branch angle, Twist, Droop, Wildness, Crown width/height/shape, Leaf size, Leaf amount. Each has a one-line explanation, a "new growth" or "instant" tag and a Drift toggle. |
 | Leaves | Leaf shape (ten forms shown as small pictures: oak, willow, birch, maple, ginkgo, round, conifer, and the alien forked, ring and spiral; changes at once on the living tree), Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
-| Sky | Time of day, Day and night cycle, Length of a day |
+| Sky | Time of day, Day and night cycle (on by default), Length of a day, Weather right now |
 | More | Journey keyframes, drift for any value, every raw parameter by technical name, camera, quality, seed |
 
 Rule: a value set by hand wins. Every control writes through `Automation.userSet(path, value)`, which removes that path from all journey keyframes and turns its drift off, so nothing snaps back. (Before, a journey with two or more keyframes rewrote its keyed params before every sim step, so sliders reset.)
@@ -275,6 +282,47 @@ Night follows the moon. While it is up the scene has a cool, dim key light from 
 The ground around the tree is a meadow of grass tufts and wildflowers (daisy, buttercup, poppy, clover) that lean and ripple as gusts travel across it. It is thinner and shorter under the crown and fades out with distance. Controls: Sky tab, "Wind" slider and "Meadow" switch (`sky.wind`, `sky.meadow`); `?meadow=0` removes it (also linked on `diag.html`). All wind comes from `src/wind.ts`. On the phone path the meadow reuses the leaf shader program (no new program is compiled; `npm run smoke` checks this). `node scripts/meadowshots.mjs [hour]` takes a trunk-base shot and measures the motion between two frames 0.5 s apart.
 
 ## Weather
+
+The weather is one model with ten kinds, each a set of targets the sky, light, rain, wind and haze ease toward, so
+every change is a transition and never a cut:
+
+| Kind | Looks like | Lasts | Odds spring / summer / autumn / winter |
+|---|---|---|---|
+| Clear | fewer and thinner clouds than the calm sky, full sun, nearly still | 12 to 20 s | 2 / 3 / 1.5 / 1.5 |
+| Fair | the calm sky; a cloud passes the sun now and then | 10 to 17 s | 2 / 2.5 / 1.5 / 1 |
+| Sun and clouds | the light goes in and out every 10 to 20 s, breezy | 14 to 22 s | 3 / 2.5 / 2 / 1.5 |
+| Overcast | closed grey deck, flat dim light, a little haze | 12 to 19 s | 1.5 / 0.7 / 2.5 / 3 |
+| Mist | still air, dense pale haze that hides the hills; forms only between 04:30 and 08:30 and lifts by 09:30 | 12 to 19 s | 1.5 / 0.5 / 3 / 2 |
+| Windy | dry, strong gusty wind, leaves torn off, mostly sunny | 14 to 22 s | 1.2 / 0.5 / 2 / 1.5 |
+| Drizzle | grey, hazy, thin rain, still | 14 to 22 s | 1.2 / 0.4 / 2 / 2 |
+| Shower | short heavy rain with a gust front; the sun usually returns right after | 8 to 14 s | 2.5 / 1.5 / 1 / 0.6 |
+| Rain | dark steady rain | 19 to 29 s | 1 / 0.6 / 2 / 1.5 |
+| Thunderstorm | the storm sequence below (wind, front, heavy rain with lightning, clearing; about 40 s when it comes on its own) | | 0.5 / 1.6 / 0.4 / 0.1 |
+
+The schedule draws the next kind by these odds mixed for the date, never the same kind twice in a row, a kind not seen
+for a while becomes more likely, after rain the sun comes back 7 times out of 10 (and the cloud opens twice as fast as
+it closed), it rains at least once a minute and thunders at least once in 235 s. Measured headless over 40 simulated
+years (`node scripts/wxsim.mjs 40 3`; a year = 300 s): rain 5.0 times a year (never fewer than 3), 1.3 thunderstorms
+(never fewer than 1), 17 changes of kind (never fewer than 15), the sun goes in or out 11 times, no kind lasts longer
+than 38 s, 64 s of fresh wind or more and 38 s of near-still air by day, 55 s of night, 4 days.
+
+Wind strength follows the kind (still in mist and on clear days, gusty when windy, a gale in a thunderstorm) and wanders
+by a third over minutes on top; the direction is fixed. Temperature is one number in degrees C, a pure function of the
+date, the hour, cloud, rain and wind (`temperature()` in `src/weather.ts`): the daily mean runs from 1 degree in late
+winter to 20 in high summer, the daily swing is 4.5 (midwinter) to 8 degrees (midsummer) around 15:00 / 03:00 and
+shrinks by up to 65 % under cloud (cool clear nights, mild grey ones), rain takes off up to 3.5 degrees, cloud 1.2 and
+wind above the calm setting up to 1.6. Typical values: clear summer afternoon 28, summer night 12, rain at noon in
+autumn 11, clear winter night -3. Nothing reacts to it yet; `weather.snow` is true when rain falls at 0.5 degrees or
+below (nothing draws snow).
+
+The readout (`#wx`, DOM and CSS only) shows an icon and the name of the weather, the temperature, and the wind in words
+(Calm, Light air, Light breeze, Breeze, Fresh wind, Strong wind, Gale) with the compass point it blows from. It stays
+on screen while watching (the preset / season / clock line under it fades when idle, the readout does not: a glance
+should always answer "how warm, how windy"); H, the start screen and the open controls panel hide it.
+
+Controls: Sky tab, "Right now" selector (`weather.kind`: Automatic or one of the ten kinds, held until set back to
+Automatic; `?weather.kind=mist`). The "Weather" selector below is unchanged, and "Always calm" still means the plain
+calm sky with nothing changing.
 
 A storm arrives and leaves as a sequence: the wind picks up and the meadow thrashes, heavy grey cloud closes the sky (sun disc and stars disappear), the light turns dim and cool and the haze thickens, rain falls slanted by the wind, lightning lights the whole scene for a few frames with a bolt in the distance, then it clears and the calm look returns exactly. Storms come on their own every 4 to 11 minutes (the first one no earlier than 4 minutes after load).
 
