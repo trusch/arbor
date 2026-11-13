@@ -21,6 +21,7 @@ import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
 import { Blossom } from './render/blossom';
+import { Critters } from './render/critters';
 import { keepAwake } from './wake';
 import { wantsStartScreen, buildStartScreen } from './start';
 keepAwake();
@@ -252,6 +253,7 @@ function breakagePost(dt: number) {
       if (diag.leaves) debris.spawn(sim, ev, wind);
       tel.log('limb_break', { root: ev.root, nodes: ev.nodeIds.length, leaves: ev.leaves, r: +ev.radius.toFixed(3), t: +ev.time.toFixed(1), ms: +debris.stats.lastBuildMs.toFixed(1) });
     }
+    if (sim.breaks.some((e) => !e.shed)) critters?.flush(); // birds leave a breaking tree
     sim.breaks.length = 0;
     // The live leaf set changed: restart the pass (an open one still holds the detached leaves).
     leavesDirty = true; leafRestart = true;
@@ -268,6 +270,10 @@ if (leafFall) {
 /** Spring blossom (`src/render/blossom.ts`): clone of the live leaf material, own group; petals go through `leafFall`. */
 const blossom = diag.leaves && new URLSearchParams(location.search).get('blossom') !== '0' ? new Blossom(leaves, params.sky.quality === 'Low') : null;
 if (blossom) stage.scene.add(blossom.group);
+/** Butterflies, fireflies, birds (`src/render/critters.ts`): clones of the live leaf / canopy decal material, own group. */
+const critters = diag.leaves && query.get('critters') !== '0' ? new Critters(leaves, canopy.mesh.material as THREE.MeshBasicMaterial, params.sky.quality === 'Low') : null;
+if (critters) stage.scene.add(critters.group);
+const critterFlowers = meadow ? (meadow as unknown as { patches: { mesh: THREE.InstancedMesh; flower: boolean; far: boolean }[] }).patches.filter((p) => p.flower && !p.far).map((p) => p.mesh) : [];
 let leafFallSimT = 0;
 /** After `breakagePost` (twig leaves are handed over there). */
 function leafFallFrame(dt: number) {
@@ -568,6 +574,7 @@ function frame(now: number) {
   breakagePost(dt);
   leafFallFrame(dt);
   if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
+  if (critters) { tel.phase('critters', true); critters.frame(dt, sim, { amount: params.critters.amount, low: params.sky.quality === 'Low', night: stage.atmo.night, phase: season.active ? season.phase : 0.375, jumped: season.jumped, rain: weather.rain, cloud: weather.cloud, violence: weather.violence, wind, D: sway.D, cam: stage.camera.position, camQ: stage.camera.quaternion, sun: stage.sun, hemi: stage.hemi, flowers: critterFlowers }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -639,6 +646,7 @@ requestAnimationFrame(loop);
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   leafFall,
   blossom,
+  critters,
   season,
   stage,
   start: () => startUi,

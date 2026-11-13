@@ -141,6 +141,8 @@ export interface ArborParams {
     /** Motion amount: 0 = rigid tree, 1 = default. */
     amount: number;
   };
+  /** Wildlife (`src/render/critters.ts`): 0 = none, 1 = normal. */
+  critters: { amount: number };
   /** Wind breakage (WP10). Own group so it merges cleanly next to `weather`. */
   breakage: {
     /** Limbs and twigs can snap in storm-strength wind. */
@@ -209,6 +211,7 @@ export function defaultParams(): ArborParams {
     leaffall: { enabled: true, rate: 1, litter: 1 },
     weather: { event: 'auto', lightning: true },
     sway: { amount: 1 },
+    critters: { amount: 1 },
     season: { on: true, yearLength: 300, date: 0.12, hold: false, blossom: 1 },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
