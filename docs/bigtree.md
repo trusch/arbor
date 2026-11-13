@@ -168,8 +168,8 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 
 | # | Package | Done when | Ship |
 |---|---|---|---|
-| **P1 (first)** | T1 dirty-chain `updateStructure` + probe solo baseline | 1x and 2x trees bit-equal in node positions and radii to main at t = 90 / 150; phone `sim.step` on the finished 2x tree under 5 ms (79 today) | **ship** |
-| P2 | T2 structure tick 10 Hz | Same equality within 0.1 mm; growing-frame sim cost /4 on 2x | ship |
+| **P1 (built, 6.1)** | T1 incremental `updateStructure` (per-node dirty sets) + probe baseline | **M**: 1x, 2x, willow and break + paused parameter change bit-equal to main at t = 30 / 90 / 150; phone `sim.step` on the finished 2x tree 2.4 ms (55.9 on main in the same session, 79 in 2.3) | **ship** |
+| P2 (built, 6.1; target missed) | T2 forward pass (sag, positions) at 10 Hz of sim time, tips every step | **M**: bit-equal after a flush at the sample times; growing `sim.step` on 2x 33.1 → 19.7 ms (x 0.59, not /4); seedling tip burst on both paths without visible stepping | ship or switch off (`structureInterval = 0`) |
 | P3 | T3 branch mesh chain ranges | Vertex buffers bit-equal to a full rebuild after 60 s of growth; rebuild under 3 ms on the finished 2x tree; phone programs 8 = 8 | ship |
 | P4 | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
 | P5 | T10 light cell scaling + T7 shell-first leaf pass | 1x unchanged (cell stays 0.88); light tick under 25 ms at 2.75x; pass latency reported | ship |
@@ -184,6 +184,40 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 | P14 | Scale to 2.5x by default, start screen ranges and preset scales, T15 desktop cap | All presets at year 3 looked at (`startshots ... trees`); phone 30 fps on the PowerVR device through three years; heap under 200 MB | ship |
 | P15 | Device run: three years on the phone with telemetry | No context loss, `dpr_change` at most one step | gate for P14 |
 
+### 6.1 P1 and P2 as built (branch `bigtree-p1`)
+
+Mechanism and rules: CLAUDE.md "Structure pass is incremental". Probes: `scripts/structeq.mjs` (equality, node), `scripts/bigtree.mjs` (cost, phone emulation at 4x CPU throttle; `T_MAX=75` stops mid-growth, `EXTRA=structInterval=0` = P1 only).
+
+Equality against main e15fa47 (**M**; seed 7, 60 steps per sim second, the break case with step lengths jittered 0.4 to 2.6 x; compared: world position, direction, radius, sag, subtree length of every node, pruned flag of every chain, leaf count, bounding box):
+
+| Case | Nodes at t = 30 / 90 / 150 | P1 | P1 + P2 (after `flushStructure()`) |
+|---|---|---|---|
+| Default oak 1x | 184 / 4 903 / 4 903 | bit-equal, 0 differing values | bit-equal |
+| 2x tree of the study | 119 / 33 566 / 37 629 | bit-equal | bit-equal |
+| Weeping willow preset | 194 / 3 392 / 3 392 | bit-equal | bit-equal |
+| Oak, limb break on the paused tree at t = 45 (283 nodes, 41 chains), parameter changes while paused at t = 60 (`thickness.exponent`, `growth.sag`) and t = 100 (`twigRadius`, `weeping`, `thickeningRate`) | 172 / 5 135 / 5 135 | bit-equal | bit-equal |
+
+No tolerance is used anywhere. Without the flush, P2 leaves non-tip wood up to 0.1 sim seconds behind between two forward passes (not compared).
+
+Cost, `sim.step(1/60)` mean of 20, phone emulation at 4x CPU throttle (**M**; one probe at a time, not on an idle host: a smoke run and the arbor-meadow worker were using CPU and GPU during every run except the main column of the two finished trees, which had only the other worker beside it; treat differences under 15 % as noise):
+
+| Tree | Nodes | Growing tips | main | P1 (`structInterval=0`) | P1 + P2 |
+|---|---|---|---|---|---|
+| 2x finished (t = 150) | 38 504 | 0 | 55.9 | 2.37 | 2.46 |
+| 1x finished (t = 120) | 5 685 | 0 | 7.49 | 0.10 | 0.07 |
+| 2x growing (t = 75) | 18 184 | 1 220 | 33.1 | 35.5 | 19.7 |
+| 1x growing (t = 45) | 1 187 | 156 | 2.17 | 2.35 | 1.38 |
+
+Live frames at 1x speed, same runs (JS ms per frame mean / `sim step` phase per frame / fps): 2x finished 172 / 118 / 5.4 → 58 / 1.3 / 16.5 (P1), 62 / 1.4 / 15.4 (P2); 2x growing from t = 75: 137 / 94 / 7.1 → 138 / 96 / 7.0 (P1), 115 / 70 / 8.4 (P2); 1x growing from t = 45: 15.7 / 4.3 → 16.0 / 4.4 (P1), 14.5 / 2.8 (P2). The finished-tree step that is left is the light tick (34 ms at 2 Hz on 2x, P5) and the loops over chains and buds; `updateStructure(0)` alone is 0.67 ms on the finished 2x tree (52.7 on main).
+
+Node, unthrottled, ms per step over the window (`structeq.mjs`, one core; the 2x P1 column ran next to a smoke run): 1x t 30 to 90 1.25 → 0.84 (P1) → 0.43 (P2), at rest 1.56 → 0.05; 2x t 30 to 90 4.1 to 4.4 → 5.2 (P1, noisy) → 3.1 (P2), t 90 to 150 13.6 → 6.8 → 2.3, at rest 14.5 → 1.1 → 0.5.
+
+What the numbers say:
+
+- **P1 removes the cost of the tree at rest and nothing else.** While the tree grows, the trunk thickens every step, its sag changes with it, and every node below moves (by nanometres to tenths of a millimetre): bit-equal output means recomputing nearly all of it. At t = 45 on the 1x tree 1 210 of 1 267 nodes are in the bottom-up set and all 1 267 in the forward set (**M**, `structStats`). The "about 2000 moving nodes per year" estimate in section 4 does not hold for an exact pass; it would need a rest threshold (T1 as first written: freeze below 0.1 mm), which gives up bit-equality and was not built.
+- **P2 misses its target** (x 0.59 instead of /4 on the growing 2x step). Of the 33 ms about 24 are structure (**M**: `updateStructure(0)` 24.4 on main) and about 9 are growth itself (attractor queries, bud break; **E** by difference). P2 takes the forward half to a sixth; the bottom-up half (pipe sums, two `pow` per node, radii) still runs every step because the growth rules read radii every step (juvenile bud break, shedding) and positions feed the light grid: deferring it changes decisions, and a changed decision is a different tree, not a 0.1 mm difference. Reaching /4 needs the bottom-up pass at 10 Hz with the radius-reading rules moved to the tick (a new random draw for every preset) and a cheaper growth step.
+- Stepping under P2 (**M**, node, largest move of a non-elongating node from one step to the next): seedling t 0 to 10 s 0.30 mm at a forward pass against 0.06 mm per step without P2, sapling t 10 to 20 s 2.5 mm against 0.5 mm. From t = 20 on both builds show single-step moves of centimetres to decimetres (0.6 m at 1x, 2 m at 2x) when a shaded-out chain drops out of a limb's load: those exist on main and are far larger than the tick. Contact sheets of the first 10 s of the seedling tip, phone and desktop path (`shots/p2-tip-{phone,desktop}-sheet.png`, pairs with `-iv0-` = forward pass every step): the stem lengthens evenly frame to frame on both, no step seen. The sheets sample every 0.25 s, so they cannot show a 10 Hz jitter by themselves; the 0.3 mm figure is the evidence for the seedling, and nothing was looked at in motion beyond t = 10 s.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
@@ -193,3 +227,4 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 - Willow, cypress and the alien presets at any scale.
 - GPU memory (only JS heap and three's object counts); real-phone tab memory limit.
 - The expected gains in section 4 (all **E** until P1 to P5 are built and re-measured).
+- P1 / P2: the cost columns in 6.1 were not taken on an idle host; desktop High cost; 2.75x and larger; the real phone. P2's picture in motion after t = 10 s (crown filling) and at growth speeds other than 1x; whether the camera, canopy decal or leaf follow show the 10 Hz forward pass on a large growing crown.
