@@ -98,7 +98,7 @@ function paintAtlas() {
         const side = (0.5 - x) * 0.5 + (up - 0.5) * 0.7;
         b = 0.8 + 0.2 * smooth(-0.3, 0.2, side + 0.5 * (nx - 0.5)) + 0.06 * edge - 0.34 * (1 - smooth(0.0, 0.45, up)) + 0.3 * (bil - 0.5) + 0.08 * (fine - 0.5);
       }
-      b = Math.min(1, Math.max(0.08, b));
+      b = Math.min(1, Math.max(tower ? 0.08 : 0.42, b));
       const o = ((oy + j) * W + ox + i) * 4;
       // sRGB bytes: white tops, grey-blue shade.
       d[o] = 255 * b * (0.84 + 0.16 * b);
@@ -146,7 +146,7 @@ const GRID = 12, SLOTS = GRID * GRID;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
   none: [0.07, 0.55, 0], cumulus: [0.5, 1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
-  nimbostratus: [0.5, 1.1, 0.72], cumulonimbus: [0.8, 1.5, 0.55], fog: [0.1, 0.7, 0.1],
+  nimbostratus: [0.3, 1.3, 1], cumulonimbus: [0.8, 1.5, 0.55], fog: [0.1, 0.7, 0.1],
 };
 
 export interface CloudEnv {
@@ -264,7 +264,7 @@ export class Clouds {
     // ---- light: lit colour (sun, warm when low), shade colour (sky light), both down to a moonlit grey at night ----
     const day = smooth(-0.1, 0.12, h), sunUp = smooth(-0.06, 0.1, h);
     // Night exposure is higher: keep night clouds faint.
-    const nightL = (0.012 + 0.05 * E.moonLight) * (1 - day);
+    const nightL = (0.008 + 0.028 * E.moonLight) * (1 - day);
     this.lit.copy(E.sunColor).multiplyScalar(1.9 * sunUp * (0.55 + 0.45 * smooth(0, 0.35, h)));
     this.shade.setRGB(0.5, 0.58, 0.72).multiplyScalar(1.15 * day);
     // The painted shade is in the texture; the material colour is one mix of both lights. Under a deck the heaps grey.
@@ -283,7 +283,7 @@ export class Clouds {
       const r = 9 / (2 * DECK);
       this.deckTex.offset.set((((-this.ox * r) % 1) + 1) % 1, (((-this.oz * r) % 1) + 1) % 1);
       // Mid grey for stratus, dark grey-blue for rain cloud and the storm; warm cast from a low sun.
-      const g = 0.86 - 0.52 * smooth(0.5, 1, c);
+      const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
       dm.color.setRGB(this.tmp.r + nightL + flash * 0.5, this.tmp.g + nightL * 1.1 + flash * 0.52, this.tmp.b + nightL * 1.3 + flash * 0.6);
       dm.opacity = dOp;
@@ -306,7 +306,7 @@ export class Clouds {
     // ---- heaps ----
     const hm = this.heaps.material as THREE.MeshBasicMaterial;
     const dark = Math.max(this.dark, 0.75 * smooth(0.3, 0.9, c));
-    this.tmp.copy(this.shade).lerp(this.lit, mixLit).multiplyScalar(1 - 0.72 * dark);
+    this.tmp.copy(this.shade).lerp(this.lit, mixLit).multiplyScalar(1 - 0.8 * dark);
     hm.color.setRGB(this.tmp.r + nightL + flash * 0.3, this.tmp.g + nightL * 1.1 + flash * 0.3, this.tmp.b + nightL * 1.3 + flash * 0.35);
     const sx = E.sunDir.x, sz = E.sunDir.z;
     let n = 0;
@@ -323,7 +323,9 @@ export class Clouds {
       s *= smooth(BOX, BOX - 2.5, Math.max(Math.abs(x), Math.abs(z)));
       if (s < 0.02) continue;
       const r = Math.hypot(x, z);
-      if (r < 0.6) continue;
+      // Nearly overhead an upright card would be seen from below: none there (the app camera never looks that high).
+      s *= smooth(1.2, 2.2, r);
+      if (s < 0.02) continue;
       x *= H; z *= H;
       // Slow change of shape: width and height breathe out of step.
       const br = 1 + 0.1 * Math.sin(this.t * (0.11 + 0.1 * h3) + h4 * 6.28), bh = 1 + 0.12 * Math.sin(this.t * (0.09 + 0.08 * h4) + h3 * 6.28);

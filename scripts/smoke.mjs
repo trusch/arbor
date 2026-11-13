@@ -374,6 +374,34 @@ try {
           && !son.noon.glow && !son.night.moon && !off.noon.glow && on.errs + off.errs + son.errs + soff.errs === 0,
         `on ${T.map((t) => on[t].programs).join('/')} off ${T.map((t) => off[t].programs).join('/')} storm on ${T.map((t) => son[t].programs).join('/')} off ${T.map((t) => soff[t].programs).join('/')} night ${JSON.stringify(on.night)} noon ${JSON.stringify(on.noon)}`);
     }
+    // Cloud gate (PowerVR rule): heaps, deck and storm tower are clones of the canopy-shadow decal material, so the phone
+    // compiles exactly as many programs with them as without (?clouds=0), in every cloud type, at noon and at night;
+    // both pages go through the same stations at equal times.
+    {
+      const KINDS_C = ['clear', 'fair', 'cloudy', 'overcast', 'mist', 'rain', 'storm'];
+      const run = async (q) => {
+        const { ctx, mp, merr } = await phone(q);
+        const out = {};
+        for (const [name, hour] of [['noon', 12], ['night', 23.2]]) {
+          await mp.evaluate((h) => { const A = window.__arbor, k = A.params.sky; k.timeOfDay = h; k.moonPhase = 0.5; A.fastForward(window.__ffDone ? 0 : 15); window.__ffDone = true; }, hour);
+          await mp.waitForTimeout(6000);
+          for (const kind of KINDS_C) {
+            await mp.evaluate((kind) => { const A = window.__arbor; A.params.weather.event = 'auto'; A.params.weather.kind = kind; if (kind === 'storm') { A.weather.snapStorm(); A.weather.nextStrike = 1e9; } else A.weather.snap(kind); if (A.clouds) A.clouds.amount = -1; }, kind);
+            await mp.waitForTimeout(1500);
+            out[`${name}-${kind}`] = await mp.evaluate(() => { const A = window.__arbor, C = A.clouds; return { programs: A.stage.renderer.info.programs.length, fe: A.frameErrors(), heaps: C ? C.stats.quads : 0, deck: !!C?.deck.visible, tower: !!C?.tower.visible }; });
+          }
+        }
+        await ctx.close();
+        return { out, errs: merr.length };
+      };
+      const on = await run('?cycle=false&speed=0&weather.kind=fair'), off = await run('?cycle=false&speed=0&weather.kind=fair&clouds=0');
+      const K = Object.keys(on.out), o = on.out;
+      check('phone: clouds add no shader program in any cloud type (noon and night, vs ?clouds=0), heaps / deck / storm tower drawn',
+        K.every((k) => o[k].programs === off.out[k].programs && o[k].fe === 0 && off.out[k].heaps === 0 && !off.out[k].deck)
+          && o['noon-fair'].heaps > 20 && o['noon-cloudy'].heaps > o['noon-fair'].heaps && o['noon-clear'].heaps < o['noon-fair'].heaps && !o['noon-fair'].deck
+          && o['noon-overcast'].deck && o['noon-rain'].deck && o['noon-storm'].tower && o['night-overcast'].deck && o['night-fair'].heaps > 20 && on.errs + off.errs === 0,
+        `on ${K.map((k) => o[k].programs).join('/')} off ${K.map((k) => off.out[k].programs).join('/')} heaps ${K.map((k) => o[k].heaps).join('/')} errs ${on.errs}/${off.errs}`);
+    }
     // Lightning off means no flash and no bolt at all, even when one is forced.
     {
       const { ctx, mp } = await phone('?cycle=false&speed=0&weather=storm&lightning=0');
