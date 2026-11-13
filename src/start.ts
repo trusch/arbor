@@ -183,6 +183,8 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
   const facts = h('p', { class: 'as-facts', id: 'arbor-start-facts' });
   const syncers: (() => void)[] = [];
   const sync = () => { for (const s of syncers) s(); };
+  // The browser restores remembered form values after a reload (the thumbs then show the previous visit's tree).
+  window.addEventListener('pageshow', () => setTimeout(sync, 0));
 
   // Leaf pictures: fixed-size canvases (no layout jump), painted in idle slices like the panel's picker.
   const forms = h('div', { class: 'as-forms', role: 'group', 'aria-label': 'Leaf shape' });
@@ -211,7 +213,7 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
 
   const rows = SLIDERS.map((d) => {
     const id = `arbor-start-${d.key.replace('.', '-')}`;
-    const input = h('input', { type: 'range', id, min: d.min, max: d.max, step: d.step, 'data-start-param': d.key, class: d.cls ?? '' });
+    const input = h('input', { type: 'range', id, autocomplete: 'off', min: d.min, max: d.max, step: d.step, 'data-start-param': d.key, class: d.cls ?? '' });
     const val = h('span', { class: 'as-val' });
     input.addEventListener('input', () => { auto.userSet(d.key, Number(input.value)); sync(); });
     syncers.push(() => {
