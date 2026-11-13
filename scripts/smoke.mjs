@@ -205,6 +205,25 @@ try {
     check('C key and a new tree (regrow) both return to the automatic camera', m1.manual && !m2.manual && m3.manual && !m4.manual && (await page.evaluate(() => window.__arbor.params.camera.cinema)), JSON.stringify([m1.manual, m2.manual, m3.manual, m4.manual]));
   }
 
+  {
+    // Stale structure: the incremental `updateStructure` must equal a full recomputation, bit for bit, after live
+    // growth (new segments, thickening, self-pruning, juvenile shedding) and after a limb break.
+    const sp = await browser.newPage({ viewport: { width: 640, height: 480 } });
+    const serr = []; sp.on('pageerror', (e) => serr.push(e.message));
+    await sp.goto(`${url}?cycle=false&quality=Low&weather=calm&season.on=false&t=40`);
+    await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await sp.waitForTimeout(5000);
+    const grow = await sp.evaluate(() => { const s = window.__arbor.sim, st = { ...s.structStats }; return { t: +s.time.toFixed(1), st, c: s.structureCheck() }; });
+    const ev = await sp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && e.nodeIds.length; });
+    await sp.waitForTimeout(1500);
+    const brk = await sp.evaluate(() => { const s = window.__arbor.sim, st = { ...s.structStats }; return { st, c: s.structureCheck() }; });
+    await sp.close();
+    const zero = (c) => c.incremental && c.radius === 0 && c.sag === 0 && c.pos === 0 && c.dir === 0 && c.subLen === 0 && c.bbox === 0 && c.differing === 0;
+    check('structure: incremental pass equals a full recomputation after 5 s of growth and after a limb break (bit-equal), and is incremental',
+      zero(grow.c) && zero(brk.c) && ev > 0 && grow.st.full === 0 && brk.st.full === 0 && grow.c.nodes > 300 && serr.length === 0,
+      `t=${grow.t} nodes=${grow.c.nodes} step=${JSON.stringify(grow.st)} check=${JSON.stringify(grow.c)} | break ${ev} nodes step=${JSON.stringify(brk.st)} check=${JSON.stringify(brk.c)} ${serr[0] ?? ''}`);
+  }
+
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
