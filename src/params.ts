@@ -145,6 +145,8 @@ export interface ArborParams {
   };
   /** Wildlife (`src/render/critters.ts`): 0 = none, 1 = normal. */
   critters: { amount: number };
+  /** Sound (`src/audio.ts`): master volume 0..1. On/off is the speaker button (`audio.wanted`), not a param. */
+  sound: { volume: number };
   /** Wind breakage (WP10). Own group so it merges cleanly next to `weather`. */
   breakage: {
     /** Limbs and twigs can snap in storm-strength wind. */
@@ -216,6 +218,7 @@ export function defaultParams(): ArborParams {
     weather: { event: 'auto', kind: 'auto', lightning: true },
     sway: { amount: 1 },
     critters: { amount: 1 },
+    sound: { volume: 0.8 },
     season: { on: true, yearLength: 300, date: 0.12, hold: false, blossom: 1, blossomType: 'auto', blossomColour: '', blossomCentre: '' },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
@@ -236,7 +239,7 @@ export function paramsSignature(p: ArborParams): number {
   const groups = p as unknown as Record<string, Record<string, unknown>>;
   let sig = 0, i = 1;
   for (const g in groups) {
-    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather' || g === 'leaffall' || g === 'season') continue;
+    if (g === 'sky' || g === 'camera' || g === 'time' || g === 'weather' || g === 'leaffall' || g === 'season' || g === 'sound') continue;
     const grp = groups[g];
     for (const f in grp) {
       const v = grp[f];

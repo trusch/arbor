@@ -1,0 +1,21 @@
+/* Speaker button: always in reach, outside the panel. Desktop bottom left; phone above the panel opener (bottom left),
+   lifted above the bottom sheet while the panel is open. H (body.watch) hides the button, not the sound. */
+#arbor-sound {
+  position: fixed; z-index: 6; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: 48px; height: 48px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(12, 16, 20, 0.5); color: #fff; border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 24px;
+  font: 600 14px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+#arbor-sound svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#arbor-sound span { display: none; }
+#arbor-sound[aria-pressed='false'] { color: rgba(255, 255, 255, 0.75); }
+#arbor-sound:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+body.watch #arbor-sound { display: none; }
+/* Start screen: the same button, with its label, as the "with sound" offer. */
+body.starting #arbor-sound { z-index: 40; width: auto; padding: 0 16px 0 12px; }
+body.starting #arbor-sound span { display: inline; }
+@media (max-width: 700px) {
+  #arbor-sound { left: 12px; bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+  body.panel-open #arbor-sound { bottom: calc(min(47vh, 400px) + 12px); }
+  body.starting #arbor-sound { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+}
