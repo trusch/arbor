@@ -28,7 +28,9 @@ export const swayProbe = (opt) => new Promise((res) => {
   };
   const t0 = performance.now();
   const tick = () => {
-    if (sw.live) {
+    // Only frames whose offsets belong to this sim state: on Low the offsets (and the wood) are rewritten every
+    // second frame, so in between a tip that grew or a node that was just created has no offset yet and is not drawn so.
+    if (sw.live && sw.cTime === S.time && sw.cN === S.nodes.length) {
       out.frames++;
       const D = sw.D, TH = sw.TH, N = S.nodes; let chains = 0, frameBad = false;
       for (const ch of S.chains) {

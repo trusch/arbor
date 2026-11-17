@@ -12,7 +12,7 @@ let bad = 0;
 const short = (p) => p.map((r) => `${r.j}:r${(r.r * 1000).toFixed(1)}mm y${r.rest[1]} off${r.off} lean${r.lean} th${r.th}`).join('\n      ');
 try {
   for (const age of (E.AGES ?? '20,90').split(',').map(Number)) for (const wx of (E.WX ?? 'storm,windy').split(',')) for (const speed of (E.SPEEDS ?? '1,0').split(',')) {
-    const ctx = await browser.newContext({ viewport: { width: 800, height: 600 } });
+    const ctx = await browser.newContext(E.MODE === 'phone' ? { viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true } : { viewport: { width: 800, height: 600 } }); // MODE=phone: Low quality path
     const page = await ctx.newPage(); const errs = [];
     page.on('pageerror', (e) => errs.push(e.message));
     await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&cinema=false&lightning=0&weather=${wx}`);
