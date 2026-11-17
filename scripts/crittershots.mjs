@@ -80,10 +80,10 @@ try {
       await page.waitForTimeout(800);
       await burst(page, 'bird-perched', 12, 350, null);
       // Land again right in front of the camera: second visit to the same node.
-      await page.evaluate(() => { const c = window.__arbor.critters; c.flush(); });
-      await burst(page, 'bird-takeoff', 12, 0, null);
+      await page.evaluate(`(() => { const b = window.__arbor.critters.state().birds[0]; window.__look(b, 4.5, 0.12); window.__arbor.critters.flush(); })()`);
+      await burst(page, 'bird-takeoff', 18, 0, null);
       await page.evaluate(`(() => { const A = window.__arbor, c = A.critters, keep = c.birds[0].node; c.birds.forEach((b, i) => { b.st = 0; b.wait = 0.01 + i; }); const pp = c.pickPerch.bind(c); c.pickPerch = (s, near) => (near < 0 ? keep : pp(s, near)); })()`);
-      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.t / b.dur > 0.72; }, null, { timeout: 30000 }).catch(() => console.log('no approach'));
+      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.s > 0.86; }, null, { timeout: 30000 }).catch(() => console.log('no approach'));
       await burst(page, 'bird-landing', 18, 0, null);
       console.log(mode, 'birds', JSON.stringify(await stats(page)));
       await ctx.close();

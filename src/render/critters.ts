@@ -99,8 +99,9 @@ function glowCanvas() {
     const x = (i % 4) * 64 + 32, y = (i >> 2) * 64 + 32, l = (i + 1) / 8;
     const gr = g.createRadialGradient(x, y, 0, x, y, 29);
     gr.addColorStop(0, `rgba(255,255,255,${l})`);
-    gr.addColorStop(0.16, `rgba(255,255,255,${0.9 * l})`);
-    gr.addColorStop(0.34, `rgba(255,255,255,${0.22 * l})`);
+    gr.addColorStop(0.2, `rgba(255,255,255,${0.95 * l})`);
+    gr.addColorStop(0.42, `rgba(255,255,255,${0.3 * l})`);
+    gr.addColorStop(0.7, `rgba(255,255,255,${0.07 * l})`);
     gr.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = gr; g.fillRect(x - 32, y - 32, 64, 64);
   }
@@ -155,8 +156,12 @@ export interface CritterEnv {
 }
 
 interface Butterfly { x: number; y: number; z: number; vx: number; vy: number; vz: number; hx: number; hz: number; tx: number; ty: number; tz: number; has: boolean; sit: boolean; timer: number; flap: number; rate: number; jx: number; jy: number; jz: number; jt: number; a: number; col: number; size: number }
-/** st: 0 away, 1 approach, 2 perched, 3 leaving, 4 hop. */
-interface Bird { st: number; t: number; dur: number; node: number; to: number; sx: number; sy: number; sz: number; x: number; y: number; z: number; hx: number; hz: number; gx: number; gz: number; wait: number; next: number; pitch: number; flapping: boolean; flap: number }
+/**
+ * st: 0 away, 1 approach, 2 perched, 3 leaving (crouch on the twig until `launched`, then flight), 4 hop.
+ * Flight: `B` = cubic curve (4 points), `s` its parameter, `v` speed in m/s; `bx/by/bz` = position on the curve
+ * without the bound offset. Every bird has its own cruise speed, wing rate and bound lengths.
+ */
+interface Bird { st: number; t: number; dur: number; node: number; to: number; x: number; y: number; z: number; bx: number; by: number; bz: number; hx: number; hz: number; gx: number; gz: number; wait: number; next: number; pitch: number; bank: number; flapping: boolean; flap: number; fold: number; B: Float32Array; s: number; v: number; vc: number; rate: number; rateK: number; cyc: number; per: number; amp: number; air: number; launched: boolean; bob: number; flick: number; settle: number; hop: number; sat: number }
 
 export class Critters {
   group = new THREE.Group();
@@ -221,7 +226,7 @@ export class Critters {
     this.bodies = inst(birdCanvas(), cards([[[-0.5, -0.5, 0], [1, 0, 0], [0, 1, 0]], [[-0.5, 0.02, -0.2], [1, 0, 0], [0, 0, 0.4]]]), BIRDS);
     this.birdWings = inst(birdWingCanvas(), wingGeo, BIRDS * 2);
     for (let i = 0; i < nb; i++) this.bf.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, hx: 1, hz: 0, tx: 0, ty: 0, tz: 0, has: false, sit: false, timer: 0, flap: this.rnd() * 6, rate: 9 + 3 * this.rnd(), jx: 0, jy: 0, jz: 0, jt: 0, a: 0, col: i % 3, size: 0.85 + 0.3 * this.rnd() });
-    for (let i = 0; i < BIRDS; i++) this.birds.push({ st: 0, t: 0, dur: 1, node: -1, to: -1, sx: 0, sy: 0, sz: 0, x: 0, y: 0, z: 0, hx: 1, hz: 0, gx: 1, gz: 0, wait: 3 + 5 * this.rnd() + i * 2, next: 1, pitch: 0, flapping: false, flap: 0 });
+    for (let i = 0; i < BIRDS; i++) this.birds.push({ st: 0, t: 0, dur: 1, node: -1, to: -1, x: 0, y: 0, z: 0, bx: 0, by: 0, bz: 0, hx: 1, hz: 0, gx: 1, gz: 0, wait: 2 + 6 * this.rnd() + i * (3 + 8 * this.rnd()), next: 1, pitch: 0, bank: 0, flapping: false, flap: this.rnd() * 6, fold: 0, B: new Float32Array(12), s: 0, v: 0, vc: 10, rate: 14, rateK: 1, cyc: 0, per: 0.5, amp: 0.25, air: 0, launched: false, bob: 0.3, flick: 0, settle: 0, hop: 0.2, sat: 0 });
 
     // Fireflies: one batch of quads on a decal clone.
     const n = this.ffN = low ? FF_LOW : FF_HIGH;
@@ -261,7 +266,7 @@ export class Critters {
   state() {
     return {
       butterflies: this.bf.filter((b) => b.a > 0).map((b) => ({ x: b.x, y: b.y, z: b.z, sit: b.sit, col: b.col })),
-      birds: this.birds.map((b) => ({ st: b.st, x: b.x, y: b.y, z: b.z, node: b.node, t: b.t, dur: b.dur })),
+      birds: this.birds.map((b) => ({ st: b.st, x: b.x, y: b.y, z: b.z, hx: b.hx, hz: b.hz, node: b.node, t: b.t, dur: b.dur, s: b.s, v: b.v, flapping: b.flapping })),
     };
   }
 
@@ -406,7 +411,8 @@ export class Critters {
       const z = Math.sin(an) * rad + 1.3 * Math.sin(t * 0.17 * f + 1.7 * h) + 0.5 * Math.cos(t * 0.47 * f + h);
       const y = 0.5 + 1.5 * H[h + 5] * H[h + 5] + (H[h + 6] < 0.2 ? 1.6 * H[h + 6] * 5 : 0) + 0.22 * Math.sin(t * 0.37 * f + 3 * h) + 0.18 * b;
       const d = Math.hypot(x - env.cam.x, y - env.cam.y, z - env.cam.z);
-      const sz = Math.max(0.2, d * 0.021) * (0.6 + 0.4 * b);
+      // A pinpoint with a small soft glow: about 6 CSS px of quad from the framing distance, nearer ones a little larger.
+      const sz = Math.max(0.035, d * 0.0029 * (1 + 0.7 * (1 - smooth(10, 38, d)))) * (0.75 + 0.25 * b);
       const cell = Math.min(7, Math.floor(b * 8)), u0 = (cell % 4) / 4, v0 = 1 - ((cell >> 2) + 1) / 2;
       const o = q * 12, uo = q * 8;
       for (let c = 0; c < 4; c++) {
@@ -446,35 +452,88 @@ export class Critters {
     const H = sim.bboxMax[1], N = sim.nodes.length;
     if (H < 3.5 || N < 400) return -1;
     let best = -1, bs = -1e9;
-    const nn = near >= 0 ? sim.nodes[near] : null;
+    const nn = near >= 0 ? sim.nodes[near] : null, social = this.rnd() < 0.35;
     for (let k = 0; k < 90; k++) {
       const id = (this.rnd() * N) | 0;
       if (!this.okPerch(sim, id, H)) continue;
       const nd = sim.nodes[id];
       let sc = nd.light * 1.2 + (nd.wy / H) * 0.8 + Math.min(nd.radius, 0.03) * 12 + this.rnd() * 0.3;
-      if (nn) { const d = Math.hypot(nd.wx - nn.wx, nd.wy - nn.wy, nd.wz - nn.wz); if (d < 0.45) continue; sc = -Math.abs(d - 1) + nd.light * 0.3; }
+      if (nn) { const d = Math.hypot(nd.wx - nn.wx, nd.wy - nn.wy, nd.wz - nn.wz); if (d < 0.45) continue; if (social) sc = -Math.abs(d - 1.2) + nd.light * 0.3; }
       if (sc > bs) { bs = sc; best = id; }
     }
     return best;
   }
 
-  private leave(b: Bird, env: CritterEnv, fast: boolean, an: number) {
-    b.st = 3; b.t = 0; b.sx = b.x; b.sy = b.y; b.sz = b.z;
-    b.gx = Math.cos(an); b.gz = Math.sin(an);
-    b.dur = fast ? 5.2 : 7;
-    void env;
+  /** Exit route from where the bird is, starting along its heading: a curve out to 60 m at azimuth `an`. */
+  private exitPath(b: Bird, an: number, air: boolean) {
+    const B = b.B, lead = air ? Math.max(6, b.v * 0.9) : 5.5, a2 = an + (this.rnd() - 0.5) * 1.1, ey = b.y + 5 + 7 * this.rnd();
+    const y0 = air ? b.by : b.y;
+    B[0] = b.x; B[1] = y0; B[2] = b.z;
+    B[3] = b.x + b.hx * lead; B[4] = y0 + (air ? 1.2 : 2.1); B[5] = b.z + b.hz * lead;
+    B[9] = b.x + Math.cos(a2) * 60; B[10] = ey; B[11] = b.z + Math.sin(a2) * 60;
+    B[6] = B[9] - Math.cos(an) * 24; B[7] = ey - 1.5; B[8] = B[11] - Math.sin(an) * 24;
+    b.s = 0; b.launched = true;
+    if (!air) { b.v = 2.6; b.air = 0; }
+  }
+
+  /** Send a bird off: from a perch it turns, crouches and pushes off; in the air it curves away from where it is. */
+  private leave(b: Bird, an: number, delay = 0) {
+    const air = b.st === 1 || (b.st === 3 && b.launched);
+    b.st = 3; b.t = -delay; b.gx = Math.cos(an); b.gz = Math.sin(an); b.launched = false;
+    if (air) this.exitPath(b, an, true);
+  }
+
+  /**
+   * One step along the bird's curve. The heading IS the direction of the step, so the body cannot point anywhere but
+   * along its travel; pitch comes from the vertical speed (with the bounds), bank from the turn rate.
+   */
+  private fly(b: Bird, dt: number, landing: boolean) {
+    const B = b.B, s0 = b.s, i0 = 1 - s0;
+    const tx = 3 * i0 * i0 * (B[3] - B[0]) + 6 * i0 * s0 * (B[6] - B[3]) + 3 * s0 * s0 * (B[9] - B[6]);
+    const ty = 3 * i0 * i0 * (B[4] - B[1]) + 6 * i0 * s0 * (B[7] - B[4]) + 3 * s0 * s0 * (B[10] - B[7]);
+    const tz = 3 * i0 * i0 * (B[5] - B[2]) + 6 * i0 * s0 * (B[8] - B[5]) + 3 * s0 * s0 * (B[11] - B[8]);
+    const tl = Math.hypot(tx, ty, tz) || 1e-3;
+    const rem = landing ? Math.hypot(B[9] - b.bx, B[10] - b.by, B[11] - b.bz) : 99;
+    // Cruise, slow down over the last metres to a perch; accelerate out of a take-off.
+    const vt = Math.min(b.vc, 1.5 + rem * 1.7);
+    b.v += (vt - b.v) * Math.min(1, dt * (landing ? 7 : 2.4));
+    const s = b.s = Math.min(1, s0 + (b.v * dt) / tl), i = 1 - s;
+    const k0 = i * i * i, k1 = 3 * i * i * s, k2 = 3 * i * s * s, k3 = s * s * s;
+    const x = k0 * B[0] + k1 * B[3] + k2 * B[6] + k3 * B[9], y = k0 * B[1] + k1 * B[4] + k2 * B[7] + k3 * B[10], z = k0 * B[2] + k1 * B[5] + k2 * B[8] + k3 * B[11];
+    b.bx = x; b.by = y; b.bz = z;
+    b.air += dt;
+    // Bounding flight: a burst of beats climbs, wings tucked on a short arc; each bound has its own length. It fades
+    // out toward the perch (continuous beats, then the flare) and in after the first second of a take-off.
+    const bound = landing ? smooth(3.5, 13, rem) : smooth(0.8, 1.9, b.air);
+    b.cyc += dt / b.per;
+    if (b.cyc >= 1) { b.cyc -= 1; b.per = 0.4 + 0.32 * this.rnd(); b.amp = 0.5 * b.per * (0.8 + 0.4 * this.rnd()); }
+    const oy = -b.amp * bound * Math.cos(TAU * b.cyc), flare = landing ? 1 - smooth(0.3, 2.4, rem) : 0;
+    const ny = y + oy, vy = (ny - b.y) / Math.max(dt, 1e-3);
+    const dx = x - b.x, dz = z - b.z, dl = Math.hypot(dx, dz);
+    if (dl > 1e-6) {
+      const nx = dx / dl, nz = dz / dl, turn = (b.hx * nz - b.hz * nx) / Math.max(dt, 1e-3);
+      b.hx = nx; b.hz = nz;
+      const bt = Math.max(-0.95, Math.min(0.95, (turn * b.v) / 9.8 * 0.85));
+      b.bank += (bt - b.bank) * Math.min(1, dt * 6);
+    }
+    b.x = x; b.y = ny; b.z = z;
+    b.flapping = bound < 0.5 || b.cyc < 0.5 || b.cyc > 0.93;
+    const pt = Math.atan2(vy, Math.max(b.v, 2.5)) * 0.85 + 0.8 * flare + (landing ? 0 : 0.35 * (1 - smooth(0, 0.9, b.air)));
+    b.pitch += (pt - b.pitch) * Math.min(1, dt * 14);
+    b.rateK = 1 - 0.18 * flare;
+    return landing ? rem : 99;
   }
 
   private birdFrame(dt: number, sim: TreeSim, env: CritterEnv, p: number, lit: number, winter: boolean) {
-    const S = this.stats, want = Math.round(BIRDS * Math.min(1, p)), P = this.P;
-    // Storm front arriving, or a limb coming off under a bird: everybody goes in the same frame.
+    const S = this.stats, want = Math.round(BIRDS * Math.min(1, p)), P = this.P, CROUCH = 0.24;
+    // Storm front arriving, or a limb coming off under a bird: everybody goes, each after its own reaction time.
     let flush = this.flushNow || (env.violence > 0.4 && this.lastViolence <= 0.4) || env.rain > 0.05;
     this.flushNow = false;
     for (const b of this.birds) if ((b.st === 2 || b.st === 4) && !this.perch(sim, env.D, b.node, P)) flush = true;
     if (flush) {
-      const an = Math.atan2(env.wind.dirZ, env.wind.dirX) + (this.rnd() - 0.5);
+      const an = Math.atan2(env.wind.dirZ, env.wind.dirX);
       let any = false;
-      this.birds.forEach((b, i) => { if (b.st === 1 || b.st === 2 || b.st === 4) { this.leave(b, env, true, an + i * 0.12); any = true; } });
+      for (const b of this.birds) if (b.st === 1 || b.st === 2 || b.st === 4) { this.leave(b, an + (this.rnd() - 0.5) * 1.5, this.rnd() * 0.22); any = true; }
       if (any) S.flushes++;
     }
     let out = 0, perched = 0;
@@ -482,85 +541,121 @@ export class Critters {
     for (let i = 0; i < BIRDS; i++) {
       const b = this.birds[i], w = i < want;
       if (env.jumped && !w) b.st = 0;
+      let vis = 1, crouch = 0;
       if (b.st === 0) {
         A.fill(0, i * 16, i * 16 + 16); W.fill(0, i * 32, i * 32 + 32);
         b.wait -= dt;
         if (!w || b.wait > 0) continue;
-        const lead = this.birds[0];
-        if (i > 0 && lead.st !== 1 && lead.st !== 2) { b.wait = 0.5; continue; }
-        b.node = this.pickPerch(sim, i > 0 ? lead.node : -1);
+        // Its own visit: own perch (now and then near the other bird), own route in, own final approach.
+        const other = this.birds[1 - i], near = other && (other.st === 1 || other.st === 2) ? other.node : -1;
+        b.node = this.pickPerch(sim, near);
         if (b.node < 0) { b.wait = 4; continue; }
-        const an = i > 0 ? Math.atan2(lead.sz, lead.sx) + 0.1 : this.rnd() * TAU;
         this.perch(sim, env.D, b.node, P);
-        b.sx = Math.cos(an) * 55; b.sz = Math.sin(an) * 55; b.sy = P[1] + 3 + 6 * this.rnd();
-        b.st = 1; b.t = 0; b.dur = 6.2 + this.rnd(); b.flap = 0;
-        b.x = b.sx; b.y = b.sy; b.z = b.sz;
+        const an = this.rnd() * TAU, B = b.B, sx = Math.cos(an) * 55, sz = Math.sin(an) * 55, sy = P[1] + 3 + 7 * this.rnd();
+        const dx = P[0] - sx, dz = P[2] - sz, dl = Math.hypot(dx, dz) || 1, side = (this.rnd() - 0.5) * 30;
+        const fa = Math.atan2(dz, dx) + (this.rnd() - 0.5) * 1.7;
+        B[0] = sx; B[1] = sy; B[2] = sz;
+        B[3] = sx + (dx / dl) * 22 - (dz / dl) * side; B[4] = sy - 1; B[5] = sz + (dz / dl) * 22 + (dx / dl) * side;
+        B[6] = P[0] - Math.cos(fa) * 7; B[7] = P[1] - 0.25 + 0.9 * this.rnd(); B[8] = P[2] - Math.sin(fa) * 7;
+        B[9] = P[0]; B[10] = P[1]; B[11] = P[2];
+        b.st = 1; b.t = 0; b.s = 0; b.air = 2; b.vc = 8.5 + 3 * this.rnd(); b.v = b.vc; b.rate = 12.5 + 3 * this.rnd();
+        b.cyc = this.rnd(); b.per = 0.4 + 0.32 * this.rnd(); b.amp = 0.5 * b.per; b.fold = 1; b.bank = 0; b.pitch = 0;
+        b.x = b.bx = sx; b.y = b.by = sy; b.z = b.bz = sz; b.hx = dx / dl; b.hz = dz / dl;
       }
       out++;
       b.t += dt;
-      const u = Math.min(1, b.t / b.dur);
-      b.flap += dt * TAU * 13;
+      b.rateK = 1;
       if (b.st === 1) {
-        if (!this.perch(sim, env.D, b.node, P)) { this.leave(b, env, true, this.rnd() * TAU); continue; }
-        // Bounding flight: a burst of wing beats climbs, wings closed sinks; the bounds flatten into the landing flare.
-        const e = 1 - Math.pow(1 - u, 1.8), cyc = (b.t * 1.8) % 1, fade = Math.min(1, (1 - u) * 6), flare = u > 0.9;
-        const dx = P[0] - b.sx, dz = P[2] - b.sz, dl = Math.hypot(dx, dz) || 1;
-        b.x = b.sx + dx * e; b.z = b.sz + dz * e;
-        b.y = b.sy + (P[1] + 0.05 - b.sy) * e - 0.42 * fade * Math.cos(TAU * cyc) + 0.5 * Math.sin(Math.PI * Math.min(1, (1 - u) * 5)) * (u > 0.8 ? -0.6 : 0);
-        b.hx = dx / dl; b.hz = dz / dl;
-        b.flapping = cyc < 0.52 || flare;
-        b.pitch = flare ? 0.7 * (u - 0.9) * 10 : 0.45 * fade * Math.sin(TAU * cyc);
-        if (u >= 1) { b.st = 2; b.t = 0; b.dur = (winter ? 6 : 9) + 16 * this.rnd(); b.next = 0.8 + 2 * this.rnd(); b.gx = b.hx; b.gz = b.hz; }
-      } else if (b.st === 2) {
+        if (!this.perch(sim, env.D, b.node, P)) { this.leave(b, this.rnd() * TAU); }
+        else {
+          // The perch sways: the end of the curve rides with it.
+          const B = b.B, ex = P[0] - B[9], ey = P[1] - B[10], ez = P[2] - B[11];
+          B[6] += ex; B[7] += ey; B[8] += ez; B[9] = P[0]; B[10] = P[1]; B[11] = P[2];
+          const rem = this.fly(b, dt, true);
+          vis = smooth(0, 0.07, b.s);
+          if (b.s >= 1 || rem < 0.04) {
+            b.st = 2; b.t = 0; b.dur = (winter ? 6 : 8) + 18 * this.rnd(); b.next = 0.4 + 1.5 * this.rnd(); b.gx = b.hx; b.gz = b.hz; b.bob = 0.3; b.flick = 0; b.settle = 0.35;
+            if (!w) b.dur = 0;
+          }
+        }
+      }
+      if (b.st === 2) {
         perched++;
-        b.x = P[0]; b.y = P[1]; b.z = P[2];
         this.perch(sim, env.D, b.node, P); b.x = P[0]; b.y = P[1]; b.z = P[2];
-        b.flapping = false; b.pitch = 0.3;
-        // Turns in quick jerks.
-        const hk = Math.min(1, dt * 18); b.hx += (b.gx - b.hx) * hk; b.hz += (b.gz - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl;
+        // A short flutter with spread wings right after touch-down, then folded.
+        b.settle -= dt; b.flapping = b.settle > 0;
+        b.bank += -b.bank * Math.min(1, dt * 12);
+        // Turns in quick jerks; in between small looks, a bob, a tail flick, a hop: irregular, never a loop.
+        const hk = Math.min(1, dt * 20); b.hx += (b.gx - b.hx) * hk; b.hz += (b.gz - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl;
+        b.flick = Math.max(0, b.flick - dt);
+        const pt = b.bob + 0.3 * Math.sin(Math.PI * Math.min(1, b.flick / 0.16)) + 0.5 * Math.max(0, b.settle);
+        b.pitch += (pt - b.pitch) * Math.min(1, dt * 22);
         b.next -= dt;
         if (b.next <= 0) {
-          b.next = 1 + 3 * this.rnd();
-          const ch = sim.chains[sim.nodes[b.node].chain], at = ch.nodes.indexOf(b.node), to = ch.nodes[at + (this.rnd() < 0.5 ? -1 : 1) * (1 + ((this.rnd() * 2) | 0))];
-          if (this.rnd() < 0.45 && to !== undefined && this.okPerch(sim, to, 0)) { b.st = 4; b.to = to; b.dur = b.t; b.t = 0; b.sx = 0.24; }
+          const r = this.rnd();
+          b.next = r < 0.3 ? 0.25 + 0.5 * this.rnd() : 0.7 + 3.2 * this.rnd() * this.rnd();
+          const act = this.rnd(), ch = sim.chains[sim.nodes[b.node].chain], at = ch.nodes.indexOf(b.node), to = ch.nodes[at + (this.rnd() < 0.5 ? -1 : 1) * (1 + ((this.rnd() * 2) | 0))];
+          if (act < 0.2 && to !== undefined && this.okPerch(sim, to, 0)) {
+            // Hop: turn to face along the twig first, then jump.
+            const a0 = P[0], a2 = P[2];
+            this.perch(sim, env.D, to, P);
+            const an = Math.atan2(P[2] - a2, P[0] - a0) + (this.rnd() - 0.5) * 0.3;
+            b.gx = Math.cos(an); b.gz = Math.sin(an);
+            b.st = 4; b.to = to; b.sat = b.t; b.t = 0; b.hop = 0.17 + 0.08 * this.rnd();
+          } else if (act < 0.45) b.flick = 0.16;
+          else if (act < 0.7) { b.bob = 0.12 + 0.38 * this.rnd(); const an = Math.atan2(b.gz, b.gx) + (this.rnd() - 0.5) * 0.7; b.gx = Math.cos(an); b.gz = Math.sin(an); }
           else { const an = Math.atan2(b.gz, b.gx) + (this.rnd() < 0.5 ? -1 : 1) * (0.6 + 1.8 * this.rnd()); b.gx = Math.cos(an); b.gz = Math.sin(an); }
         }
-        const lead = this.birds[0];
-        if (b.st === 2 && (b.t > b.dur || !w || (i > 0 && lead.st === 3 && lead.t > 0.5))) this.leave(b, env, false, i > 0 && lead.st === 3 ? Math.atan2(lead.gz, lead.gx) + 0.1 : this.rnd() * TAU);
+        // Leaves on its own clock, outward from the crown.
+        if (b.st === 2 && (b.t > b.dur || !w)) this.leave(b, Math.atan2(b.z, b.x) + (this.rnd() - 0.5) * 2.6);
       } else if (b.st === 4) {
-        // Hop to the next node of the twig; `sx` = hop length in s, `dur` = time sat so far.
         perched++;
-        const k = Math.min(1, b.t / b.sx), ax = P[0], ay = P[1], az = P[2];
+        const TURN = 0.13, k = Math.max(0, Math.min(1, (b.t - TURN) / b.hop));
+        this.perch(sim, env.D, b.node, P);
+        const ax = P[0], ay = P[1], az = P[2];
         this.perch(sim, env.D, b.to, P);
-        b.x = ax + (P[0] - ax) * k; b.y = ay + (P[1] - ay) * k + 0.07 * Math.sin(Math.PI * k); b.z = az + (P[2] - az) * k;
-        b.flapping = true; b.pitch = 0.3;
-        if (k >= 1) { b.st = 2; b.node = b.to; b.t = b.dur; b.dur = b.t + 4 + 8 * this.rnd(); }
-      } else {
-        // Take-off: a jump and continuous beats, then bounding away.
-        const e = Math.pow(u, 1.7), cyc = (b.t * 1.8) % 1, fade = Math.min(1, u * 8);
-        b.x = b.sx + b.gx * 60 * e; b.z = b.sz + b.gz * 60 * e;
-        b.y = b.sy + 9 * Math.pow(u, 0.8) + 0.5 * Math.min(1, b.t * 3) - 0.42 * fade * Math.cos(TAU * cyc);
-        const hk = Math.min(1, dt * 10); b.hx += (b.gx - b.hx) * hk; b.hz += (b.gz - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl;
-        b.flapping = b.t < 0.7 || cyc < 0.52;
-        b.pitch = b.t < 0.7 ? 0.6 : 0.45 * Math.sin(TAU * cyc);
-        if (u >= 1) { b.st = 0; b.wait = (winter ? 18 : 6) + 14 * this.rnd() + i * 1.5; continue; }
+        const hk = Math.min(1, dt * 30); b.hx += (b.gx - b.hx) * hk; b.hz += (b.gz - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl;
+        b.x = ax + (P[0] - ax) * k; b.y = ay + (P[1] - ay) * k + 0.08 * Math.sin(Math.PI * k); b.z = az + (P[2] - az) * k;
+        b.flapping = k > 0 && k < 1; b.pitch += (0.3 + 0.25 * Math.sin(Math.PI * k) - b.pitch) * Math.min(1, dt * 22);
+        if (k >= 1) { b.st = 2; b.node = b.to; b.t = b.sat; b.settle = 0; }
+      } else if (b.st === 3) {
+        if (!b.launched) {
+          // Still on the twig: turn to the way out, crouch, then push off.
+          if (this.perch(sim, env.D, b.node, P)) { b.x = P[0]; b.y = P[1]; b.z = P[2]; }
+          const hk = Math.min(1, dt * 26); b.hx += (b.gx - b.hx) * hk; b.hz += (b.gz - b.hz) * hk; const hl = Math.hypot(b.hx, b.hz) || 1; b.hx /= hl; b.hz /= hl;
+          const c = Math.max(0, b.t / CROUCH);
+          crouch = Math.sin(Math.PI * Math.min(1, c));
+          b.pitch += (0.3 - 0.28 * crouch + (c > 0.7 ? 0.5 : 0) - b.pitch) * Math.min(1, dt * 20);
+          b.flapping = c > 0.75;
+          if (c >= 1) { b.hx = b.gx; b.hz = b.gz; b.bx = b.x; b.by = b.y; b.bz = b.z; this.exitPath(b, Math.atan2(b.gz, b.gx), false); }
+        } else {
+          this.fly(b, dt, false);
+          vis = 1 - smooth(0.86, 1, b.s);
+          if (b.s >= 1) { b.st = 0; b.wait = (winter ? 18 : 5) + 16 * this.rnd(); A.fill(0, i * 16, i * 16 + 16); W.fill(0, i * 32, i * 32 + 32); out--; continue; }
+        }
       }
-      // Body: crossed side and top view, feet on the perch.
-      const L = 0.17 * this.boost(env, b.x, b.y, b.z, 2.6), cp = Math.cos(b.pitch), sn = Math.sin(b.pitch);
-      const fx = b.hx, fz = b.hz, rx = -fz, rz = fx, o = i * 16;
-      const Xx = fx * cp, Xy = sn, Xz = fz * cp, Yx = -fx * sn, Yy = cp, Yz = -fz * sn;
-      const cx = b.x + Yx * L * 0.48, cy = b.y + Yy * L * 0.48, cz = b.z + Yz * L * 0.48;
+      b.flap += dt * TAU * b.rate * b.rateK;
+      // Wings spread and fold over a few frames; folded they lie along the body (painted there) and are not drawn.
+      b.fold += ((b.flapping ? 1 : 0) - b.fold) * Math.min(1, dt * (b.flapping ? 34 : 24));
+      // Body: crossed side and top view, feet on the perch; rolled into the turn.
+      const L = 0.17 * this.boost(env, b.x, b.y, b.z, 2.6) * vis, cp = Math.cos(b.pitch), sn = Math.sin(b.pitch), cb = Math.cos(b.bank), sb = Math.sin(b.bank);
+      const fx = b.hx, fz = b.hz, o = i * 16;
+      const Xx = fx * cp, Xy = sn, Xz = fz * cp, ux = -fx * sn, uy = cp, uz = -fz * sn;
+      const Yx = ux * cb - fz * sb, Yy = uy * cb, Yz = uz * cb + fx * sb, Rx = -fz * cb - ux * sb, Ry = -uy * sb, Rz = fx * cb - uz * sb;
+      const lift = L * (0.48 - 0.13 * crouch);
+      const cx = b.x + Yx * lift, cy = b.y + Yy * lift, cz = b.z + Yz * lift;
       A[o] = Xx * L; A[o + 1] = Xy * L; A[o + 2] = Xz * L; A[o + 3] = 0;
       A[o + 4] = Yx * L; A[o + 5] = Yy * L; A[o + 6] = Yz * L; A[o + 7] = 0;
-      A[o + 8] = rx * L; A[o + 9] = 0; A[o + 10] = rz * L; A[o + 11] = 0;
+      A[o + 8] = Rx * L; A[o + 9] = Ry * L; A[o + 10] = Rz * L; A[o + 11] = 0;
       A[o + 12] = cx; A[o + 13] = cy; A[o + 14] = cz; A[o + 15] = 1;
-      const th = 0.15 + 1.05 * Math.sin(b.flap), c = Math.cos(th), s = Math.sin(th), ws = b.flapping ? L * 0.95 : 0;
+      // Stroke between 65 degrees up and 45 down; a folding wing swings back to the flank while its span closes.
+      const f = b.fold, th = (0.18 + 0.95 * Math.sin(b.flap)) * f - 0.5 * (1 - f), c = Math.cos(th), s = Math.sin(th), ws = f > 0.05 ? L * 0.95 : 0, span = ws * (0.25 + 0.75 * f);
       for (let side = 0; side < 2; side++) {
         const q = side ? -1 : 1, wo = (i * 2 + side) * 16;
-        W[wo] = (q * rx * c + Yx * s) * ws; W[wo + 1] = Yy * s * ws; W[wo + 2] = (q * rz * c + Yz * s) * ws; W[wo + 3] = 0;
-        W[wo + 4] = (-q * rx * s + Yx * c) * ws; W[wo + 5] = Yy * c * ws; W[wo + 6] = (-q * rz * s + Yz * c) * ws; W[wo + 7] = 0;
+        W[wo] = (q * Rx * c + Yx * s) * span; W[wo + 1] = (q * Ry * c + Yy * s) * span; W[wo + 2] = (q * Rz * c + Yz * s) * span; W[wo + 3] = 0;
+        W[wo + 4] = (-q * Rx * s + Yx * c) * ws; W[wo + 5] = (-q * Ry * s + Yy * c) * ws; W[wo + 6] = (-q * Rz * s + Yz * c) * ws; W[wo + 7] = 0;
         W[wo + 8] = Xx * ws * 0.7; W[wo + 9] = Xy * ws * 0.7; W[wo + 10] = Xz * ws * 0.7; W[wo + 11] = 0;
-        W[wo + 12] = cx + Xx * L * 0.05 + Yx * L * 0.1; W[wo + 13] = cy + Xy * L * 0.05 + Yy * L * 0.1; W[wo + 14] = cz + Xz * L * 0.05 + Yz * L * 0.1; W[wo + 15] = 1;
+        W[wo + 12] = cx + Xx * L * 0.05 + Yx * L * 0.1 + q * Rx * L * 0.07; W[wo + 13] = cy + Xy * L * 0.05 + Yy * L * 0.1 + q * Ry * L * 0.07; W[wo + 14] = cz + Xz * L * 0.05 + Yz * L * 0.1 + q * Rz * L * 0.07; W[wo + 15] = 1;
       }
     }
     S.birds = out; S.perched = perched;
