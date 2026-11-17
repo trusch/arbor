@@ -370,3 +370,25 @@ Small life goes about its business around the tree (`src/render/critters.ts`):
 - **Two small birds** visit the crown once the tree is big enough, each on its own: its own timing, its own curved route in and out, its own twig, wing rhythm and speed (8.5 to 11.5 m/s). They fly the bounding flight of a small songbird (a burst of beats, then wings tucked on a short arc), bank into turns, flare and flutter onto the perch, sit with quick turns, bobs, tail flicks and hops, crouch and push off. The body always points along its travel. They ride the swaying branch and flush, each with its own reaction time, when a storm front or a limb break comes. One bird in winter, none at night.
 
 Sky tab, "Wildlife": amount (0 = off). `?critters.amount=0` turns them off, `?critters=0` does not build the system. They are decoration only and never touch the tree. Test hooks: `__arbor.critters.force = { butterflies: 1, fireflies: 1, birds: 1 }`, `__arbor.critters.stats`, `__arbor.critters.flush()`; `node scripts/crittershots.mjs` renders contact sheets (`birdclose` = slow-motion close-ups), `node scripts/crittercheck.mjs` is the gate that a flying bird is never drawn off its direction of travel and prints the firefly size on the phone layout.
+
+## Sound
+
+Off until you ask: the speaker button (bottom left; on a phone just above the Controls button) turns it on, and the choice is remembered. Browsers only allow audio after a tap, so a remembered "on" starts with your first tap or key. On the start screen the same button carries its label ("Sound off" / "Sound on"); "Plant this tree" then starts with sound. Volume: Sky tab, "Sound volume". H hides the button, not the sound. Pausing the world fades it out; a hidden tab suspends it.
+
+Everything is synthesised in the browser (Web Audio, no audio files) and follows the simulation frame by frame:
+
+| Layer | Driven by |
+| --- | --- |
+| Wind (low body + mid whoosh) | `wind.gust` at the tree; a little from upwind |
+| Leaf rustle and crown sough | gust (steeply) x foliage (leaf count x `season.leafOn`); brighter for dry autumn leaves; a seedling is nearly silent |
+| Twig whistle | bare crown (winter) in a strong gust |
+| Rain: open hiss on grass, downpour body, patter on leaves, single drops | `weather.rain`; the leaf part scales with foliage and sits at the tree; under the crown the open rain is muffled and leaf drips come forward |
+| Thunder: deep roll, mid rumble, crack when close | `weather.onStrike(dist)`, delayed by dist / 343 s; 5 to 13 s long; ducks the other layers |
+| Birds: five song types, distant singers at fixed places + the birds perched in the tree | daytime, peak at dawn, small peak at dusk; thinner in rain, wind, autumn and winter; Wildlife 0 = none |
+| Crickets | night, late spring to early autumn, dry, calm, above about 6 degrees C (slower when cool) |
+| Limb break: cracks, splinter tail, thud and leaf swish on landing | `sim.breaks` (size from the node count; shed juvenile shoots are silent) |
+
+The listener is the camera: the tree, perched birds, crickets and a breaking limb are panned and get louder as you approach. Petals and falling leaves are silent.
+
+Checks: `node scripts/audiotrace.mjs http://127.0.0.1:PORT/ [outDir]` (against the built app; `THROTTLE=4 PHONE=1` for the phone cost) drives calm noon, wind, rain onset, a storm with a forced strike, a limb break, dusk, night and winter, records the per-layer levels to `audio-samples/trace.json`, asserts that each layer follows its signal, and renders `audio-samples/*.wav` offline. Debug readout: `__arbor.audio.levels()`.
+
