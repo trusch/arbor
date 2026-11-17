@@ -5,7 +5,7 @@ import type { TreeSim } from '../sim/tree';
 import { makeGrassTexture } from './textures';
 import { Atmosphere } from './atmosphere';
 import { Post } from './post';
-import { makeTerrainGeometry } from './backdrop';
+import { makeTerrainGeometry, terrainHeight } from './backdrop';
 import { tel } from '../tel';
 import { season } from '../season';
 import { groundSeason } from './landseason';
@@ -23,6 +23,9 @@ const GROUND_GAIN = [0.76, 0.9, 0.4];
 const HAZE = 0.3;
 // Hemisphere added on a moonless night (day for night: the tree stays readable on a dim phone). Full moon adds none.
 const NIGHT_FLOOR = 0.34;
+
+/** Lowest eye height above the terrain for any camera pose (the director clamps its shots to 0.42). */
+const GROUND_CLEAR = 0.3;
 
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -503,7 +506,14 @@ export class Stage {
       this.camera.position.lerpVectors(this.easePos, this.camera.position, w);
       this.controls.target.lerpVectors(this.easeTgt, this.controls.target, w);
     }
+    // Damping per second, not per frame: 0.06 per frame at 60 fps. Per frame, an 8 fps host glided for over 10 s
+    // after a drag, which looks like the camera moving by itself.
+    this.controls.dampingFactor = 1 - Math.pow(0.94, Math.min(30, Math.max(0.25, dt * 60)));
     this.controls.update(dt);
+    // Never under the terrain, in any mode: a zoom-out from a low grabbed shot (maxPolarAngle up to 0.97 pi) would go
+    // below it. Only an input or an automatic pose can put it there; a hand-set view at rest is never touched.
+    const cp = this.camera.position, gy = terrainHeight(cp.x, cp.z) + GROUND_CLEAR;
+    if (cp.y < gy) { cp.y = gy; this.camera.lookAt(this.controls.target); }
   }
 
   /** Storm inputs, written by `main.ts` from `src/weather.ts` each frame: cloud 0..1, flash 0..1. */

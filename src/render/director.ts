@@ -55,6 +55,7 @@ export class Director {
   private lastBird = -1e9;
   private clock = 0;
   private hold = 0;
+  private travelDy = NaN;
   // Smoothed tree box: height, crown radius, centre height, trunk position.
   private H = 0; private R = 0; private cy = 0; private bx = 0; private bz = 0; private fit = 0;
   // Transition state.
@@ -298,10 +299,15 @@ export class Director {
     this.pose(s, env, this.pos, this.tgt);
     if (this.travelT < TRAVEL_S && !snap) {
       // Travelling move: blend azimuth, radius and height about the trunk (never a straight line through the crown).
+      if (this.travelT === 0) this.travelDy = NaN;
       this.travelT += dt;
       const w = smoother(this.travelT / TRAVEL_S);
       const ax = this.fromPos.x - this.bx, az = this.fromPos.z - this.bz, px = this.pos.x - this.bx, pz = this.pos.z - this.bz;
-      const y0 = Math.atan2(ax, az), y1 = y0 + wrap(Math.atan2(px, pz) - y0), r = Math.hypot(ax, az) + (Math.hypot(px, pz) - Math.hypot(ax, az)) * w, yw = y0 + (y1 - y0) * w;
+      const y0 = Math.atan2(ax, az), dy0 = wrap(Math.atan2(px, pz) - y0);
+      // Keep the way round the trunk chosen at the start: a target azimuth near y0 + pi would flip sides between frames.
+      const dyw = Number.isNaN(this.travelDy) ? dy0 : this.travelDy + wrap(dy0 - this.travelDy);
+      this.travelDy = dyw;
+      const y1 = y0 + dyw, r = Math.hypot(ax, az) + (Math.hypot(px, pz) - Math.hypot(ax, az)) * w, yw = y0 + (y1 - y0) * w;
       this.pos.set(this.bx + Math.sin(yw) * r, this.fromPos.y + (this.pos.y - this.fromPos.y) * w, this.bz + Math.cos(yw) * r);
       this.tgt.lerpVectors(this.fromTgt, this.tgt, w);
     } else if (snap) this.travelT = 1e9;
