@@ -170,8 +170,8 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 |---|---|---|---|
 | **P1 (built, 6.1)** | T1 incremental `updateStructure` (per-node dirty sets) + probe baseline | **M**: 1x, 2x, willow and break + paused parameter change bit-equal to main at t = 30 / 90 / 150; phone `sim.step` on the finished 2x tree 2.4 ms (55.9 on main in the same session, 79 in 2.3) | **ship** |
 | P2 (built, 6.1; target missed) | T2 forward pass (sag, positions) at 10 Hz of sim time, tips every step | **M**: bit-equal after a flush at the sample times; growing `sim.step` on 2x 33.1 → 19.7 ms (x 0.59, not /4); seedling tip burst on both paths without visible stepping | ship or switch off (`structureInterval = 0`) |
-| P3 | T3 branch mesh chain ranges | Vertex buffers bit-equal to a full rebuild after 60 s of growth; rebuild under 3 ms on the finished 2x tree; phone programs 8 = 8 | ship |
-| P4 | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
+| P3 (built, 6.3; target missed) | T3 branch mesh chain ranges | Vertex buffers bit-equal to a full rebuild after 60 s of growth; rebuild under 3 ms on the finished 2x tree; phone programs 8 = 8 | ship |
+| P4 (not built) | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
 | P5 | T10 light cell scaling + T7 shell-first leaf pass | 1x unchanged (cell stays 0.88); light tick under 25 ms at 2.75x; pass latency reported | ship |
 | P6 | T8 leaf bookkeeping | `sim.leaves` at 2.75x under 250k; `breakcalib` rerun, `SIGMA_REF` updated | ship (new random draw: needs a look at all presets) |
 | P7 | T6a cluster map + second mesh, off by default (`?clusters=1`) | Phone programs equal with and without at noon, night, storm; cluster cards for all ten forms | ship dark |
@@ -274,6 +274,27 @@ Breakage on the year-3 tree (**M**, `FF=750 Q='&years=3&season.date=0.3&season.h
 What the pictures say (`shots/bigtree-yr-{desktop,phone}-t{150,450}-{framed,close,wide}.png`, `shots/bigtree-yr-desktop-t750-*`, `shots/bigtree-yr-phone-y3-*`, sheets `shots/bigtree-yr-desktop-sheet.jpg` and `shots/bigtree-yr-phone-sheet.jpg`; summer held at 0.3, noon, calm): the automatic camera frames the crown, so the framed tree is the same size in every year; growth reads only through the meadow and the scenery trees (the tree stands taller against the hills) and close up (more and thicker wood). Year 2 reads as a fuller, rounder oak. Year 3 on desktop is a dense dome whose lowest limbs reach down to the meadow and hide the trunk: a big bush, not an older oak. Cause: the envelope keeps its crown base while the radius grows x1.9, so the widest shell is at the old base height, and nothing sheds the low limbs (G4). Next step: raise the crown base with the year (and G4), before any other tuning. On the phone path the year-3 crown is see-through (leaf cap, above).
 
 Open: trunk 10 to 14 % thin (`YEAR_GIRTH`); the low-crown look above; breakage at size (P13); phone cost (P3 to P8); a season scrub never changes the wood (by design, see the growth clock); the director and camera were not tuned for 15 m; only the default oak was run (presets, `crown.bole` = 0 trees and seasons off untested with `years`); never run on the device.
+
+### 6.3 P3 as built (branch `bigtree-years`)
+
+`BranchMesh.update` keeps one fixed vertex range and one index range per chain (`cV`/`cVc`, `cI`/`cIc`, sized for the chain's rings x 1.5, at least 3 rings of slack). A node is dirty when any input the rings read (`wx wy wz radius wdx wdy wdz`) differs by value from the copy of the last write (Float64 per node, exact compare); a chain is rewritten when one of its nodes is dirty, its ring count, radial count or end node ids changed. Only rewritten chains go to the GPU: their ranges sorted and merged when closer than 2048 vertices (`GAP`), one `bufferSubData` per run; index ranges only when a chain's ring count changed. A chain that outgrows its range or changes its radial count moves to the end (old index range zeroed = degenerate triangles); the layout is rebuilt dense when appends would pass the buffers or the vertex end passes 2 x the live vertices + 4096, on a `flare` change, and when chains or nodes shrank (reset). Unused index slots are (0, 0, 0) and draw nothing; slack vertices are never indexed. Positions left in the wind pose by `applyOffsets` are reset from the rest copy when an update follows without offsets. Same attributes, material and usage: phone programs 8 = 8 (probe census on the year-3 tree). `stats` = chains drawn / rewritten, vertices written, layout rebuilt, upload runs; `rebuildCheck(sim, flare)` (debug) rewrites every chain in place and counts differing values per buffer; `triangleSoup()` returns the drawn triangles in chain order.
+
+Exactness (**M**): `PROF_DIST=dir node scripts/p3check.mjs` grows the tree step by step at 60 Hz with an incremental update after every step and wind offsets applied every 5th: default oak t = 0 to 60 (17 layout rebuilds, 59 282 triangles) and the year-3 tree t = 560 to 620 (spring growth, 24 097 nodes, 197 604 triangles): position, normal, uv, index and rest buffers bit-equal to a full in-place rewrite (0 differing values each), and the drawn triangle soup bit-equal to a fresh `BranchMesh` built from the same sim. Default tree vs the build before P3 (`scripts/p3main.mjs`, order-independent hash of every drawn triangle's positions, normals and uvs read from the live geometry, every 10 s to t = 60): same triangle count and the same hash at every sample, i.e. the same triangles are drawn; only their order in the buffer differs once a chain has moved.
+
+Cost (**M**, `scripts/bigtree.mjs`, phone emulation 4x CPU throttle, ANGLE Vulkan; before and after in the same session on a host shared with other bigbuild jobs):
+
+| Phone, 4x throttle | Year 3 (t = 750) before | after P3 | Default tree before | after P3 |
+|---|---|---|---|---|
+| `geometry rebuild` per frame, live 1x | 31.7 ms | 15.2 ms | 10.3 ms | 5.2 ms |
+| Sway per frame, live / paused | 15.3 / 10.4 ms | 13.7 / 10.2 ms | 3.8 / 2.9 ms | 3.4 / 4.3 ms |
+| Live 1x JS mean, fps | 79.7 ms, 11.6 | 54.1 ms, 15.3 | 39.4 ms, 14.3 | 32.6 ms, 14.7 |
+| Paused JS mean, fps | 29.3 ms, 25.5 | 24.0 ms, 19.1 | 19.8 ms, 23.0 | 21.4 ms, 22.6 |
+
+(The year-3 "before" column re-measured here is lower than 6.2's 51 ms; 6.2 ran under heavier load. Paused fps is GPU / pacing bound and noisy in both builds.)
+
+Target missed: 15 ms, not under 3. On the finished tree nothing is rewritten while the wind is calm, but with sway live every frame still runs `applyOffsets` over every vertex of the mesh (now including slack, about 1.5x the live count) inside the same phase, plus the per-node change scan. While the tree grows, the trunk thickens every step and moves nearly every node (P1 / P2 note), so the growing tree rewrites 80 to 100 % of its chains per update (`p3check`: oak 95.8 of 95.8, year 3 482 of 605). The next lever is P4: offsets per chain range only for chains whose offset changed (two rates, frustum skip), which also removes the full-mesh position upload.
+
+P4 (T5) is not built. Open: P4; uploads per frame are still the whole position buffer while sway is live; slack costs about 50 % more vertex memory on the GPU; never run on the device.
 
 ## 7. Not measured
 
