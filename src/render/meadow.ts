@@ -143,6 +143,7 @@ export class Meadow {
   /** Row being filled in the back buffers; -1 = idle. The sun direction of the fill in flight is in fillSun. */
   private fillRow = -1;
   private tog = false;
+  private full = true;
   private nearCount = -1;
   private fillSun = [0, 1, 0];
   private fillCol = -1;
@@ -333,16 +334,16 @@ export class Meadow {
     }
     if (key !== this.key) {
       this.key = key; this.trunkKey = trunkKey;
-      this.dirty = this.patches.map((_, i) => i);
+      this.dirty = this.patches.map((_, i) => i); this.full = true;
     } else if (trunkKey !== this.trunkKey) {
       this.trunkKey = trunkKey;
-      this.dirty = this.nearPatches();
+      this.dirty = this.nearPatches(); this.full = true;
     }
     // Season: the year phase in LAND_STEPS steps (constant through summer and with seasons off). Merged into the pending
     // list, not replacing it, so the patches at the end of the list are not starved while the year runs fast.
     const sk = landKey(season.phase);
     if (sk !== this.seasonKey) {
-      this.seasonKey = sk; this.stats.seasonRebakes++;
+      this.seasonKey = sk; this.stats.seasonRebakes++; this.full = true;
       if (this.dirty.length < this.patches.length) this.dirty = [...new Set([...this.dirty, ...this.patches.map((_, i) => i)])];
     }
     // Time-sliced: shade field rows first (patches wait for it, so a tuft is never baked twice for one change), then
@@ -355,10 +356,13 @@ export class Meadow {
     // for a whole fill and then take the new field in bursts of 3 to 5 patches per frame (the visible tick of the
     // shaded grass). A light / season change (all patches pending) still uses the whole slice.
     this.tog = !this.tog;
+    if (this.neverBaked || this.dirty.length > this.nearCount) this.full = true;
     if (this.fillRow >= 0 && (this.tog || !this.dirty.length || this.neverBaked)) this.fillShade(sim, t0 + FRAME_BUDGET_MS);
     else {
-      const one = this.dirty.length <= this.nearCount;
+      // `full` = a light, season or trunk change is pending (not only shade): whole slice until the list is empty.
+      const one = !this.full;
       while (this.dirty.length) { this.bake(sim, this.dirty.shift()!); if (one || performance.now() - t0 > FRAME_BUDGET_MS) break; }
+      if (!this.dirty.length) this.full = false;
     }
     const ms = performance.now() - t0;
     if (ms > this.stats.sliceMaxMs) this.stats.sliceMaxMs = ms;
