@@ -19,7 +19,7 @@ const GodRaysShader = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform vec2 sunUv; uniform float strength; uniform vec3 tint; uniform float aspect;
     varying vec2 vUv;
-    float bright(vec2 uv){ vec3 c = texture2D(tDiffuse, uv).rgb; float l = dot(c, vec3(0.3,0.59,0.11)); return smoothstep(0.9, 3.0, l); }
+    float bright(vec2 uv){ vec3 c = texture2D(tDiffuse, uv).rgb; float l = dot(c, vec3(0.3,0.59,0.11)); return smoothstep(0.6, 2.2, l); }
     void main(){
       vec4 base = texture2D(tDiffuse, vUv);
       if (strength <= 0.0) { gl_FragColor = base; return; }
@@ -32,7 +32,7 @@ const GodRaysShader = {
       uv += stepv * jit;
       for (int i = 0; i < 40; i++) { float sd = length((uv - sunUv) * vec2(aspect, 1.0)); acc += bright(uv) * exp(-sd * 9.0) * w; w *= 0.965; uv += stepv; }
       acc /= 40.0;
-      float fall = exp(-dist * 2.2);
+      float fall = exp(-dist * 1.6);
       gl_FragColor = vec4(base.rgb + tint * acc * strength * fall, base.a);
     }`,
 };

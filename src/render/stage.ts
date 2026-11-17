@@ -327,6 +327,9 @@ export class Stage {
     const night = A.night;
     this.fog.color.copy(A.fogColor);
     this.fog.density = k.fog * 0.004 * (this.backdrop ? HAZE : 1);
+    // Evening low sun: clearer air (photographers' golden hour); the morning keeps its haze (dawn mist is the mood).
+    const eveLow = k.timeOfDay > 12 ? 1 - Math.min(1, Math.max(0, (A.sunH - 0.02) / 0.4)) : 0;
+    this.fog.density *= 1 - 0.45 * eveLow * (A.sunH > -0.06 ? 1 : 0);
 
     const mn = sim.bboxMin, mx = sim.bboxMax;
     const c = new THREE.Vector3((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
@@ -413,9 +416,9 @@ export class Stage {
     if (P) {
       const sp = this.sunUv.copy(this.camera.position).addScaledVector(A.sunDir, 1000).project(this.camera);
       const facing = A.sunDir.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-      const low = 1 - Math.min(1, Math.max(0, (A.sunH - 0.05) / 0.4));
+      const low = 1 - Math.min(1, Math.max(0, (A.sunH - 0.05) / 0.55));
       P.rays.uniforms.sunUv.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
-      P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 0.5;
+      P.rays.uniforms.strength.value = k.godRays * Math.max(0, facing) * low * (A.sunH > -0.02 ? 1 : 0) * 1.1;
       P.rays.uniforms.tint.value.copy(A.keyColor);
       P.grade.uniforms.time.value = performance.now() / 1000;
       P.grade.uniforms.vignette.value = 0.38;

@@ -212,6 +212,8 @@ export class Leaves {
     uWind: { value: 1 },
     uSunDirV: { value: new THREE.Vector3(0, 1, 0) },
     uSunCol: { value: new THREE.Color(1, 1, 1) },
+    /** 1 when the key light is low (golden hour, moon near the horizon), 0 above about 35 degrees. */
+    uSunLow: { value: 0 },
     uGlow: { value: new THREE.Color(0, 0, 0) },
   };
   private capacity = 0;
@@ -336,9 +338,10 @@ export class Leaves {
       sh.uniforms.uWind = u.uWind;
       sh.uniforms.uSunDirV = u.uSunDirV;
       sh.uniforms.uSunCol = u.uSunCol;
+      sh.uniforms.uSunLow = u.uSunLow;
       sh.uniforms.uGlow = u.uGlow;
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;\nuniform vec3 uGlow;')
+        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;\nuniform float uSunLow;\nuniform vec3 uGlow;')
         .replace(
           '#include <emissivemap_fragment>',
           `#include <emissivemap_fragment>
@@ -354,11 +357,15 @@ export class Leaves {
           `#include <lights_fragment_end>
           {
             // Leaf translucency: light through the blade from behind, strongest looking into the sun.
+            // Vd: fragment -> camera (three's vViewPosition is -mvPosition). Wide lobe + tight core looking into the sun,
+            // rim on the crown's outline (grazing blades), both stronger with a low sun: the backlit crown glows.
             vec3 Vd = normalize(vViewPosition);
             float back = max(0.0, -dot(normal, uSunDirV));
-            float into = pow(max(0.0, dot(-Vd, uSunDirV)), 5.0);
-            vec3 tcol = diffuseColor.rgb * vec3(1.15, 1.2, 0.55);
-            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.45 * back + 1.6 * into);
+            float ic = max(0.0, dot(-Vd, uSunDirV));
+            float into = 0.9 * ic * ic + 1.6 * pow(ic, 6.0);
+            float rim = pow(1.0 - abs(dot(normal, Vd)), 3.0) * (0.25 + 1.2 * ic);
+            vec3 tcol = diffuseColor.rgb * vec3(1.2, 1.25, 0.5);
+            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.5 * back + (1.0 + 1.6 * uSunLow) * (into + rim));
           }`,
         );
       sh.vertexShader = sh.vertexShader
@@ -454,6 +461,7 @@ export class Leaves {
   setSun(dir: THREE.Vector3, col: THREE.Color, intensity: number, view: THREE.Matrix4) {
     this.uniforms.uSunDirV.value.copy(dir).transformDirection(view);
     this.uniforms.uSunCol.value.copy(col).multiplyScalar(intensity * 0.35);
+    this.uniforms.uSunLow.value = 1 - Math.min(1, Math.max(0, (dir.y - 0.08) / 0.5));
   }
 
   /**
@@ -889,7 +897,7 @@ export class Leaves {
       if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll); hh = c[0]; ss = c[1]; ll = c[2]; }
       this.col.setHSL(hh, ss, Math.min(0.85, ll), THREE.SRGBColorSpace);
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
-      const occ = 0.42 + 0.78 * smooth(0.15, 0.85, nd.light);
+      const occ = 0.3 + 0.9 * smooth(0.15, 0.85, nd.light);
       let kr: number, kg: number, kb: number;
       if (!bakeAll) {
         const k = 0.5 + 0.5 * occ;
@@ -915,8 +923,14 @@ export class Leaves {
         const hw = 0.5 * ny + 0.5;
         // Lambert will apply: E_l = hemi(n) + sun · max(0, n·L). We want: E_w = hemi(n) · occ + sun · |n·L| · vis + glow.
         const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
-        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
-        const sd = Math.abs(ndl) * vis;
+        // Low key light (golden hour, low moon): stronger glow through the blades and a rim on blades seen edge-on
+        // (the crown's outline), so a backlit crown glows instead of reading as a silhouette.
+        const lowK = 1 - smooth(0.08, 0.55, L.y);
+        const edge = 1 - Math.abs(nx * vx + ny * vy + nz * vz);
+        const rimB = edge * edge * (0.25 + 0.75 * into) * (0.35 + 0.9 * lowK);
+        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + (0.55 + 0.8 * lowK) * into * into + rimB) * vis;
+        // Lit face full, the face turned away only partly (it is lit through the blade via `glow`): form across the crown.
+        const sd = (ndl > 0 ? ndl : -0.45 * ndl) * vis;
         const fl = emg ? Math.hypot(e2[8], e2[9], e2[10]) : 0;
         if (fl > 0) {
           // Emerging: the card is narrow (folded), and the instance normal transform fans the cupped blade's normals
