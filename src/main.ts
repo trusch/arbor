@@ -140,6 +140,8 @@ if (diag.skyBasic) {
 }
 tel.phase('init sim');
 const sim = new TreeSim(params);
+// Dev switch: `?structInterval=0` runs the forward structure pass every step (default 0.1 sim seconds, see `TreeSim.structureInterval`).
+if (query.get('structInterval') !== null && Number.isFinite(Number(query.get('structInterval')))) sim.structureInterval = Math.max(0, Number(query.get('structInterval')));
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
@@ -610,6 +612,7 @@ function frame(now: number) {
   if (sig !== paramsSig) { paramsSig = sig; bumpParams(); }
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else if (paramsVersion() !== structPV) sim.updateStructure(0); // paused: only after a params edit
+  else sim.flushStructure(); // paused: finish a deferred forward pass (no-op when positions are current)
   structPV = paramsVersion();
   season.update(sim.time, params.season);
   weatherFrame(dt);
