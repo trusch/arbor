@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ATLAS_W, ATLAS_H, BASE, CH, CW, DECK_S, paintClouds, type CloudMap } from './cloudpaint';
+import { ATLAS_W, ATLAS_H, BASE, CH, CW, DECK_S, ROWS, paintClouds, type CloudMap } from './cloudpaint';
 
 /**
  * Clouds by type, phone-safe (PowerVR rule): every material is a clone of the canopy-shadow decal `MeshBasicMaterial`
@@ -49,6 +49,8 @@ const GRID = 12, SLOTS = GRID * GRID;
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
 const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.8, SCUD_NIGHT = 0.6, SCUD_OPACITY = 0.5;
+/** Low sun: share of the sun's light taken out of the body mix, and the gain of the sunlit side drawn over it. */
+const LOW_SPLIT = 0.75, LOW_GAIN = 0.85;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
   none: [0.07, 0.55, 0], cumulus: [0.5, 1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
@@ -69,12 +71,15 @@ export class Clouds {
   heaps: THREE.Mesh;
   deck: THREE.Mesh;
   tower: THREE.Mesh;
+  /** The heaps' geometry again with the `lit` map: the side facing a low sun, in the sun's colour (hidden otherwise). */
+  heapsLit: THREE.Mesh;
   /** Mean JS cost per frame = sumMs / frames; quads = cumulus quads this frame; amount / size = eased type targets. */
   stats = { paintMs: 0, frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0 };
   private pos: THREE.BufferAttribute;
   private uv: THREE.BufferAttribute;
   private deckTex: THREE.DataTexture;
   private atlas: THREE.DataTexture;
+  private litTex: THREE.DataTexture;
   /** Painted maps are in (`setMaps`); until then nothing is drawn and nothing is uploaded. */
   ready = false;
   /** Opacity ramp after the maps arrive (`FADE_S`), so clouds never pop in; `amount = -1` (scripts) snaps it to 1. */
@@ -83,6 +88,7 @@ export class Clouds {
   private size = 1;
   private dark = 0;
   private stormK = 0;
+  private litOn = false;
   /** Drift of the layer in layer heights (wraps at 2 BOX), and the weather clock for the slow breathing. */
   private ox = 0;
   private oz = 0;
@@ -95,6 +101,7 @@ export class Clouds {
     const cs = decal.map?.colorSpace ?? THREE.SRGBColorSpace;
     const atlas = this.atlas = dataTex(ATLAS_W, ATLAS_H, cs, false);
     this.deckTex = dataTex(DECK_S, DECK_S, cs, true);
+    this.litTex = dataTex(ATLAS_W, ATLAS_H, cs, false);
     this.deckTex.repeat.set(9, 9);
     this.group.visible = false;
     // The GTAO g-buffer pass must not see these planes (its override material would draw solid quads).
@@ -121,7 +128,7 @@ export class Clouds {
     // After the sun glow (3), before fireflies (4), bolt (5) and rain (6+): clouds cover the sun, rain covers clouds.
     const tg = new THREE.PlaneGeometry(1, 1);
     const tuv = tg.getAttribute('uv') as THREE.BufferAttribute;
-    for (let i = 0; i < 4; i++) tuv.setXY(i, 0.5 + 0.5 * tuv.getX(i), 0.5 * tuv.getY(i));
+    for (let i = 0; i < 4; i++) tuv.setXY(i, 0.5 + 0.5 * tuv.getX(i), (ROWS - 2 + tuv.getY(i)) / ROWS);
     this.tower = mk(tg, atlas, 3.2);
     const dg = new THREE.PlaneGeometry(1, 1);
     dg.rotateX(Math.PI / 2);
@@ -142,6 +149,8 @@ export class Clouds {
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     this.heaps = mk(g, atlas, 3.6);
     (this.heaps.material as THREE.MeshBasicMaterial).side = decal.side;
+    this.heapsLit = mk(g, this.litTex, 3.62);
+    (this.heapsLit.material as THREE.MeshBasicMaterial).side = decal.side;
   }
 
   /**
@@ -150,16 +159,18 @@ export class Clouds {
    */
   paint() {
     const t0 = performance.now();
-    const local = () => setTimeout(() => { if (!this.ready) { const m = paintClouds(); this.setMaps(m.atlas, m.deck, t0); } }, 4000);
+    const local = () => setTimeout(() => { if (!this.ready) { const m = paintClouds(); this.setMaps(m.atlas, m.deck, m.lit, t0); } }, 4000);
     try {
       const w = new Worker(new URL('./cloudpaint.worker.ts', import.meta.url), { type: 'module' });
-      w.onmessage = (e: MessageEvent<{ atlas: CloudMap; deck: CloudMap }>) => { this.setMaps(e.data.atlas, e.data.deck, t0); w.terminate(); };
+      w.onmessage = (e: MessageEvent<{ atlas: CloudMap; deck: CloudMap; lit: CloudMap }>) => { this.setMaps(e.data.atlas, e.data.deck, e.data.lit, t0); w.terminate(); };
       w.onerror = () => { w.terminate(); local(); };
       w.postMessage(0);
     } catch { local(); }
   }
 
-  setMaps(atlas: CloudMap, deck: CloudMap, t0 = performance.now()) {
+  setMaps(atlas: CloudMap, deck: CloudMap, lit: CloudMap, t0 = performance.now()) {
+    (this.litTex.image as { data: Uint8Array }).data = lit.d;
+    this.litTex.needsUpdate = true;
     (this.atlas.image as { data: Uint8Array }).data = atlas.d;
     (this.deckTex.image as { data: Uint8Array }).data = deck.d;
     this.atlas.needsUpdate = this.deckTex.needsUpdate = true;
@@ -177,7 +188,7 @@ export class Clouds {
     P[o + 3] = cx + rx * hw; P[o + 4] = y1; P[o + 5] = cz + rz * hw;
     P[o + 6] = cx - rx * hw; P[o + 7] = y0; P[o + 8] = cz - rz * hw;
     P[o + 9] = cx + rx * hw; P[o + 10] = y0; P[o + 11] = cz + rz * hw;
-    const u0 = (cell & 1) * 0.5, v1 = 1 - (cell >> 1) * 0.5, v0 = v1 - 0.5, ua = flip ? u0 + 0.5 : u0, ub = flip ? u0 : u0 + 0.5;
+    const u0 = (cell & 1) * 0.5, v1 = 1 - (cell >> 1) / ROWS, v0 = v1 - 1 / ROWS, ua = flip ? u0 + 0.5 : u0, ub = flip ? u0 : u0 + 0.5;
     U[u] = ua; U[u + 1] = v1; U[u + 2] = ub; U[u + 3] = v1; U[u + 4] = ua; U[u + 5] = v0; U[u + 6] = ub; U[u + 7] = v0;
   }
 
@@ -253,7 +264,11 @@ export class Clouds {
     // Open sky: day light as before, plus the night body. A cloud at night is a dark shape against the sky: its colour
     // is a share of the live fog colour (the horizon tone of the night grade, which `moonLight` lifts and the storm
     // darkens), a little greyer than the sky, brighter only with the moon. No moon: nearly black, it shows by hiding stars.
-    this.tmp.copy(this.shade).lerp(this.lit, mixLit).multiplyScalar(1 - 0.8 * dark);
+    // Low sun: the flat mix splits in two. The body goes toward the cool sky-lit shade (far side and base), and the
+    // side facing the sun is drawn on top from the `lit` map in the sun's colour. `low` is exactly 0 from sun
+    // elevation sine 0.34 up, so the day picture is the single mix as before.
+    const low = smooth(0.34, 0.1, h) * sunUp;
+    this.tmp.copy(this.shade).lerp(this.lit, mixLit * (1 - LOW_SPLIT * low)).multiplyScalar(1 - 0.8 * dark);
     const F = E.fogColor, fl = 0.3 * F.r + 0.5 * F.g + 0.2 * F.b, nk = (NIGHT_BODY + NIGHT_MOON * E.moonLight) * (1 - day);
     let r = this.tmp.r + nk * (F.r + 0.4 * (fl - F.r)), g = this.tmp.g + nk * (F.g + 0.4 * (fl - F.g)), b = this.tmp.b + nk * (F.b + 0.4 * (fl - F.b));
     // Under a deck the heaps are scud: the deck's own colour a little darker (never lighter than what is behind them,
@@ -262,11 +277,17 @@ export class Clouds {
     r += (dm.color.r * tone - r) * scud; g += (dm.color.g * tone - g) * scud; b += (dm.color.b * tone - b) * scud;
     hm.opacity = fade * (1 - (1 - SCUD_OPACITY) * scud);
     hm.color.setRGB(r + flash * 0.3 * (1 - scud), g + flash * 0.3 * (1 - scud), b + flash * 0.35 * (1 - scud));
+    const lm = this.heapsLit.material as THREE.MeshBasicMaterial, lo = low * (1 - scud) * (1 - 0.8 * c);
+    this.litOn = lo > 0.01;
+    lm.opacity = fade * Math.min(1, lo * 1.1);
+    lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark));
     // The painted light side faces the sun, at night the moon.
     const Ld = h < -0.04 && E.moonLight > 0 ? E.moonDir : E.sunDir;
     const sx = Ld.x, sz = Ld.z;
     let n = 0;
     const amount = this.amount, size = this.size;
+    // Heap shape → scud shape as the deck closes: the heaps shrink away, the shreds grow in (no shape pop).
+    const isScud = scud > 0.5, swap = smooth(0, 0.7, Math.abs(scud - 0.5) * 2);
     for (let i = 0; i < SLOTS; i++) {
       const h1 = hash2(i, 3.7), h2 = hash2(i, 9.1), h3 = hash2(i, 17.3), h4 = hash2(i, 23.9);
       // Jittered lattice, drifting and wrapping around the camera.
@@ -274,7 +295,7 @@ export class Clouds {
       let x = ((gx * L + this.ox) % L + L) % L - BOX, z = ((gz * L + this.oz) % L + L) % L - BOX;
       // A slot is shown when its rank is under the amount; it grows over a band of 0.14, so cover changes cloud by cloud.
       const rank = (i * 0.618034) % 1;
-      let s = smooth(rank - 0.07, rank + 0.07, amount * 1.07) * smooth(0, 0.04, amount);
+      let s = smooth(rank - 0.07, rank + 0.07, amount * 1.07) * smooth(0, 0.04, amount) * swap;
       // Shrinks to nothing at the wrap edge.
       s *= smooth(BOX, BOX - 2.5, Math.max(Math.abs(x), Math.abs(z)));
       if (s < 0.02) continue;
@@ -292,7 +313,7 @@ export class Clouds {
       const rx = -z / (r * H), rz = x / (r * H);
       // Painted light comes from the left of the sprite: mirror it when the sun is to the right of this cloud.
       const flip = rx * sx + rz * sz > 0;
-      this.quad(n++, cam.position.x + x, cam.position.y + H * (1 - 0.1 * h4), cam.position.z + z, rx, rz, w * 0.5, hh, i % 3, flip);
+      this.quad(n++, cam.position.x + x, cam.position.y + H * (1 - 0.1 * h4), cam.position.z + z, rx, rz, w * (isScud ? 0.75 : 0.5), isScud ? hh * 0.8 : hh, isScud ? 4 + (i & 1) : i % 3, isScud ? h3 > 0.5 : flip);
     }
     // Sun blocker: one heap that forms in front of the sun as the model's passing-cloud dimming comes on, and drifts
     // across it; only while the sun is up and the deck is open.
@@ -308,6 +329,7 @@ export class Clouds {
     }
     S.quads = n; S.amount = amount; S.size = size; S.dark = dark;
     this.heaps.visible = n > 0;
+    this.heapsLit.visible = n > 0 && this.litOn;
     if (n > 0) {
       this.heaps.geometry.setDrawRange(0, n * 6);
       this.pos.clearUpdateRanges(); this.pos.addUpdateRange(0, n * 12); this.pos.needsUpdate = true;
