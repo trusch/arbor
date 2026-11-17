@@ -1,7 +1,7 @@
 import type { ArborParams } from '../params';
 import { Rng } from './rng';
 import { PointGrid } from './grid';
-import { sampleAttractors, envelopeDims } from './envelope';
+import { sampleAttractors, envelopeDims, envelopeDimsYear, sampleShell, YEAR_DATE0 } from './envelope';
 import { tel } from '../tel';
 
 /**
@@ -108,6 +108,16 @@ const UP: [number, number, number] = [0, 1, 0];
  * of its whole path, reached the 1.3 rad cap and hung as a bare whip to the ground while its rest pose, where growth
  * decisions are made, was still inside the crown.
  */
+/** Growth over years: the first year is exempt from the seasonal gates until this sim time (today's tree, t = 150). */
+const YEAR_EXEMPT = 150;
+/** G3: leader elongation rate per growth year; laterals keep theirs, so the crown widens faster than it rises. */
+const LEADER_VIGOR = [1, 0.6, 0.35];
+/** Spring flush: a tip sees new shell attractors within perception x this; buds on the last nodes of each chain. */
+const YEAR_REACH = 1.5, YEAR_BUDS = 4;
+/** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
+const YEAR_WAVES = [0.02, 0.1, 0.18, 0.26];
+/** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
+const SHELL_OPEN = 0.28;
 const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
@@ -181,6 +191,21 @@ export class TreeSim {
    * the elongating tips are placed (on their parents' last positions). Radii and subtree loads are current every step.
    */
   structureInterval = 0.1;
+  /**
+   * Growth over years (big tree P11 + P12, `?years=3`; 0 = off, the tree of one season). Set before `reset()`. The
+   * growth clock is sim time (`envelope.ts` YEAR_DATE0); everything below is a function of it, nothing accumulates.
+   */
+  years = 0;
+  /** Growth year in use (0 = first), clamped to `years - 1`. */
+  growYear = 0;
+  /** Last growth wave (year x YEAR_WAVES.length + wave) whose tip revival and bud flush ran. */
+  private yearDone = 0;
+  /** Sim time at which each attractor becomes available (shell points open inside-out over the growing season). */
+  private attrT = new Float64Array(0);
+  /** Next shell attractor to open (attractors are stored in opening order from `attrOpen0` on). */
+  private attrNext = 0;
+  /** Thickening factor of this step (G2: 1 through summer, 0 in winter; 1 when `years` is 0). */
+  private thickMul = 1;
   private sAcc = 0;
   /** Nodes that elongated or were created since the last forward pass of any kind, parents before children. */
   private sTips: number[] = [];
@@ -211,6 +236,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
+    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -227,6 +253,7 @@ export class TreeSim {
     const p = this.params;
     this.attr = sampleAttractors(p, p.seed.seed);
     this.attrAlive = new Uint8Array(this.attr.length / 3).fill(1);
+    this.attrT = new Float64Array(0); this.attrNext = 0;
     this.gridCell = Math.max(0.3, this.perception());
     this.grid = new PointGrid(this.gridCell, this.attr, this.attrAlive);
     const kill = this.killRadius();
@@ -343,7 +370,30 @@ export class TreeSim {
     const p = this.params;
     const g = p.growth;
     this.time += dt;
-    const full = this.nodes.length >= g.maxNodes;
+    // Growth by year (G1..G3): shoots extend from bud break to midsummer, wood thickens through summer, the leader
+    // slows with age. The first year up to YEAR_EXEMPT is exactly today's tree.
+    let ext = 1, lead = 1;
+    if (this.years > 0) {
+      const age = this.time / Math.max(10, p.season.yearLength) + YEAR_DATE0;
+      const yi = Math.floor(age), ph = age - yi;
+      this.growYear = Math.min(yi, this.years - 1);
+      if (yi >= 1 && yi < this.years) {
+        // Waves of the growing season: the first one adds this year's shell, every one revives tips and sets buds.
+        let w = -1;
+        for (let k = 0; k < YEAR_WAVES.length; k++) if (ph >= YEAR_WAVES[k]) w = k;
+        const id = yi * YEAR_WAVES.length + w;
+        if (w >= 0 && id > this.yearDone) { this.yearDone = id; this.springFlush(yi, w, this.time - (ph - YEAR_WAVES[0]) * Math.max(10, p.season.yearLength)); }
+      }
+      // Shell attractors open in sequence (pure function of sim time: a point is open from its time on).
+      const T = this.attrT, A = this.attrAlive;
+      while (this.attrNext < T.length && T[this.attrNext] <= this.time) { A[this.attrNext] = 1; this.grid.add(this.attrNext++); }
+      if (this.time >= YEAR_EXEMPT) {
+        ext = smoothstep(0, 0.02, ph) * (1 - smoothstep(0.33, 0.4, ph));
+        this.thickMul = 1 - smoothstep(0.5, 0.6, ph);
+      }
+      lead = LEADER_VIGOR[Math.min(LEADER_VIGOR.length - 1, this.growYear)];
+    }
+    const full = this.nodes.length >= g.maxNodes || ext <= 0;
     // The light tick of this step (shading, self-pruning, juvenile shedding) reads world positions: bring them to the
     // state of the last step before anything elongates, which is exactly what a forward pass every step had left.
     if (this.lightTimer - dt <= 0) this.flushStructure();
@@ -358,7 +408,7 @@ export class TreeSim {
         const vigor = Math.pow(g.vigorDecay, ch.order);
         // A seedling starts slowly: juvenile wood elongates at JUV_SPEED..1 of the adult rate.
         const jv = tip.juv < 1 ? JUV_SPEED + (1 - JUV_SPEED) * (tip.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
-        tip.len += g.segmentLength * g.growthRate * vigor * jv * dt;
+        tip.len += g.segmentLength * g.growthRate * vigor * jv * dt * ext * (ch.order === 0 ? lead : 1);
         this.sUp[tipId] |= 1; this.sDown[tipId] = 1;
         this.sTips.push(tipId);
         if (tipId < this.sDownLo) this.sDownLo = tipId;
@@ -400,7 +450,7 @@ export class TreeSim {
     const g = p.growth;
     const ch = this.chains[c];
     const n = this.nodes[id];
-    const env = envelopeDims(p);
+    const env = this.years > 0 ? envelopeDimsYear(p, this.growYear, this.years) : envelopeDims(p);
     // Occupy space.
     this.grid.query(n.rx, n.ry, n.rz, this.killRadius(), (i) => (this.attrAlive[i] = 0));
 
@@ -503,6 +553,64 @@ export class TreeSim {
       dx = n.dx * a + dx * b; dy = n.dy * a + dy * b; dz = n.dz * a + dz * b;
     }
     this.extend(c, dx, dy, dz);
+  }
+
+  /**
+   * Start of growing year `yi` (T9): attractors in the shell between last year's and this year's envelope, the tips
+   * of unpruned chains that can see them grow on (new wood on the old scaffold), and the last nodes of every unpruned
+   * chain get a fresh lateral bud.
+   */
+  private springFlush(yi: number, wave: number, t0: number) {
+    const p = this.params, g = p.growth;
+    if (wave === 0) {
+      // This year's shell, sorted inside-out (distance from the crown base point in envelope units) and opened at an
+      // even rate from bud break (t0) to SHELL_OPEN of the year, so the crown grows through the season, not in a burst.
+      const add = sampleShell(p, p.seed.seed, yi, this.years);
+      const env = envelopeDimsYear(p, yi, this.years), m = add.length / 3;
+      const key = new Float64Array(m), ord = new Uint32Array(m);
+      for (let i = 0; i < m; i++) {
+        ord[i] = i;
+        key[i] = Math.hypot(add[i * 3] / env.radius, (add[i * 3 + 1] - env.base) / env.height, add[i * 3 + 2] / env.radius);
+      }
+      ord.sort((x, y) => key[x] - key[y]);
+      const n0 = this.attr.length / 3;
+      const attr = new Float32Array((n0 + m) * 3);
+      attr.set(this.attr);
+      const T = new Float64Array(n0 + m);
+      const Y = Math.max(10, p.season.yearLength);
+      for (let j = 0; j < m; j++) {
+        const i = ord[j];
+        attr[(n0 + j) * 3] = add[i * 3]; attr[(n0 + j) * 3 + 1] = add[i * 3 + 1]; attr[(n0 + j) * 3 + 2] = add[i * 3 + 2];
+        T[n0 + j] = t0 + Y * SHELL_OPEN * (j + 0.5) / m;
+      }
+      const alive = new Uint8Array(n0 + m);
+      alive.set(this.attrAlive);
+      this.attr = attr; this.attrAlive = alive; this.attrT = T; this.attrNext = n0;
+      this.grid = new PointGrid(this.gridCell, this.attr, this.attrAlive);
+    }
+    const tmp: [number, number, number] = [0, 0, 0];
+    const nChains = this.chains.length;
+    for (let c = 0; c < nChains; c++) {
+      const ch = this.chains[c];
+      if (ch.pruned || ch.juv !== undefined || ch.nodes.length < 2) continue;
+      const tipId = ch.nodes[ch.nodes.length - 1], n = this.nodes[tipId];
+      if (!ch.alive && this.nodes.length < g.maxNodes) {
+        const cnt = this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception() * YEAR_REACH, tmp);
+        if (cnt > 0 && n.len >= n.targetLen) {
+          ch.alive = true; ch.starve = 0;
+          this.extend(c, n.dx + tmp[0], n.dy + tmp[1], n.dz + tmp[2]);
+        }
+      }
+      if (ch.order >= g.maxOrder) continue;
+      const a = (g.branchAngle * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+      for (let k = Math.max(1, ch.nodes.length - YEAR_BUDS); k < ch.nodes.length; k++) {
+        const id = ch.nodes[k], m = this.nodes[id];
+        if (m.len < m.targetLen) continue;
+        const [px, py, pz] = perpendicular(m.dx, m.dy, m.dz, m.phyllo + 1.3);
+        this.buds.push({ node: id, chain: c, indexInChain: k, dx: m.dx * ca + px * sa, dy: m.dy * ca + py * sa, dz: m.dz * ca + pz * sa, born: this.time });
+      }
+    }
+    this.lightTimer = 0;
   }
 
   private budBreak(dt: number) {
@@ -787,7 +895,7 @@ export class TreeSim {
     const N = nodes.length;
     const n = Math.max(1.2, p.thickness.exponent);
     const r0 = p.thickness.twigRadius;
-    const k = 1 - Math.exp(-dt * p.thickness.thickeningRate * 4);
+    const k = 1 - Math.exp(-(this.years > 0 ? dt * this.thickMul : dt) * p.thickness.thickeningRate * 4);
     const gk = p.growth.gravity * p.growth.sag * 4e-6;
     // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).
     const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;

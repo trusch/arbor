@@ -145,6 +145,14 @@ tel.phase('init sim');
 const sim = new TreeSim(params);
 // Dev switch: `?structInterval=0` runs the forward structure pass every step (default 0.1 sim seconds, see `TreeSim.structureInterval`).
 if (query.get('structInterval') !== null && Number.isFinite(Number(query.get('structInterval')))) sim.structureInterval = Math.max(0, Number(query.get('structInterval')));
+// Growth over years (big tree P11/P12): `?years=3` grows the tree on for three seasons to x1.6 (`TreeSim.years`).
+const yearsQ = Number(query.get('years'));
+if (Number.isFinite(yearsQ) && yearsQ > 1) {
+  sim.years = Math.min(3, Math.floor(yearsQ));
+  // The node cap is a safety net there, not what ends growth (year 3 is about 23k nodes); ?maxNodes= still wins.
+  if (!query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.max(params.growth.maxNodes, 40000);
+  sim.reset();
+}
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();

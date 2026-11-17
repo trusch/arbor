@@ -2,10 +2,15 @@
 export class PointGrid {
   private cells = new Map<number, number[]>();
   constructor(private cell: number, private pts: Float32Array, private alive: Uint8Array) {
-    for (let i = 0; i < pts.length / 3; i++) this.insert(i);
+    // Points not alive at construction are not inserted (they would be dropped by the first query anyway); `add` later.
+    for (let i = 0; i < pts.length / 3; i++) if (alive[i]) this.insert(i);
   }
   private key(ix: number, iy: number, iz: number): number {
     return ((ix + 512) * 1024 + (iy + 512)) * 1024 + (iz + 512);
+  }
+  /** Insert point i (made alive after construction). */
+  add(i: number) {
+    this.insert(i);
   }
   private insert(i: number) {
     const c = this.cell;
