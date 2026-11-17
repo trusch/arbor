@@ -52,6 +52,7 @@ export class Director {
   private wantCut = true;
   private pending: { kind: ShotKind; x: number; y: number; z: number } | null = null;
   private lastEvent = -1e9;
+  private lastBird = -1e9;
   private clock = 0;
   private hold = 0;
   // Smoothed tree box: height, crown radius, centre height, trunk position.
@@ -71,7 +72,10 @@ export class Director {
   /** Ask for a shot (null = the director's own choice). Used by the N key, the next-shot button and scripts. */
   go(kind: ShotKind | null = null, cut = true) { this.want = kind ?? this.choose(null); this.wantCut = cut; }
   /** Something notable happened at a place: the director may go there once the running shot is old enough. */
-  event(kind: 'bird' | 'branch' | 'storm' | 'orbit', x = 0, y = 0, z = 0) { this.pending = { kind, x, y, z }; }
+  event(kind: 'bird' | 'branch' | 'storm' | 'orbit', x = 0, y = 0, z = 0) {
+    if (kind === 'bird') { if (this.clock - this.lastBird < 75) return; this.lastBird = this.clock; }
+    this.pending = { kind, x, y, z };
+  }
   /** No shot change for `s` seconds (the ease back from a hand-set view must not meet a cut). */
   rest(s: number) { this.hold = Math.max(this.hold, s); if (this.cutT >= 0 && this.cutT < CUT_OUT) { this.cutT = -1; this.next = null; this.fade(0); } }
   /** Forget the running shot: the next `update` starts from the camera's pose (seedling hand-over, new tree). */

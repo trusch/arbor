@@ -110,7 +110,7 @@ try {
           const n0 = A.sim.nodes[0];
           o.minY = Math.min(o.minY, cam.position.y); o.minTrunk = Math.min(o.minTrunk, Math.hypot(cam.position.x - n0.wx, cam.position.z - n0.wz));
           if (s.cutFrame) o.cuts++;
-          else if (dt > 0 && dt < 0.2) {
+          else if (dt > 0 && dt < 1) {
             const step = cam.position.distanceTo(lp), ang = d.angleTo(ld) * 57.2958;
             o.frames++; o.path += step; o.maxDt = Math.max(o.maxDt, dt);
             if (step > o.maxStep) { o.maxStep = step; o.maxStepAt = `${s.kind}@${s.t.toFixed(1)}${s.travelling ? ' travel' : ''}`; }
