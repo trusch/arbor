@@ -675,8 +675,9 @@ function frame(now: number) {
   const lp = params.leaves;
   glow.setHSL(lp.glowHue, 0.9, 0.55).multiplyScalar(lp.glow * (0.12 + 0.88 * stage.atmo.night));
   leaves.setGlow(glow, 1 - stage.atmo.night);
-  // Post-weather key (storm dims the translucency glow with the sun; derived each frame from the calm value).
-  leaves.setSun(stage.atmo.keyDir, stage.sun.color, stage.sun.intensity, stage.camera.matrixWorldInverse);
+  // Post-weather key (storm dims the translucency glow with the sun; derived each frame from the calm value). Capped at the
+  // calm key so a lightning flash does not light the crown from inside.
+  leaves.setSun(stage.atmo.keyDir, stage.sun.color, Math.min(stage.sun.intensity, stage.atmo.keyIntensity), stage.camera.matrixWorldInverse, stage.atmo.night);
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
   // Moonlight: the bark joins the dim, cool range of the crown (lerp from the day value each frame; exactly the day value while night = 0).
   const barkCol = (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);

@@ -427,7 +427,7 @@ export class Stage {
       // Hour mood (from the base split-tone each frame): golden hour = warm highs / cool shadows, moonlit night = cool.
       const gold = day * low * (A.sunH > -0.02 ? 1 : 0) * (1 - this.wx.cloud);
       P.grade.uniforms.warm.value.setRGB(1.04 + 0.1 * gold, 1.0 + 0.01 * gold, 0.93 - 0.11 * gold);
-      P.grade.uniforms.cool.value.setRGB(0.92 - 0.05 * gold - 0.04 * night, 0.98 - 0.01 * gold, 1.06 + 0.06 * gold + 0.04 * night);
+      P.grade.uniforms.cool.value.setRGB(0.92 - 0.05 * gold, 0.98 - 0.01 * gold, 1.06 + 0.06 * gold);
     }
 
     // Switching cinema or auto-frame on in the panel is the user asking for the automatic camera.
