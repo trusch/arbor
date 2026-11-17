@@ -17,6 +17,7 @@ import { weather, windWord, windFrom, KINDS, type WeatherEvent, type WeatherKind
 import { season } from './season';
 import { Rain } from './render/rain';
 import { Celestial } from './render/celestial';
+import { Clouds } from './render/clouds';
 import { Debris } from './render/debris';
 import { Sway } from './render/sway';
 import { LeafFall } from './render/leaffall';
@@ -187,6 +188,12 @@ if (rain) stage.scene.add(rain.group);
 /** Sun glow, moon, star detail: P-DECAL clones like the rain (`?celestial=0` turns the planes and star detail off). */
 const celestial = query.get('celestial') !== '0' ? new Celestial(canopy.mesh.material as THREE.MeshBasicMaterial, stage.atmo.stars) : null;
 if (celestial) stage.scene.add(celestial.group);
+/** Clouds by type: P-DECAL clones like the celestial planes (`?clouds=0` = not constructed). */
+performance.mark('clouds:ctor0');
+const clouds = query.get('clouds') !== '0' ? new Clouds(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
+clouds?.paint();
+performance.measure('clouds ctor', 'clouds:ctor0');
+if (clouds) stage.scene.add(clouds.group);
 {
   const qw = query.get('weather');
   if (qw === 'storm' || qw === 'calm' || qw === 'auto') params.weather.event = qw;
@@ -212,6 +219,7 @@ function weatherRender(dt: number) {
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = canopyStrength * (1 - 0.65 * weather.cloud);
   canopy.fade(dt);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
+  clouds?.frame(stage.camera, { sunDir: stage.atmo.sunDir, sunH: stage.atmo.sunH, night: stage.atmo.night, sunColor: stage.atmo.sunColor, moonLight: stage.atmo.moonLight, cloud: weather.cloud, type: weather.cloudType, storm: weather.kind === 'storm', flash: weather.flash, dirX: wind.dirX, dirZ: wind.dirZ, speed: weather.cloudSpeed(wind.base), fogDensity: stage.fog.density, lowQ: params.sky.quality === 'Low', fogColor: stage.fog.color, moonDir: stage.atmo.moonDir }, dt);
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
   // PowerVR rule: on Low the rain/bolt planes only draw once the canopy decal (their program donor) has been drawn,
@@ -692,6 +700,7 @@ requestAnimationFrame(loop);
   weather,
   rain,
   sky: celestial,
+  clouds,
   debris,
   sway,
   swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
