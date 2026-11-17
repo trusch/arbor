@@ -207,7 +207,7 @@ function weatherFrame(dt: number) {
 function weatherRender(dt: number) {
   tel.phase('weather', true);
   stage.applyFlash();
-  (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
+  (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = canopyStrength * (1 - 0.65 * weather.cloud);
   canopy.fade(dt);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
   if (!rain) return;
@@ -310,6 +310,8 @@ function leafFallFrame(dt: number) {
   });
 }
 const sunDirTmp = new THREE.Vector3();
+/** Canopy decal opacity of this frame before the storm fade (set in `redraw`). */
+let canopyStrength = 0;
 const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
 const MAX_STEP = 1 / 20;
@@ -406,6 +408,16 @@ function redraw(time: number, dt: number, force = false) {
   } else if (season.active && Math.abs(season.phase - leafPhase) > 0.004) { leavesDirty = true; leafPhase = season.phase; }
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
+  // Canopy decal (leaves cast no shadow-map shadows): checked every frame, independent of the leaf pass (it used to be
+  // baked only when a pass began, i.e. every 0.8 to 1.6 s, and stood still in between). `update` returns at once unless
+  // the light moved (2 decimals, >= 0.8 s apart) or the tree changed; between bakes `follow` re-projects the plane for
+  // this frame's light, and the strength (0 without a key light, so sun and moon hand over through 0) is the opacity.
+  const decal = !leaves.mesh.castShadow && S.castShadow;
+  branches.mesh.castShadow = !decal;
+  if (decal) {
+    { tel.phase('canopy shadow', true); canopy.update(sim, sunDirTmp, time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2); }
+    canopyStrength = canopy.follow(sunDirTmp) ? Math.min(1, S.intensity * 6) * Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))) : 0;
+  } else canopy.mesh.visible = false;
   // Leaf pass inputs. Growth: every 0.12 s (diag rebuildHz overrides), 1 s once topology is stable for 5 s. Light grid,
   // sun direction (2 decimals, as the transmittance cache keys it), params and quality: at once. Camera (≤ 1/s):
   // distance changed > 25% (size LOD), or on the safe path the view direction turned > 12° (its bake is view-dependent).
@@ -432,13 +444,6 @@ function redraw(time: number, dt: number, force = false) {
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;
-    const decal = !leaves.mesh.castShadow && S.castShadow;
-    branches.mesh.castShadow = !decal;
-    if (decal) {
-      tel.phase('canopy shadow');
-      canopy.update(sim, sunDirTmp, Math.min(1, S.intensity * 6) * Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
-      tel.phase('leaves rebuild');
-    } else canopy.mesh.visible = false;
     const repl = leaves.beginPass(sim, time);
     if (repl) {
       tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });

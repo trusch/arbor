@@ -48,7 +48,9 @@ export class CanopyShadow {
   private readonly from: Uint8Array;
   private readonly to: Uint8Array;
   /** Ground frame of the drawn texture (u0, w0, texels per metre along u and w, azimuth); `has` = something is drawn. */
-  private fr = { u0: 0, w0: 0, toU: 1, toW: 1, ux: 1, uz: 0, has: false };
+  private fr = { u0: 0, w0: 0, toU: 1, toW: 1, ux: 1, uz: 0, has: false, slope: 0, bx: 0, bz: 0, bu: 0, bw: 0, uc: 0, wc: 0, extU: 1, extW: 1, dx: 0, dy: 1, dz: 0 };
+  /** Stretch along the azimuth of the drawn frame for a light direction (see `follow`). */
+  private static kOf(slopeBaked: number, slopeNow: number) { return slopeBaked < 0.05 ? 1 : Math.min(2.5, Math.max(0.4, slopeNow / slopeBaked)); }
   private fadeP = 1;
   private fadeStep = 0;
   /** Texture uploads of fade steps (profiling). */
@@ -99,7 +101,7 @@ export class CanopyShadow {
   }
 
   /** dir: toward the shadow-casting light (y clamped like the stage sun). Rebuilds at most every `minGap` s unless the sun moved. */
-  update(sim: TreeSim, dir: THREE.Vector3, strength: number, time: number, minGap = 2) {
+  update(sim: TreeSim, dir: THREE.Vector3, time: number, minGap = 2, sunGap = 0.8) {
     const G = sim.lightGrid;
     if (sim.nodes.length < 2) { this.mesh.visible = false; this.fr.has = false; this.ver = -1; return; }
     // Before the first light grid (seedling) the node count stands in for the light version.
@@ -107,7 +109,7 @@ export class CanopyShadow {
     const key = `${dir.x.toFixed(2)},${dir.y.toFixed(2)},${dir.z.toFixed(2)}`;
     const gap = time - this.lastT;
     if (key === this.key && (ver === this.ver || gap < minGap)) return;
-    if (gap < 0.5) return;
+    if (gap < (key === this.key ? 0.5 : Math.max(0.5, sunGap))) return;
     this.key = key;
     this.ver = ver;
     this.lastT = time;
@@ -240,7 +242,7 @@ export class CanopyShadow {
     }
     // Dapple with world-anchored noise (stable while the footprint grows or the sun moves), map optical depth to
     // opacity (cap = strength), fade to 0 at the border.
-    const to = this.to, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS, k255 = 255 * Math.min(1, strength);
+    const to = this.to, noise = this.noise, NS = 15, dxu = (ux / toU) * NS, dzu = (uz / toU) * NS, k255 = 255;
     for (let z = 0, i = 0; z < S; z++) {
       const ww = w0 + (z + 0.5) / toW, uu = u0 + 0.5 / toU;
       // +4096: keeps the noise coordinate positive so `| 0` floors.
@@ -262,41 +264,67 @@ export class CanopyShadow {
     // texels) and blended to the new bake in `FADE_STEPS` uploads over `FADE_S`, so a bake never shows as a step.
     // A paused or fast-forwarded tree with nothing drawn yet gets the bake at once.
     const P = this.fr, from = this.from, shown = this.shown;
-    if (!P.has) from.fill(0);
+    // The drawn plane follows the light between bakes (`follow`), so the old frame is resampled where it is drawn NOW:
+    // turned to the new azimuth and stretched along it by `kP` about its trunk base. A light that changed hands
+    // (sun <-> moon, opacity 0 at that moment) starts from nothing.
+    const turned = P.has && dir.x * P.dx + dir.y * P.dy + dir.z * P.dz < 0.8;
+    if (!P.has || turned) from.fill(0);
     else {
-      // new texel (x, z) -> old texel: affine in x and z.
-      const c = ux * P.ux + uz * P.uz, sn = ux * P.uz - uz * P.ux; // rotation between the frames (1, 0 unless the sun moved)
-      const ax = (c / toU) * P.toU, az = (-sn / toU) * P.toW;
+      const kP = CanopyShadow.kOf(P.slope, slope), bun = P.bx * ux + P.bz * uz, bwn = -P.bx * uz + P.bz * ux;
+      const ax = P.toU / (toU * kP), ox0 = (P.bu + (u0 + 0.5 / toU - bun) / kP - P.u0) * P.toU - 0.5;
       for (let z = 0, i = 0; z < S; z++) {
-        const un = u0 + 0.5 / toU, wn = w0 + (z + 0.5) / toW;
-        let ox = (un * c + wn * sn - P.u0) * P.toU - 0.5, oz = (-un * sn + wn * c - P.w0) * P.toW - 0.5;
-        for (let x = 0; x < S; x++, i++, ox += ax, oz += az) {
-          const fx0 = Math.floor(ox + 1e-4), fz0 = Math.floor(oz + 1e-4);
-          if (fx0 < -1 || fz0 < -1 || fx0 >= S || fz0 >= S) { from[i] = 0; continue; }
-          const tx = Math.max(0, ox - fx0), tz = Math.max(0, oz - fz0), o = fz0 * S + fx0;
-          const inX0 = fx0 >= 0, inX1 = fx0 < S - 1, inZ0 = fz0 >= 0, inZ1 = fz0 < S - 1;
+        const oz = (P.bw + (w0 + (z + 0.5) / toW - bwn) - P.w0) * P.toW - 0.5, fz0 = Math.floor(oz + 1e-4);
+        if (fz0 < -1 || fz0 >= S) { for (let x = 0; x < S; x++, i++) from[i] = 0; continue; }
+        const tz = Math.max(0, oz - fz0), inZ0 = fz0 >= 0, inZ1 = fz0 < S - 1, r = fz0 * S;
+        let ox = ox0;
+        for (let x = 0; x < S; x++, i++, ox += ax) {
+          const fx0 = Math.floor(ox + 1e-4);
+          if (fx0 < -1 || fx0 >= S) { from[i] = 0; continue; }
+          const tx = Math.max(0, ox - fx0), o = r + fx0;
+          const inX0 = fx0 >= 0, inX1 = fx0 < S - 1;
           const v00 = inX0 && inZ0 ? shown[o] : 0, v10 = inX1 && inZ0 ? shown[o + 1] : 0, v01 = inX0 && inZ1 ? shown[o + S] : 0, v11 = inX1 && inZ1 ? shown[o + S + 1] : 0;
           from[i] = (v00 + (v10 - v00) * tx + (v01 - v00 + (v11 - v10 - v01 + v00) * tx) * tz + 0.5) | 0;
         }
       }
     }
-    const instant = !P.has && minGap < 2;
+    const instant = (!P.has && minGap < 2) || turned;
     P.u0 = u0; P.w0 = w0; P.toU = toU; P.toW = toW; P.ux = ux; P.uz = uz; P.has = true;
+    P.slope = slope; P.bx = n0.wx; P.bz = n0.wz; P.bu = n0.wx * ux + n0.wz * uz; P.bw = -n0.wx * uz + n0.wz * ux;
+    P.uc = (u0 + u1) / 2; P.wc = (w0 + w1) / 2; P.extU = extU; P.extW = extW; P.dx = dir.x; P.dy = dir.y; P.dz = dir.z;
     this.fadeP = instant ? 1 : 0; this.fadeStep = instant ? FADE_STEPS - 1 : 0;
     this.fadeTo(this.fadeStep + 1);
-    const uc = (u0 + u1) / 2, wc = (w0 + w1) / 2;
-    this.mesh.position.set(uc * ux - wc * uz, 0.015, uc * uz + wc * ux);
-    this.mesh.rotation.y = Math.atan2(-uz, ux); // local +x → U, local +z → W
-    this.mesh.scale.set(extU, 1, extW);
     this.mesh.visible = true;
+    this.follow(dir);
     this.lastMs = performance.now() - t0;
     if (this.lastMs > this.maxMs) this.maxMs = this.lastMs;
     this.bakes++;
   }
 
+  /**
+   * Per frame: puts the drawn plane where the baked shadow falls under the light direction of THIS frame. The texture
+   * is a projection along the light onto the ground: a caster at height y above the trunk base lands y x slope along
+   * the azimuth, so for a new direction the plane is turned about the trunk base to the new azimuth and stretched
+   * along it by slope / baked slope. Exact for everything on the trunk axis, off by (horizontal offset from the axis)
+   * x (turn + stretch since the bake) elsewhere, which the next bake's cross-fade takes out. A pure function of the
+   * frame's direction and the bake record; nothing accumulates. Returns false while the light is not the baked one
+   * (sun <-> moon hand-over before the next bake): the caller draws it at opacity 0.
+   */
+  follow(dir: THREE.Vector3): boolean {
+    const P = this.fr;
+    if (!P.has) return false;
+    const ly = Math.max(0.3, dir.y), hl = Math.hypot(dir.x, dir.z);
+    let ux = P.ux, uz = P.uz;
+    if (hl > 1e-4) { ux = -dir.x / hl; uz = -dir.z / hl; }
+    const k = CanopyShadow.kOf(P.slope, hl / ly), du = (P.uc - P.bu) * k, dw = P.wc - P.bw;
+    this.mesh.position.set(P.bx + du * ux - dw * uz, 0.015, P.bz + du * uz + dw * ux);
+    this.mesh.rotation.y = Math.atan2(-uz, ux); // local +x → U, local +z → W
+    this.mesh.scale.set(P.extU * k, 1, P.extW);
+    return dir.x * P.dx + dir.y * P.dy + dir.z * P.dz >= 0.8;
+  }
+
   /** Per frame (`dt` real seconds): advances the cross-fade to the latest bake; uploads the texture only on a new step. */
   fade(dt: number) {
-    if (this.fadeStep >= FADE_STEPS || !this.mesh.visible) return;
+    if (this.fadeStep >= FADE_STEPS || !this.fr.has) return;
     this.fadeP = Math.min(1, this.fadeP + dt / FADE_S);
     const step = Math.max(this.fadeStep, Math.ceil(this.fadeP * FADE_STEPS));
     if (step > this.fadeStep) { this.fadeTo(step); this.fadeUploads++; }
