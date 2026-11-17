@@ -48,7 +48,7 @@ class P {
   last = NaN;
   constructor(readonly p: AudioParam, readonly ctx: BaseAudioContext, readonly tc = 0.09) {}
   set(v: number, tc = this.tc) {
-    if (Math.abs(v - this.last) <= 1e-4 + 1e-3 * Math.abs(this.last)) return;
+    if (Math.abs(v - this.last) <= 1e-4 + 0.03 * Math.abs(this.last) && (v !== 0 || this.last === 0)) return;
     this.last = v;
     this.p.setTargetAtTime(v, this.ctx.currentTime, tc);
   }
@@ -143,9 +143,11 @@ export class Soundscape {
   private gain(v = 0) { const g = this.ctx.createGain(); g.gain.value = v; return g; }
   private panner(v = 0) { const s = this.ctx.createStereoPanner(); s.pan.value = v; return s; }
   private reg(name: string, p: AudioParam, tc?: number) { return (this.p[name] = new P(p, this.ctx, tc)); }
-  /** Slow irregular amplitude modulation: noise played 250x slower, low-passed, added to a gain. */
+  /** A unity gain stage whose gain wanders irregularly by `depth` (rms share): multiplicative, so silence stays silence. */
+  private shimmer(hz: number, depth: number, hz2 = 0, depth2 = 0) { const g = this.gain(1); this.flutter(g.gain, hz, depth); if (hz2) this.flutter(g.gain, hz2, depth2); return g; }
+  /** Slow irregular modulation source: noise played 250x slower, low-passed, added to `target`. */
   private flutter(target: AudioParam, hz: number, depth: number) {
-    const s = this.loop(this.white, 0.004), lp = this.filt('lowpass', hz, 0.5), g = this.gain(depth);
+    const s = this.loop(this.white, 0.004), lp = this.filt('lowpass', hz, 0.5), g = this.gain(depth / (0.29 * Math.sqrt(Math.min(1, hz / 88))));
     s.connect(lp).connect(g).connect(target);
     return g;
   }
@@ -156,9 +158,8 @@ export class Soundscape {
     pan.connect(B);
     // Low body (air moving past the ear) and a mid "whoosh" whose colour follows the gust.
     const lo = this.filt('lowpass', 300, 0.4), gl = this.gain(); this.loop(this.brown).connect(lo).connect(gl).connect(pan);
-    const mid = this.filt('bandpass', 600, 0.55), gm = this.gain(); this.loop(this.pink, 0.9).connect(mid).connect(gm).connect(pan);
+    const mid = this.filt('bandpass', 600, 0.55), gm = this.gain(); this.loop(this.pink, 0.9).connect(mid).connect(this.shimmer(4, 0.22)).connect(gm).connect(pan);
     this.reg('windLoF', lo.frequency, 0.25); this.reg('windLo', gl.gain); this.reg('windMidF', mid.frequency, 0.25); this.reg('windMid', gm.gain);
-    this.flutter(gm.gain, 5, 0.25);
     // Bare-crown whistle: two narrow resonances that slide with the gust.
     for (const k of [0, 1]) {
       const bp = this.filt('bandpass', 900, k ? 16 : 22), g = this.gain();
@@ -179,13 +180,11 @@ export class Soundscape {
   private buildRustle() {
     const T = this.treeIn();
     // Leaf hiss: high band, shimmer from two flutters at different speeds; a lower "sough" of the whole crown.
-    const hp = this.filt('highpass', 1700, 0.5), bp = this.filt('bandpass', 4500, 0.7), g = this.gain(), sh = this.gain(0.75);
+    const hp = this.filt('highpass', 1700, 0.5), bp = this.filt('bandpass', 4500, 0.7), g = this.gain(), sh = this.shimmer(9, 0.3, 2.2, 0.25);
     this.loop(this.white).connect(hp).connect(bp).connect(sh).connect(g).connect(T);
-    this.flutter(sh.gain, 9, 1.6); this.flutter(sh.gain, 2.2, 1.2);
     this.reg('rusF', bp.frequency, 0.2); this.reg('rus', g.gain, 0.07);
     const b2 = this.filt('bandpass', 1100, 0.6), g2 = this.gain();
-    this.loop(this.pink, 1.1).connect(b2).connect(g2).connect(T);
-    this.flutter(g2.gain, 1.5, 0.2);
+    this.loop(this.pink, 1.1).connect(b2).connect(this.shimmer(1.5, 0.2)).connect(g2).connect(T);
     this.reg('sough', g2.gain, 0.12); this.reg('soughF', b2.frequency, 0.25);
   }
   private buildRain() {
@@ -194,17 +193,15 @@ export class Soundscape {
     const lp = this.filt('lowpass', 6500, 0.5); lp.connect(B); this.reg('rainLp', lp.frequency, 0.3);
     for (const side of [-1, 1]) {
       const hp = this.filt('highpass', 700, 0.5), g = this.gain(), pan = this.panner(side * 0.65);
-      this.loop(this.pink, side > 0 ? 1 : 0.93).connect(hp).connect(g).connect(pan).connect(lp);
+      this.loop(this.pink, side > 0 ? 1 : 0.93).connect(hp).connect(this.shimmer(0.7, 0.1)).connect(g).connect(pan).connect(lp);
       this.reg('rainOpen' + side, g.gain, 0.25);
-      this.flutter(g.gain, 0.7, 0.06);
     }
     // Downpour body.
     const bb = this.filt('bandpass', 380, 0.5), gb = this.gain(); this.loop(this.brown, 1.2).connect(bb).connect(gb).connect(lp); this.reg('rainBody', gb.gain, 0.3);
     // Rain on leaves: brighter, patters; sits at the tree.
-    const hp = this.filt('highpass', 2200, 0.6), pk = this.filt('peaking', 5200, 1), g = this.gain(), sh = this.gain(0.7), gt = this.gain(1);
+    const hp = this.filt('highpass', 2200, 0.6), pk = this.filt('peaking', 5200, 1), g = this.gain(), sh = this.shimmer(24, 0.32, 3, 0.15), gt = this.gain(1);
     pk.gain.value = 7;
     this.loop(this.white, 1.07).connect(hp).connect(pk).connect(sh).connect(g).connect(gt).connect(B);
-    this.flutter(sh.gain, 24, 2.2);
     this.reg('rainLeaf', g.gain, 0.25);
     const pan = this.panner(); gt.disconnect(); gt.connect(pan).connect(B);
     this.pan.leafRain = new P(pan.pan, this.ctx, 0.15);
@@ -249,20 +246,20 @@ export class Soundscape {
     this.pan.tree.set(tp.pan); this.p.treeGain.set(tp.gain * (1 + 0.5 * encl));
     const g = clamp(e.gust, 0, 1.2), sheltered = 1 - 0.35 * encl;
     // Wind: level from the gust passing the tree; colour brightens with it; slightly from upwind.
-    const wl = (0.012 + 0.5 * Math.pow(g, 1.8)) * (1 + 0.25 * o0) * sheltered;
+    const wl = (0.035 + 1.15 * Math.pow(g, 1.8)) * (1 + 0.25 * o0) * sheltered;
     this.p.windLo.set(wl * 0.9); this.p.windLoF.set(140 + 520 * g + 60 * o1);
     this.p.windMid.set(wl * (0.25 + 0.9 * g)); this.p.windMidF.set(380 + 1300 * g * (1 + 0.2 * o1));
     this.pan.wind.set(clamp(-(e.windX * e.rightX + e.windZ * e.rightZ) * 0.3, -1, 1));
     this.bus.wind.level.set(1);
     // Bare crown: thin whistle through the twigs, only in a real wind.
-    const wh = bare * Math.pow(sm(0.3, 1, g), 2) * 0.16;
+    const wh = bare * Math.pow(sm(0.3, 1, g), 2) * 0.4;
     this.p.wh0.set(wh * (1 + 0.5 * o3)); this.p.whF0.set(820 + 900 * g + 140 * o2);
     this.p.wh1.set(wh * 0.6 * (1 - 0.5 * o3)); this.p.whF1.set(1450 + 1300 * g + 200 * o4);
     // Leaves: rustle follows the gust steeply and scales with the foliage; dry autumn leaves are brighter.
     const dry = sm(0.45, 0.62, e.phase) * (1 - sm(0.8, 0.9, e.phase));
-    const rus = foliage * (0.006 + 0.62 * Math.pow(g, 2.2)) * (1 + 0.3 * o3);
+    const rus = foliage * (0.02 + 1.7 * Math.pow(g, 2.2)) * (1 + 0.3 * o3);
     this.p.rus.set(rus); this.p.rusF.set(3600 + 2600 * g + 1500 * dry + 300 * o2);
-    this.p.sough.set(foliage * 0.5 * Math.pow(g, 1.6) * (1 + 0.2 * o0)); this.p.soughF.set(800 + 700 * g);
+    this.p.sough.set(foliage * 1.2 * Math.pow(g, 1.6) * (1 + 0.2 * o0)); this.p.soughF.set(800 + 700 * g);
     this.bus.rustle.level.set(1);
     // Rain: open rain from first drops to downpour, leaf patter at the tree, muffled under the crown.
     const r = clamp(e.rain, 0, 1), rl = Math.pow(r, 0.75);
@@ -291,14 +288,14 @@ export class Soundscape {
         const v = this.far[Math.floor(Math.random() * this.far.length)];
         if (now > v.busy && (!winter || SPECIES[v.sp].winter)) {
           const x = e.cx + Math.cos(v.az) * v.d, z = e.cz + Math.sin(v.az) * v.d, pl = this.place(x, 3, z, 20);
-          v.busy = now + this.sing(v.sp, now + 0.02, 0.05 * pl.gain * rnd(0.6, 1), pl.pan, 3000 + 9000 * pl.gain) + rnd(1.5, 5);
+          v.busy = now + this.sing(v.sp, now + 0.02, 0.11 * pl.gain * rnd(0.6, 1), pl.pan, 3000 + 9000 * pl.gain) + rnd(1.5, 5);
         }
       }
       for (let i = 0; i < e.birds.length && i < 2; i++) {
         const v = this.perch[i], b = e.birds[i];
         if (now > v.busy && Math.random() < 0.5 * Math.min(1, act + 0.3) * dt) {
           const pl = this.place(b.x, b.y, b.z, 12);
-          v.busy = now + this.sing(v.sp, now + 0.02, 0.11 * pl.gain, pl.pan, 14000) + rnd(1.2, 4);
+          v.busy = now + this.sing(v.sp, now + 0.02, 0.2 * pl.gain, pl.pan, 14000) + rnd(1.2, 4);
         }
       }
     }
@@ -311,7 +308,7 @@ export class Soundscape {
       const C = (this.crickets ??= this.buildCrickets());
       for (let i = 0; i < C.g.length; i++) {
         const pl = this.place(e.cx + C.pos[i][0], 0.2, e.cz + C.pos[i][1], 10);
-        C.g[i].set(cr * 0.05 * pl.gain * (0.7 + 0.3 * this.ou[i % 5])); C.pan[i].set(pl.pan);
+        C.g[i].set(cr * 0.11 * pl.gain * (0.7 + 0.3 * this.ou[i % 5])); C.pan[i].set(pl.pan);
         C.rate[i].setTargetAtTime(C.pos[i][2] * clamp(0.55 + (e.temp - 8) / 22, 0.5, 1.25), now, 0.5);
       }
       this.bus.night.level.set(1);
