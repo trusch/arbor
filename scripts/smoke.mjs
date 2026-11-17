@@ -220,10 +220,10 @@ try {
     const r = await dp.evaluate(() => new Promise((res) => {
       const A = window.__arbor, cam = A.stage.camera, D = A.stage.director, last = cam.position.clone();
       const o = { kinds: [], cuts: 0, frames: 0, maxStep: 0, maxSpeed: 0, at: '', overlay: 0, minY: 1e9 };
-      let lt = performance.now(), t0 = lt, nextGo = lt + 1500, i = 0;
+      let lt = document.timeline.currentTime, t0 = lt, nextGo = lt + 1500, i = 0;
       const order = ['hero', 'wide', 'canopy', 'rise', 'branch', 'orbit'];
-      const tick = () => {
-        const now = performance.now(), dt = (now - lt) / 1000, s = D.state(), step = cam.position.distanceTo(last);
+      const tick = (now) => { // rAF timestamp = the frame time the camera moved by
+        const dt = (now - lt) / 1000, s = D.state(), step = cam.position.distanceTo(last);
         if (s.kind && o.kinds.indexOf(s.kind) < 0) o.kinds.push(s.kind);
         if (!s.cutting && !s.cutFrame) {
           // Tree at least partly in frame: any of crown centre, trunk at 1/3 height or a crown box corner on screen.
