@@ -1,5 +1,6 @@
 // Blossom cost at peak bloom: JS ms per frame (rAF callback time) with the blossom on and off, the blossom system's own
 // mean (`stats.sumMs / frames`) and the program count. Phone emulation by default, CPU throttle via THROTTLE (4).
+// DATE=0.1 measures peak petal fall, TYPE picks the blossom type.
 // Usage: PORT=5545 THROTTLE=4 MODE=phone|desk SAMPLE_S=10 node scripts/blossomcost.mjs
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
@@ -21,7 +22,7 @@ try {
     window.__js = [];
     window.requestAnimationFrame = (cb) => raf((t) => { const t0 = performance.now(); cb(t); window.__js.push(performance.now() - t0); });
   });
-  await page.goto(`http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1&season.date=0.056&season.hold=true&${E.QUERY ?? ''}`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=14&nogui=1&hideui=1&season.date=${E.DATE ?? 0.056}&season.hold=true&season.blossomType=${E.TYPE ?? 'auto'}&${E.QUERY ?? ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate(() => window.__arbor.fastForward(90));
   await page.waitForTimeout(7000);
@@ -34,7 +35,7 @@ try {
     const r = await page.evaluate(() => {
       const A = window.__arbor, js = window.__js.slice().sort((a, b) => a - b), b = A.blossom.stats;
       return { phase: +A.season.phase.toFixed(3), frames: js.length, jsMean: +(js.reduce((a, c) => a + c, 0) / js.length).toFixed(2), jsMedian: +js[js.length >> 1].toFixed(2), jsP95: +js[Math.floor(js.length * 0.95)].toFixed(2),
-        drawn: b.drawn, blossomMs: b.frames ? +(b.sumMs / b.frames).toFixed(3) : 0, blossomMaxMs: +b.maxMs.toFixed(2), air: A.leafFall?.counts.air, programs: A.stage.renderer.info.programs.length, calls: A.stage.renderer.info.render.calls, fe: A.frameErrors() };
+        drawn: b.drawn, petals: b.petals, carpet: b.carpet, blossomMs: b.frames ? +(b.sumMs / b.frames).toFixed(3) : 0, blossomMaxMs: +b.maxMs.toFixed(2), air: A.leafFall?.counts.air, programs: A.stage.renderer.info.programs.length, calls: A.stage.renderer.info.render.calls, fe: A.frameErrors() };
     });
     console.log(MODE, `x${THROTTLE}`, name, JSON.stringify(r));
   }

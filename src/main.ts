@@ -620,7 +620,7 @@ function frame(now: number) {
   meadowFrame(dt);
   breakagePost(dt);
   leafFallFrame(dt);
-  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
+  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, wind, violence: weather.violence, formId: leaves.formId, type: params.season.blossomType, colour: params.season.blossomColour, accent: params.season.blossomCentre, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   if (critters) { tel.phase('critters', true); critters.frame(dt, sim, { amount: params.critters.amount, low: params.sky.quality === 'Low', night: stage.atmo.night, phase: season.active ? season.phase : 0.375, jumped: season.jumped, rain: weather.rain, cloud: weather.cloud, violence: weather.violence, wind, D: sway.D, cam: stage.camera.position, camQ: stage.camera.quaternion, sun: stage.sun, hemi: stage.hemi, flowers: critterFlowers }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);

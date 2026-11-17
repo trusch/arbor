@@ -216,7 +216,7 @@ export function defaultParams(): ArborParams {
     weather: { event: 'auto', kind: 'auto', lightning: true },
     sway: { amount: 1 },
     critters: { amount: 1 },
-    season: { on: true, yearLength: 300, date: 0.12, hold: false, blossom: 1 },
+    season: { on: true, yearLength: 300, date: 0.12, hold: false, blossom: 1, blossomType: 'auto', blossomColour: '', blossomCentre: '' },
     breakage: { enabled: true, strength: 1 },
     camera: { autoFrame: true, autoRotate: true, cinema: true },
     seed: { seed: 1 },

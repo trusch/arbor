@@ -534,6 +534,7 @@ try {
   // Blossom gate (PowerVR rule): the blossom mesh is a clone of the live leaf material with only the map swapped, so
   // the phone compiles as many programs at peak bloom as without the blossom system (?blossom=0), at noon and at night.
   {
+    const TYPES = ['cherry', 'apple', 'plum', 'magnolia', 'wisteria', 'lilac', 'catkin', 'star', 'orb'];
     const progs = async (q) => {
       const { ctx, mp, merr } = await phone(`?cycle=false&speed=0&weather=calm&season.date=0.056&season.hold=true${q}`);
       const out = {};
@@ -541,13 +542,25 @@ try {
         await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 90); window.__ffDone = true; }, hour);
         await mp.waitForTimeout(name === 'noon' ? 7000 : 2500);
         out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phase: +A.season.phase.toFixed(3), drawn: A.blossom?.stats.drawn ?? 0, open: A.blossom?.stats.open ?? 0, visible: !!A.blossom?.mesh.visible, fe: A.frameErrors() }; });
+        // Every type, then two colours and a centre colour on the last one: programs per step and a signature of the picture.
+        if (!q) {
+          const steps = [];
+          for (const [k, v] of [...TYPES.map((t) => ['season.blossomType', t]), ['season.blossomColour', '#ff3080'], ['season.blossomColour', '#40c0ff'], ['season.blossomCentre', '#202020'], ['season.blossomType', 'none'], ['season.blossomColour', ''], ['season.blossomCentre', ''], ['season.blossomType', 'auto']]) {
+            await mp.evaluate(([k, v]) => window.__arbor.automation.userSet(k, v), [k, v]);
+            await mp.waitForTimeout(700);
+            steps.push(await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, sig: A.blossom.signature(), drawn: A.blossom.stats.drawn, fe: A.frameErrors() }; }));
+          }
+          out[name].types = { programs: [...new Set(steps.map((s) => s.programs))], distinct: new Set(steps.slice(0, TYPES.length + 3).map((s) => s.sig)).size, of: TYPES.length + 3, drawn: steps.map((s) => s.drawn).join('/'), fe: steps[steps.length - 1].fe };
+        }
       }
       await ctx.close();
       return { ...out, errs: merr.length };
     };
     const on = await progs(''), off = await progs('&blossom=0');
-    check('phone: blossom at peak adds no shader program (noon and night), clusters drawn and open',
-      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.drawn > 500 && on.noon.open > 0.8 * on.noon.drawn && on.noon.visible && off.noon.drawn === 0
+    check('phone: blossom at peak adds no shader program (noon and night, every type, colour changes), each type and colour changes the picture',
+      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs
+        && ['noon', 'night'].every((h) => on[h].types.programs.length === 1 && on[h].types.programs[0] === off[h].programs && on[h].types.distinct === on[h].types.of && on[h].types.fe === 0)
+        && on.noon.drawn > 500 && on.noon.open > 0.8 * on.noon.drawn && on.noon.visible && off.noon.drawn === 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
   }
@@ -579,7 +592,7 @@ try {
     const probe = () => {
       const A = window.__arbor, m = A.leaves.mesh.material, others = [];
       let shared = 0;
-      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o === A.blossom?.mesh) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
+      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o.parent === A.blossom?.group) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
       return { programs: A.stage.renderer.info.programs.length, mat: m.uuid, map: m.map.uuid, ver: m.map.version, form: A.leaves.formId, shared, others: others.join(','), gb: !!A.leaves.mesh.userData.gbufferMaterial, fe: A.frameErrors(), leaves: A.leaves.mesh.count, textures: A.stage.renderer.info.memory.textures };
     };
     const run = async (pg, errs) => {

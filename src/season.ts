@@ -20,6 +20,8 @@ export interface SeasonParams {
   hold: boolean;
   /** Spring blossom amount (`src/render/blossom.ts`): 0 = none, 1 = normal, up to 1.5. */
   blossom: number;
+  /** Blossom type id, 'none' or 'auto' (by leaf form); petal and centre colour as #rrggbb, '' = the type's own. */
+  blossomType: string; blossomColour: string; blossomCentre: string;
 }
 
 const sm = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-6))); return t * t * (3 - 2 * t); };
