@@ -47,10 +47,12 @@ const BOX = 10, DECK = 30;
 const GRID = 12, SLOTS = GRID * GRID;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
+/** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
+const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.8, SCUD_NIGHT = 0.6, SCUD_OPACITY = 0.5;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
   none: [0.07, 0.55, 0], cumulus: [0.5, 1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
-  nimbostratus: [0.3, 1.3, 1], cumulonimbus: [0.8, 1.5, 0.55], fog: [0.1, 0.7, 0.1],
+  nimbostratus: [0.3, 1.3, 1], cumulonimbus: [0.8, 1.5, 0.55], fog: [0, 0.7, 0.1],
 };
 
 export interface CloudEnv {
@@ -58,6 +60,8 @@ export interface CloudEnv {
   /** weather.cloud (0..1), weather.cloudType, a running storm sequence, weather.flash, wind direction and cloudSpeed in m/s. */
   cloud: number; type: string; storm: boolean; flash: number; dirX: number; dirZ: number; speed: number;
   fogDensity: number; lowQ: boolean;
+  /** Live scene fog colour (after `Stage.applyWeather`): the night grade's own sky / horizon tone; and the moon's direction. */
+  fogColor: THREE.Color; moonDir: THREE.Vector3;
 }
 
 export class Clouds {
@@ -246,10 +250,21 @@ export class Clouds {
     // ---- heaps ----
     const hm = this.heaps.material as THREE.MeshBasicMaterial;
     const dark = Math.max(this.dark, 0.75 * smooth(0.3, 0.9, c));
-    hm.opacity = fade;
+    // Open sky: day light as before, plus the night body. A cloud at night is a dark shape against the sky: its colour
+    // is a share of the live fog colour (the horizon tone of the night grade, which `moonLight` lifts and the storm
+    // darkens), a little greyer than the sky, brighter only with the moon. No moon: nearly black, it shows by hiding stars.
     this.tmp.copy(this.shade).lerp(this.lit, mixLit).multiplyScalar(1 - 0.8 * dark);
-    hm.color.setRGB(this.tmp.r + nightL + flash * 0.3, this.tmp.g + nightL * 1.1 + flash * 0.3, this.tmp.b + nightL * 1.3 + flash * 0.35);
-    const sx = E.sunDir.x, sz = E.sunDir.z;
+    const F = E.fogColor, fl = 0.3 * F.r + 0.5 * F.g + 0.2 * F.b, nk = (NIGHT_BODY + NIGHT_MOON * E.moonLight) * (1 - day);
+    let r = this.tmp.r + nk * (F.r + 0.4 * (fl - F.r)), g = this.tmp.g + nk * (F.g + 0.4 * (fl - F.g)), b = this.tmp.b + nk * (F.b + 0.4 * (fl - F.b));
+    // Under a deck the heaps are scud: the deck's own colour a little darker (never lighter than what is behind them,
+    // day or night, by construction) and half transparent, so they are soft shapes in the layer, not cut-outs.
+    const scud = dk.visible ? dOp : 0, tone = SCUD_TONE + (SCUD_NIGHT - SCUD_TONE) * (1 - day);
+    r += (dm.color.r * tone - r) * scud; g += (dm.color.g * tone - g) * scud; b += (dm.color.b * tone - b) * scud;
+    hm.opacity = fade * (1 - (1 - SCUD_OPACITY) * scud);
+    hm.color.setRGB(r + flash * 0.3 * (1 - scud), g + flash * 0.3 * (1 - scud), b + flash * 0.35 * (1 - scud));
+    // The painted light side faces the sun, at night the moon.
+    const Ld = h < -0.04 && E.moonLight > 0 ? E.moonDir : E.sunDir;
+    const sx = Ld.x, sz = Ld.z;
     let n = 0;
     const amount = this.amount, size = this.size;
     for (let i = 0; i < SLOTS; i++) {
@@ -259,7 +274,7 @@ export class Clouds {
       let x = ((gx * L + this.ox) % L + L) % L - BOX, z = ((gz * L + this.oz) % L + L) % L - BOX;
       // A slot is shown when its rank is under the amount; it grows over a band of 0.14, so cover changes cloud by cloud.
       const rank = (i * 0.618034) % 1;
-      let s = smooth(rank - 0.07, rank + 0.07, amount * 1.07);
+      let s = smooth(rank - 0.07, rank + 0.07, amount * 1.07) * smooth(0, 0.04, amount);
       // Shrinks to nothing at the wrap edge.
       s *= smooth(BOX, BOX - 2.5, Math.max(Math.abs(x), Math.abs(z)));
       if (s < 0.02) continue;
@@ -281,10 +296,10 @@ export class Clouds {
     }
     // Sun blocker: one heap that forms in front of the sun as the model's passing-cloud dimming comes on, and drifts
     // across it; only while the sun is up and the deck is open.
-    const blk = smooth(0.03, 0.22, c) * (1 - dOp) * smooth(0.02, 0.12, h);
+    const blk = smooth(0.03, 0.22, c) * (1 - dOp) * smooth(0.02, 0.12, h) * smooth(0, 0.05, amount);
     S.blocker = blk;
     if (blk > 0.02) {
-      const hl = Math.hypot(sx, sz) || 1, ax = sx / hl, az = sz / hl, R = 5 * H;
+      const bx = E.sunDir.x, bz = E.sunDir.z, hl = Math.hypot(bx, bz) || 1, ax = bx / hl, az = bz / hl, R = 5 * H;
       const rx = -az, rz = ax, along = rx * E.dirX + rz * E.dirZ;
       const w = R * 0.42 * (0.5 + 0.5 * blk) * Math.max(1, size * 0.85), hh = w * 0.62;
       const slide = (0.5 - blk) * 0.35 * R * (along >= 0 ? -1 : 1);

@@ -12,6 +12,7 @@ const ctx = await browser.newContext(mode === 'phone'
   : { viewport: { width: 1280, height: 800 } });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
+const sheetShots = [];
 const read = () => page.evaluate(() => {
   const a = window.__arbor, W = a.weather, s = a.stage, C = a.clouds;
   return { kind: W.kind, type: W.cloudType, cloud: +W.cloud.toFixed(2), programs: s.renderer.info.programs.length, calls: s.renderer.info.render.calls, sunI: +s.sun.intensity.toFixed(2),
@@ -43,8 +44,8 @@ try {
         a.stage.controls.target.set(px + Math.cos(baz) * Math.cos(el) * 10, py + Math.sin(el) * 10, pz + Math.sin(baz) * Math.cos(el) * 10);
       }
     }, { kind, hour, view, moon });
-    if (kind === 'front') await page.waitForFunction((c) => window.__arbor.weather.cloud >= c, Number(hour) / 100, { timeout: 90000 }); else await page.waitForTimeout(6000);
-    const name = `${prefix}-${mode}-${kind}-${hour.replace('.', '')}${view === 'app' ? '' : '-' + view}`;
+    if (kind === 'front') await page.waitForFunction((c) => window.__arbor.weather.cloud >= c, Number(hour) / 100, { timeout: 90000 }); else await page.waitForTimeout(Number(process.env.WAIT ?? 6000));
+    const name = `${prefix}-${mode}-${kind}-${hour.replace('.', '')}${view === 'app' ? '' : '-' + view}${moon === '0.5' ? '' : '-m' + moon.replace('.', '')}`;
     if (process.env.BURST) {
       const N = 10, T = Number(process.env.BURST), shots = [];
       for (let i = 0; i < N; i++) { shots.push((await page.screenshot({ type: 'jpeg', quality: 80 })).toString('base64')); console.log('burst', i, JSON.stringify(await read())); await page.waitForTimeout((T * 1000) / (N - 1)); }
@@ -53,7 +54,15 @@ try {
       await sheet.setContent(`<body style="margin:0;background:#111;display:grid;grid-template-columns:repeat(5,1fr);gap:2px">${shots.map((s) => `<img style="width:100%" src="data:image/jpeg;base64,${s}">`).join('')}</body>`);
       await sheet.screenshot({ path: `shots/${name}-burst.png` });
       await sheet.close();
-    } else await page.screenshot({ path: `shots/${name}.png` });
+    } else { await page.screenshot({ path: `shots/${name}.png` }); if (process.env.SHEET) sheetShots.push((await page.screenshot({ type: 'jpeg', quality: 85 })).toString('base64')); }
     console.log(name, JSON.stringify(await read()));
+  }
+  // SHEET=name: contact sheet shots/<name>.jpg of every case of this run, 5 per row.
+  if (process.env.SHEET && sheetShots.length) {
+    const sheet = await ctx.newPage(), cols = Math.min(5, sheetShots.length), rows = Math.ceil(sheetShots.length / cols);
+    await sheet.setViewportSize({ width: mode === 'phone' ? 760 : 1600, height: Math.ceil(rows * (mode === 'phone' ? 760 / cols * 777 / 411 : 1600 / cols * 800 / 1280)) + 2 });
+    await sheet.setContent(`<body style="margin:0;background:#111;display:grid;grid-template-columns:repeat(${cols},1fr);gap:2px">${sheetShots.map((s) => `<img style="width:100%" src="data:image/jpeg;base64,${s}">`).join('')}</body>`);
+    await sheet.screenshot({ path: `shots/${process.env.SHEET}.jpg`, type: 'jpeg', quality: 88 });
+    await sheet.close();
   }
 } finally { await browser.close(); }
