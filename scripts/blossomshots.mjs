@@ -1,6 +1,8 @@
 // Blossom shots on the real GPU (ANGLE Vulkan): a t = 90 tree, spring scrubbed through bud, opening, peak, petal fall
 // and early summer with the app's framed camera, plus a twig close-up at peak and the ground after petal fall.
 // Prints blossom stats, falling counts and the program count per station.
+// TYPE=cherry picks the blossom type (in the file names too), COLOUR=ff6fa5 the petal colour, CLOSE=1 takes the twig close-up at every
+// station (DIST = camera distance, default 1.3 m).
 // Usage: PORT=5540 node scripts/blossomshots.mjs [prefix=blossom] [modes=desk,phone] [form=oak] [stations=name:date,...] [extraQuery]
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -14,6 +16,7 @@ const ST = (process.argv[5] && process.argv[5] !== 'all' ? process.argv[5] : '1-
 const extra = process.argv[6] ?? '';
 const PORT = Number(process.env.PORT ?? 5540);
 const T = Number(process.env.SHOT_T ?? 90);
+const TYPE = process.env.TYPE ?? 'auto', COLOUR = process.env.COLOUR ?? '', DIST = Number(process.env.DIST ?? 1.3), tag = TYPE === 'auto' ? form : TYPE + (COLOUR ? '-' + COLOUR : '');
 mkdirSync('shots', { recursive: true });
 const vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((res) => vite.stdout.on('data', (d) => String(d).includes('Local') && res()));
@@ -22,10 +25,10 @@ const browser = await chromium.launch({
   args: ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.GPU ?? 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist'],
 });
 const PHONE = { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' };
-const base = `http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${process.env.HOUR ?? 14}&form=${form}&nogui=1&hideui=1&${extra}`;
+const base = `http://localhost:${PORT}/?cycle=false&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=${process.env.HOUR ?? 14}&form=${form}&season.blossomType=${TYPE}${COLOUR ? '&season.blossomColour=%23' + COLOUR : ''}&nogui=1&hideui=1&${extra}`;
 const info = (page) => page.evaluate(() => {
   const A = window.__arbor, b = A.blossom?.stats;
-  return { phase: +A.season.phase.toFixed(3), programs: A.stage.renderer.info.programs.length, leaves: A.leaves.mesh.count, clusters: b?.clusters, drawn: b?.drawn, open: b?.open, shedding: b?.falling, petals: b?.petals, ms: b && b.frames ? +(b.sumMs / b.frames).toFixed(3) : 0, fall: A.leafFall?.counts, fe: A.frameErrors() };
+  return { phase: +A.season.phase.toFixed(3), programs: A.stage.renderer.info.programs.length, leaves: A.leaves.mesh.count, clusters: b?.clusters, drawn: b?.drawn, open: b?.open, shedding: b?.falling, petals: b?.petals, carpet: b?.carpet, type: b?.type, paintMs: b && Math.round(b.paintMs), ms: b && b.frames ? +(b.sumMs / b.frames).toFixed(3) : 0, fall: A.leafFall?.counts, fe: A.frameErrors() };
 });
 try {
   for (const mode of modes) {
@@ -42,14 +45,14 @@ try {
       await page.waitForTimeout(400);
       await page.evaluate(() => window.__arbor.fastForward(0));
       await page.waitForTimeout(s.name.includes('fall') ? 9000 : 1500);
-      await page.screenshot({ path: `shots/${prefix}-${mode}-${form}-${s.name}-framed.png` });
+      await page.screenshot({ path: `shots/${prefix}-${mode}-${tag}-${s.name}-framed.png` });
       console.log(mode, s.name, JSON.stringify(await info(page)));
-      const cam = (kind) => page.evaluate((kind) => {
+      const cam = (kind) => page.evaluate(([kind, DIST]) => {
         const A = window.__arbor, sm = A.sim, st = A.stage;
         A.params.camera.autoFrame = false;
         const mn = sm.bboxMin, mx = sm.bboxMax, cx = (mn[0] + mx[0]) / 2, cz = (mn[2] + mx[2]) / 2, rx = (mx[0] - mn[0]) / 2;
         if (kind === 'close') {
-          const d = 2.2, y = mn[1] + (mx[1] - mn[1]) * 0.72;
+          const d = DIST, y = mn[1] + (mx[1] - mn[1]) * 0.72;
           st.controls.target.set(cx + rx * 0.7, y, cz);
           st.camera.position.set(cx + rx * 0.7 + d, y + 0.25 * d, cz + 0.5 * d);
         } else {
@@ -58,9 +61,9 @@ try {
         }
         st.controls.update();
         A.fastForward(0);
-      }, kind);
-      if (s.name.includes('peak')) { await cam('close'); await page.waitForTimeout(1500); await page.screenshot({ path: `shots/${prefix}-${mode}-${form}-${s.name}-close.png` }); }
-      if (s.name.includes('fall')) { await cam('ground'); await page.waitForTimeout(1500); await page.screenshot({ path: `shots/${prefix}-${mode}-${form}-${s.name}-ground.png` }); }
+      }, [kind, DIST]);
+      if (s.name.includes('peak') || process.env.CLOSE) { await cam('close'); await page.waitForTimeout(1500); await page.screenshot({ path: `shots/${prefix}-${mode}-${tag}-${s.name}-close.png` }); }
+      if (s.name.includes('fall') && !process.env.CLOSE) { await cam('ground'); await page.waitForTimeout(1500); await page.screenshot({ path: `shots/${prefix}-${mode}-${tag}-${s.name}-ground.png` }); }
     }
     await ctx.close();
   }
