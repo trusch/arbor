@@ -735,6 +735,18 @@ try {
     await sp.close();
   }
 
+  // Ground shadow glides with the sun (scripts/shadowglide.mjs: day cycle at 20 s per day for 4 s, per-frame centroid
+  // of the darkening on the ground under a top-down camera). Stepping fails it: on the phone path the decal plane must
+  // move in every frame in which the sun moved (it used to stand still between bakes), and on both paths the largest
+  // shadow step per unit of sun movement stays within 6x the mean (before: 6.5 to 24 on the phone path).
+  {
+    const glide = (mode) => JSON.parse(execFileSync('node', [new URL('./shadowglide.mjs', import.meta.url).pathname, url.split('?')[0], `smoke-glide-${mode}`], { env: { ...process.env, JSON: '1', MODE: mode, DAY: '20', DUR: '4', GPU: process.env.SMOKE_GPU ?? 'swiftshader' } }).toString().trim().split('\n').pop());
+    const ph = glide('phone'), dk = glide('desktop');
+    check('ground shadow glides with the sun on both paths (phone: decal plane moves every sun frame; shadow step per sun step max <= 6x mean; no new program)',
+      ph.quality === 'Low' && ph.sunFrames >= 20 && ph.decalStill === 0 && ph.jump <= 6 && ph.pathM > 0.5 && dk.quality === 'High' && dk.frames >= 20 && dk.jump <= 6 && dk.pathM > 0.5,
+      `phone jump ${ph.jump} still ${ph.decalStill}/${ph.sunFrames} max ${ph.stepMaxM} m (${ph.stepMaxPx} px) programs ${ph.programs}; desktop jump ${dk.jump} max ${dk.stepMaxM} m`);
+  }
+
   // Weather kinds, default pacing, temperature, readout (weather2).
   {
     // Headless: the schedule and the clocks for 8 simulated years (fixed seed).

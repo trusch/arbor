@@ -6,7 +6,8 @@
 //   env: MODE=phone|desktop  DAY=20 (dayLength s)  HOUR=9  DUR=5 (real s)  T=60 (tree age)  SPEED=1 (growth; 0 = paused)
 //        CYCLE=0 (still sun: growth only)  THROTTLE=n  GPU=vulkan  JSON=1 (one JSON line, for smoke)  QUERY=extra
 // Prints: frames, centroid path (m), per-frame step mean / p95 / max (m and phone px at the automatic camera), the
-// ratio max / mean of (step / sun step) = `jump` (1 = perfectly proportional), still frames, bake intervals.
+// ratio max / mean of (step / sun step) = `jump` (1 = perfectly proportional), still frames, bake intervals, and
+// `decalStill` of `sunFrames` = frames in which the sun moved and the decal plane did not (Low path; 0 = it follows).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 const url = process.argv[2] ?? 'http://127.0.0.1:5620/', PRE = process.argv[3] ?? 'sg';
@@ -66,7 +67,7 @@ try {
   else await page.waitForTimeout(DUR * 1000);
   const out = await page.evaluate(() => { const S = window.__sg; S.on = false; return { rows: S.rows, pxm: S.pxm, programs: window.__arbor.stage.renderer.info.programs.length, q: window.__arbor.params.sky.quality, ms: window.__arbor.canopy.maxMs }; });
   const R = out.rows, steps = [], ratios = [], bakeAt = [];
-  let path = 0, still = 0;
+  let path = 0, still = 0, decalStill = 0, sunFrames = 0;
   for (let i = 1; i < R.length; i++) {
     const a = R[i - 1], b = R[i];
     if (b.bakes !== a.bakes) bakeAt.push(b.now);
@@ -75,13 +76,14 @@ try {
     steps.push(d); path += d;
     if (sun > 1e-6) ratios.push(d / sun);
     if (d < 1e-4) still++;
+    if (sun > 1e-6 && a.vis && b.vis) { sunFrames++; if (Math.hypot(b.px - a.px, b.pz - a.pz) + Math.abs(b.rot - a.rot) + Math.abs(b.sc - a.sc) < 1e-9) decalStill++; }
   }
   const srt = [...steps].sort((p, q) => p - q), mean = path / Math.max(1, steps.length), max = srt[srt.length - 1] ?? 0;
   const rm = ratios.reduce((p, q) => p + q, 0) / Math.max(1, ratios.length), rmax = Math.max(0, ...ratios);
   const gaps = bakeAt.slice(1).map((t, i) => t - bakeAt[i]);
   const r3 = (v) => +v.toFixed(4);
   res = { prefix: PRE, mode: phone ? 'phone' : 'desktop', quality: out.q, day: DAY, cycle: CYCLE, frames: R.length, hours: [r3(R[0]?.hr ?? 0), r3(R[R.length - 1]?.hr ?? 0)], pathM: r3(path), stepMeanM: r3(mean), stepP95M: r3(srt[Math.floor(srt.length * 0.95)] ?? 0), stepMaxM: r3(max),
-    pxPerM: +out.pxm.toFixed(1), stepMaxPx: +(max * out.pxm).toFixed(2), stepMeanPx: +(mean * out.pxm).toFixed(2), maxOverMean: +(max / Math.max(1e-9, mean)).toFixed(2), jump: +(rmax / Math.max(1e-9, rm)).toFixed(2), stillFrames: still,
+    pxPerM: +out.pxm.toFixed(1), stepMaxPx: +(max * out.pxm).toFixed(2), stepMeanPx: +(mean * out.pxm).toFixed(2), maxOverMean: +(max / Math.max(1e-9, mean)).toFixed(2), jump: +(rmax / Math.max(1e-9, rm)).toFixed(2), stillFrames: still, decalStill, sunFrames,
     bakes: bakeAt.length, bakeGapMs: gaps.length ? Math.round(gaps.reduce((p, q) => p + q, 0) / gaps.length) : 0, bakeMaxMs: +out.ms.toFixed(1), programs: out.programs };
   writeFileSync(`/tmp/${PRE}.json`, JSON.stringify(R));
   console.log(E.JSON === '1' ? JSON.stringify(res) : `${PRE} ${JSON.stringify(res)}`);

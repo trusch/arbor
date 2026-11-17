@@ -142,6 +142,8 @@ export class Meadow {
   private shKey = '';
   /** Row being filled in the back buffers; -1 = idle. The sun direction of the fill in flight is in fillSun. */
   private fillRow = -1;
+  private tog = false;
+  private nearCount = -1;
   private fillSun = [0, 1, 0];
   private fillCol = -1;
   private blurStage = 0;
@@ -346,8 +348,18 @@ export class Meadow {
     // Time-sliced: shade field rows first (patches wait for it, so a tuft is never baked twice for one change), then
     // patches, both inside one small budget per frame.
     const t0 = performance.now();
-    if (this.fillRow >= 0) this.fillShade(sim, t0 + FRAME_BUDGET_MS);
-    else while (this.dirty.length) { this.bake(sim, this.dirty.shift()!); if (performance.now() - t0 > FRAME_BUDGET_MS) break; }
+    if (this.nearCount < 0) this.nearCount = this.nearPatches().length;
+    // Under a moving sun a fill is always in flight: fill slices and patch rebakes take alternate frames, and a list
+    // that only holds near patches (shade changes) is worked one patch per frame, round robin on the live field. The
+    // shade under the crown then creeps forward every other frame in one wind stripe at a time; it used to stand still
+    // for a whole fill and then take the new field in bursts of 3 to 5 patches per frame (the visible tick of the
+    // shaded grass). A light / season change (all patches pending) still uses the whole slice.
+    this.tog = !this.tog;
+    if (this.fillRow >= 0 && (this.tog || !this.dirty.length || this.neverBaked)) this.fillShade(sim, t0 + FRAME_BUDGET_MS);
+    else {
+      const one = this.dirty.length <= this.nearCount;
+      while (this.dirty.length) { this.bake(sim, this.dirty.shift()!); if (one || performance.now() - t0 > FRAME_BUDGET_MS) break; }
+    }
     const ms = performance.now() - t0;
     if (ms > this.stats.sliceMaxMs) this.stats.sliceMaxMs = ms;
   }
