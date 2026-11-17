@@ -35,7 +35,9 @@ export const BLOSSOM_PEAK = 0.056;
 const SOUTH_X = 0.5, SOUTH_Z = 0.866;
 const CAP_LOW = 3000, CAP_HIGH = 7000;
 const AIR_LOW = 900, AIR_HIGH = 2400, CARPET_LOW = 1600, CARPET_HIGH = 4200;
-const R = 16, STAGES = 9, ATLAS = 1024, CELL = ATLAS / 3;
+const R = 16, STAGES = 9;
+/** Atlas edge in pixels (a cell is a third): High / Low. A repaint costs about 250 ms unthrottled at 1024. */
+const ATLAS_HIGH = 1024, ATLAS_LOW = 768;
 
 type Kind = 'umbel' | 'spur' | 'goblet' | 'raceme' | 'panicle' | 'catkin' | 'star' | 'orb';
 export interface BlossomType {
@@ -62,7 +64,7 @@ export const BLOSSOM_TYPES: BlossomType[] = [
   { id: 'lilac', name: 'Lilac candle', kind: 'panicle', colour: '#c08be6', accent: '#f6e08a', swatches: ['#c08be6', '#ffffff', '#f3a0b8', '#7d5fd0', '#fff2c0'], pale: 0.35, amount: 0.42, per: 1, size: 0.58, petals: true, n: 46, fr: 0.05, pn: 4 },
   { id: 'catkin', name: 'Catkins', kind: 'catkin', colour: '#c9cf45', accent: '#f1e36a', swatches: ['#c9cf45', '#c4a455', '#e4b03a', '#b6304a', '#e9f0b8'], pale: 0.1, amount: 0.42, per: 2, size: 0.4, hang: true, petals: false, n: 3, fr: 0.05, pn: 0 },
   { id: 'star', name: 'Star lantern', kind: 'star', colour: '#5ff2e0', accent: '#ffffff', swatches: ['#5ff2e0', '#9fc0ff', '#ff7ae0', '#b6ff6a', '#ffd76a'], pale: 0.2, amount: 0.7, per: 2, size: 0.42, glow: true, petals: true, n: 3, fr: 0.3, pn: 6 },
-  { id: 'orb', name: 'Trefoil orb', kind: 'orb', colour: '#ffc85a', accent: '#fff6d8', swatches: ['#ffc85a', '#ff6a5a', '#c58bff', '#6ae0ff', '#ffffff'], pale: 0.3, amount: 0.6, per: 2, size: 0.4, glow: true, petals: true, n: 1, fr: 0.36, pn: 3 },
+  { id: 'orb', name: 'Trefoil orb', kind: 'orb', colour: '#ffae2e', accent: '#fff0b0', swatches: ['#ffae2e', '#ff6a5a', '#c58bff', '#6ae0ff', '#ffffff'], pale: 0.1, amount: 0.6, per: 2, size: 0.4, glow: true, petals: true, n: 1, fr: 0.36, pn: 3 },
 ];
 const BY_ID: Record<string, BlossomType> = Object.fromEntries(BLOSSOM_TYPES.map((t) => [t.id, t]));
 /** Default blossom per leaf form: [type, colour override]. Conifer spray: none. */
@@ -96,8 +98,10 @@ const WHITE: RGB = [255, 255, 255], STALK: RGB = [112, 150, 62], STALK_D: RGB = 
 interface Pal { c: RGB; mid: RGB; throat: RGB; edge: RGB; vein: RGB; bud: RGB; acc: RGB; glow: boolean }
 function palette(t: BlossomType, colour: string, accent: string): Pal {
   const c = hex(colour), acc = hex(/^#[0-9a-f]{6}$/i.test(accent) ? accent : t.accent);
-  const mid = mix(c, WHITE, t.pale);
-  return { c, mid, throat: t.glow ? mix(c, WHITE, 0.85) : t.kind === 'umbel' ? mix(c, [205, 50, 110], 0.3) : mix(mix(c, WHITE, t.pale * 0.4), [226, 232, 150], t.pale * 0.35), edge: mix(c, WHITE, t.pale * 0.55), vein: mix(c, [90, 30, 60], 0.45), bud: mix(c, [200, 40, 90], t.glow || t.pale < 0.4 ? 0 : 0.12), acc, glow: !!t.glow };
+  // Nothing is painted pure white: the card is lit on top of this, and white leaves no room for veins and shading.
+  const cap = (x: RGB): RGB => [Math.min(246, x[0]), Math.min(241, x[1]), Math.min(232, x[2])];
+  const mid = cap(mix(c, WHITE, t.pale));
+  return { c, mid, throat: t.glow ? mix(c, WHITE, 0.85) : t.kind === 'umbel' ? mix(c, [205, 50, 110], 0.3) : mix(mix(c, WHITE, t.pale * 0.4), [226, 232, 150], t.pale * 0.35), edge: mix(cap(mix(c, WHITE, t.pale * 0.55)), [150, 120, 130], 0.12), vein: mix(cap(c), [90, 30, 60], 0.5), bud: mix(c, [200, 40, 90], t.glow || t.pale < 0.4 ? 0 : 0.12), acc, glow: !!t.glow };
 }
 
 type G = CanvasRenderingContext2D;
@@ -118,8 +122,8 @@ function petal(g: G, L: number, W: number, p: Pal, notch: boolean, shade: number
   const d = (c: RGB) => css([c[0] * k, c[1] * k, c[2] * k]);
   gr.addColorStop(0, d(p.throat)); gr.addColorStop(0.22, d(mix(p.throat, p.mid, 0.7))); gr.addColorStop(0.6, d(p.mid)); gr.addColorStop(1, d(p.edge));
   g.fillStyle = gr; g.fill();
-  g.strokeStyle = css(p.vein, 0.34); g.lineWidth = Math.max(1, L * 0.03); g.stroke();
-  g.strokeStyle = css(p.vein, 0.2); g.lineWidth = Math.max(0.8, L * 0.018);
+  g.strokeStyle = css(p.vein, 0.4); g.lineWidth = Math.min(2.4, Math.max(1, L * 0.03)); g.stroke();
+  g.strokeStyle = css(p.vein, 0.2); g.lineWidth = Math.min(1.5, Math.max(0.8, L * 0.018));
   for (let v = -2; v <= 2; v++) { g.beginPath(); g.moveTo(L * 0.08, 0); g.quadraticCurveTo(L * 0.45, v * W * 0.2, L * (0.9 - 0.07 * Math.abs(v)), v * W * 0.36); g.stroke(); }
 }
 function sepals(g: G, x: number, y: number, r: number, a0: number, n: number, col: RGB) {
@@ -233,15 +237,15 @@ export function paintStage(g: G, t: BlossomType, p: Pal, stage: number, S: numbe
       g.fillStyle = css([200, 170, 90]); for (let i = 0; i < 9; i++) { g.beginPath(); g.arc(X(bx + (h01(i) - 0.5) * 0.05), Y(by + 0.04 + 0.014 * i), S * 0.012, 0, 6.283); g.fill(); }
       return;
     }
-    const n = o < 0.2 ? 2 : t.pn, spread = 0.1 + 0.62 * o;
+    const n = o < 0.2 ? 2 : t.pn, spread = 0.08 + 0.5 * o;
     const order = [...Array(n).keys()].sort((a, b) => Math.abs(b - (n - 1) / 2) - Math.abs(a - (n - 1) / 2));
     order.reverse(); // outer (most tilted) ones are drawn last = in front? No: inner back tepals first, outer front last.
     for (const i of order.reverse()) {
       if (h01(seed0 * 13 + i) < shed) continue;
       const f = n > 1 ? i / (n - 1) - 0.5 : 0, ang = -1.571 + f * 2 * spread + (h01(seed0 + i) - 0.5) * 0.1;
       g.save(); g.translate(X(bx), Y(by)); g.rotate(ang);
-      const pp: Pal = { ...p, throat: p.c, mid: mix(p.c, WHITE, 0.25 + 0.5 * t.pale), edge: mix(p.c, WHITE, t.pale) };
-      petal(g, H * (0.86 + 0.14 * Math.cos(f * 3)), H * (0.16 + 0.09 * o), pp, false, Math.abs(f) < 0.2 ? 0.1 : 0);
+      const pp: Pal = { ...p, throat: mix(p.c, [120, 20, 70], 0.2), mid: mix(p.c, WHITE, 0.2 + 0.4 * t.pale), edge: mix(p.c, WHITE, t.pale) };
+      petal(g, H * (0.84 + 0.16 * Math.cos(f * 3)), H * (0.1 + 0.05 * o), pp, false, (i % 2) * 0.1);
       g.restore();
     }
   } else if (t.kind === 'raceme' || t.kind === 'panicle') {
@@ -330,7 +334,7 @@ export function paintStage(g: G, t: BlossomType, p: Pal, stage: number, S: numbe
 }
 
 /** The 3 x 3 stage atlas of a type in the given colours. */
-export function blossomAtlas(t: BlossomType, colour: string, accent: string, S = ATLAS): HTMLCanvasElement {
+export function blossomAtlas(t: BlossomType, colour: string, accent: string, S: number): HTMLCanvasElement {
   const cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d')!, c = S / 3, p = palette(t, colour, accent);
   for (let s = 0; s < STAGES; s++) {
@@ -361,7 +365,7 @@ function petalCanvas(t: BlossomType, colour: string, accent: string, S = 64): HT
 
 // ---------------------------------------------------------------------------------------------------------------
 /** Doubled flat card (x -0.5..0.5, y 0..1) whose uv covers one atlas cell (`cell` < 0: the whole map). */
-function cardGeometry(cell: number): THREE.BufferGeometry {
+function cardGeometry(cell: number, ATLAS = 1024): THREE.BufferGeometry {
   const q = [-0.5, 0, 0.5, 0, 0.5, 1, -0.5, 0, 0.5, 1, -0.5, 1];
   const P = new Float32Array(36), N = new Float32Array(36), U = new Float32Array(24);
   const cx = cell < 0 ? 0 : (cell % 3) / 3, cy = cell < 0 ? 0 : 1 - (Math.floor(cell / 3) + 1) / 3, cs = cell < 0 ? 1 : 1 / 3;
@@ -432,7 +436,9 @@ export class Blossom {
     const live = leaves.mesh.material as THREE.MeshLambertMaterial;
     const safe = live.isMeshLambertMaterial || (live as unknown as THREE.MeshBasicMaterial).isMeshBasicMaterial;
     const t0 = BY_ID.apple;
-    this.tex = this.clean(blossomAtlas(t0, t0.colour, t0.accent));
+    this.size = low ? ATLAS_LOW : ATLAS_HIGH;
+    this.paintKey = `${t0.id}|${t0.colour}|`;
+    this.tex = this.clean(blossomAtlas(t0, t0.colour, t0.accent, this.size));
     this.ptex = this.clean(petalCanvas(t0, t0.colour, t0.accent));
     const material = (tex: THREE.Texture) => {
       // Safe path: clone of the live leaf material. Full leaf path (desktop): the Lambert V0 configuration of the meadow.
@@ -463,9 +469,17 @@ export class Blossom {
       return mesh;
     };
     const m = material(this.tex);
-    for (let s = 0; s < STAGES; s++) { this.meshes.push(make(cardGeometry(s), m, this.tex, cap)); this.idx.push(new Int32Array(cap)); }
+    for (let s = 0; s < STAGES; s++) { this.meshes.push(make(cardGeometry(s, this.size), m, this.tex, cap)); this.idx.push(new Int32Array(cap)); }
     this.mesh = this.meshes[5];
     this.pet = make(cardGeometry(-1), material(this.ptex), this.ptex, this.air + this.carpet);
+  }
+
+  private size = ATLAS_HIGH;
+  /** Cheap checksum of the live atlas pixels and what is drawn (smoke: a type or colour change changes the picture). */
+  signature(): string {
+    const d = (this.tex.mipmaps as unknown as { data: Uint8Array }[])[0].data; let h = 0;
+    for (let i = 0; i < d.length; i += 97) h = (Math.imul(h, 31) + d[i]) | 0;
+    return `${h}|${this.stats.type}|${this.stats.colour}|${Array.from(this.cnt).join(',')}`;
   }
 
   private clean(cv: HTMLCanvasElement): THREE.Texture {
@@ -485,7 +499,7 @@ export class Blossom {
       live.needsUpdate = true;
       fresh.dispose();
     };
-    put(this.tex, this.clean(blossomAtlas(t, colour, accent)));
+    put(this.tex, this.clean(blossomAtlas(t, colour, accent, this.size)));
     put(this.ptex, this.clean(petalCanvas(t, colour, accent)));
     this.stats.paints++; this.stats.paintMs = performance.now() - t0;
     this.stats.type = t.id; this.stats.colour = colour;
@@ -573,13 +587,15 @@ export class Blossom {
     if (ph < OPEN0 - BUD || ph > BLOSSOM_END || season.jumped && ph < OPEN0) this.strip = 0;
     if (!on) { if (this.key !== '' || this.pet.visible) this.hide(); this.type = type; return; }
     // Repaint when the type or a colour changed (at most every 0.25 s while a colour is dragged).
-    const colour = blossomColourFor(e.type, e.formId, e.colour), pk = `${type.id}|${colour}|${e.accent}`;
-    if (pk !== this.paintKey && (type !== this.type || t0 - this.paintAt > 250)) { this.paintKey = pk; this.paintAt = t0; this.repaint(type, colour, e.accent); }
-    if (type !== this.type) { this.type = type; this.key = ''; }
+    const colour = blossomColourFor(e.type, e.formId, e.colour), pk = `${type.id}|${colour}|${e.accent}`, newType = type !== this.type;
+    if (newType) { this.type = type; this.key = ''; }
     const f = type;
     const key = `${sim.topology}|${Math.round(sim.time * 2)}|${sim.nodes.length}|${e.amount}|${f.id}`;
     if (key !== this.key || sim.time < this.simT) { this.key = key; this.rebuild(sim, e); }
     this.simT = sim.time;
+    // Not before there is something to draw (a first-year tree never pays for a painting).
+    if (pk !== this.paintKey && this.n > 0 && (newType || t0 - this.paintAt > 250)) { this.paintKey = pk; this.paintAt = t0; this.repaint(type, colour, e.accent); }
+    if (this.stats.type === '') { this.stats.type = type.id; this.stats.colour = colour; }
     // A storm in bloom strips the tree: the fall dates move forward (up to the whole hold) while it blows.
     if (ph > OPEN0 && ph < BLOSSOM_END && !season.jumped) this.strip = Math.min(HOLD0 + HOLD_SPREAD, this.strip + dt * e.violence * 0.004);
     const strip = this.strip;
