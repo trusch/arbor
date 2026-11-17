@@ -71,7 +71,7 @@ try {
     if (last && r.nodes - last.nodes < 0.002 * r.nodes && r.height - last.height < 0.01) stall++; else stall = 0;
     last = r;
     if (r.nodes >= (await page.evaluate(() => window.__arbor.params.growth.maxNodes))) { out.stop = 'maxNodes cap'; break; }
-    if (stall >= 2) { out.stop = 'growth stalled'; break; }
+    if (stall >= Number(E.STALL ?? 2)) { out.stop = 'growth stalled'; break; }
     if (Date.now() - w0 > FF_WALL) { out.stop = 'wall budget'; break; }
   }
   const hEnd = last.height; out.tHeight95 = out.traj.find((x) => x.height >= 0.95 * hEnd)?.t; const nEnd = last.nodes; out.tNodes90 = out.traj.find((x) => x.nodes >= 0.9 * nEnd)?.t;

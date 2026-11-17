@@ -178,8 +178,8 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 | P8 | T6b distance blend + budget split, on | Phone 2x and 2.75x framed crown as closed as 1x today (coverage of the crown silhouette measured from a mask shot); close view identical to P6; leaf fall, debris, seasons, emergence still pass smoke | ship |
 | P9 | T4 twig culling | Framed vertex count /3; no popping in a 20 s dolly (frame diff) | ship |
 | P10 | T12 world constants from final size | 2.75x: tufts to the drip line + 12 m, shade field covers the 17:30 shadow, litter density per m² within 2x of today's | ship (no effect at S = 1) |
-| P11 | G1 + T9 envelope by year, behind `?years=3`, size x1.6 (15 m) | Year-1 tree equal to today's at t = 150 within the random draw; year 2 and 3 add wood; no starvation; phone growing frame over 30 fps on the device | **ship: the first visibly bigger tree** |
-| P12 | G2 + G3 seasonal extension and vigor | Height/width/girth curve matches the table in section 5 within 10 %; winter adds 0 nodes | ship |
+| P11 (built, 6.2) | G1 + T9 envelope by year, behind `?years=3`, size x1.6 (15 m) | Year-1 tree equal to today's at t = 150 within the random draw; year 2 and 3 add wood; no starvation; phone growing frame over 30 fps on the device | **ship: the first visibly bigger tree** |
+| P12 (built, 6.2) | G2 + G3 seasonal extension and vigor | Height/width/girth curve matches the table in section 5 within 10 %; winter adds 0 nodes | ship |
 | P13 | G4 limb shedding + breakage recalibration at size | One shed limb per year lands as debris; storm at 0.8 breaks 1 to 3 limbs in 120 s on the 3-year tree | ship |
 | P14 | Scale to 2.5x by default, start screen ranges and preset scales, T15 desktop cap | All presets at year 3 looked at (`startshots ... trees`); phone 30 fps on the PowerVR device through three years; heap under 200 MB | ship |
 | P15 | Device run: three years on the phone with telemetry | No context loss, `dpr_change` at most one step | gate for P14 |
@@ -217,6 +217,63 @@ What the numbers say:
 - **P1 removes the cost of the tree at rest and nothing else.** While the tree grows, the trunk thickens every step, its sag changes with it, and every node below moves (by nanometres to tenths of a millimetre): bit-equal output means recomputing nearly all of it. At t = 45 on the 1x tree 1 210 of 1 267 nodes are in the bottom-up set and all 1 267 in the forward set (**M**, `structStats`). The "about 2000 moving nodes per year" estimate in section 4 does not hold for an exact pass; it would need a rest threshold (T1 as first written: freeze below 0.1 mm), which gives up bit-equality and was not built.
 - **P2 misses its target** (x 0.59 instead of /4 on the growing 2x step). Of the 33 ms about 24 are structure (**M**: `updateStructure(0)` 24.4 on main) and about 9 are growth itself (attractor queries, bud break; **E** by difference). P2 takes the forward half to a sixth; the bottom-up half (pipe sums, two `pow` per node, radii) still runs every step because the growth rules read radii every step (juvenile bud break, shedding) and positions feed the light grid: deferring it changes decisions, and a changed decision is a different tree, not a 0.1 mm difference. Reaching /4 needs the bottom-up pass at 10 Hz with the radius-reading rules moved to the tick (a new random draw for every preset) and a cheaper growth step.
 - Stepping under P2 (**M**, node, largest move of a non-elongating node from one step to the next): seedling t 0 to 10 s 0.30 mm at a forward pass against 0.06 mm per step without P2, sapling t 10 to 20 s 2.5 mm against 0.5 mm. From t = 20 on both builds show single-step moves of centimetres to decimetres (0.6 m at 1x, 2 m at 2x) when a shaded-out chain drops out of a limb's load: those exist on main and are far larger than the tick. Contact sheets of the first 10 s of the seedling tip, phone and desktop path (`shots/p2-tip-{phone,desktop}-sheet.png`, pairs with `-iv0-` = forward pass every step): the stem lengthens evenly frame to frame on both, no step seen. The sheets sample every 0.25 s, so they cannot show a 10 Hz jitter by themselves; the 0.3 mm figure is the evidence for the seedling, and nothing was looked at in motion beyond t = 10 s.
+
+### 6.2 P11 and P12 as built (branch `bigtree-years`, behind `?years=3`)
+
+Off by default: `TreeSim.years` = 0 is the tree of one season, bit-identical to main (the new code multiplies by exactly 1 or is not reached; `scripts/yearscensus.mjs` with `YEARS=0` and the year-1 rows below are the same numbers as main). `?years=3` (`main.ts`) sets `sim.years = 3`, raises `growth.maxNodes` to at least 40 000 on both paths (unless `maxNodes` is in the query) and calls `reset()`.
+
+Growth clock: `age = sim.time / season.yearLength + YEAR_DATE0` (0.12 = the default season date), growth year `yi = floor(age)` (0 = first), phase `frac(age)`. It is sim time only, so the growth year turns at the season's bud break for a default page (t = 264, 564, 864 at 300 s per year) and a season scrub does not move it: scrubbing the date changes leaves, colours and blossom as before, never the wood (wood cannot be ungrown; that is the one place where scrub is not wait, and it is by construction, not by drift). Seasons off (G5) runs the same clock.
+
+Rules (all pure functions of sim time; `src/sim/envelope.ts`, `TreeSim.step` / `springFlush` in `src/sim/tree.ts`):
+
+| Rule | Built as |
+|---|---|
+| G1 envelope by year | `envelopeDimsYear(p, yi, years)`: crown height x (1, 1.46, 1.85), radius x (1, 1.49, 1.9) over the same crown base (`YEAR_H` 1.85 makes the tree x1.6 tall, `YEAR_R` 1.9 wide; 54 % of the gain in year 2 as in section 5). `completeSegment` uses it for the crown zone and the leader stop |
+| T9 shell attractors | At bud break of years 2 and 3 (`YEAR_WAVES[0]` = phase 0.02) `sampleShell` draws points between last year's and this year's envelope at `YEAR_DENSITY` 0.25 x the year-1 density (own rng stream per year, the sim rng is not consumed), sorted inside-out by envelope distance, and gives each an opening time spread evenly over `SHELL_OPEN` 0.28 of the year: the crown grows outward through the season instead of in a burst. `PointGrid` now inserts only alive points and `add(i)` inserts a point when it opens (the grid drops dead points for good on the first query, which is why pending points have to be inserted late) |
+| New wood on the old scaffold | At phases 0.02, 0.12, 0.22 (`YEAR_WAVES`) every unpruned, non-juvenile chain whose tip is finished and sees an open point within 1.5 x perception is revived (alive, starve 0, one new segment toward the points), and its last `YEAR_BUDS` 2 nodes get a fresh lateral bud |
+| G2 extension | x `smoothstep(0, 0.02, ph) * (1 - smoothstep(0.33, 0.4, ph))` on elongation, and bud break skipped while it is 0; year 1 is exempt until t = 150 (`YEAR_EXEMPT`; at t = 150 the phase is 0.62, so the gate is already 0 and the exemption ends without a step) |
+| G2 thickening | `thickMul` = 1 - smoothstep(0.5, 0.6, ph) scales the `dt` of the radius approach; winter thickens nothing |
+| G2 girth by age | `sim.girth` = 1 + 0.13 x growing years done (ramped through each season by smoothstep(0.02, 0.5), quantised to 1/40 of a year) multiplies the pipe model's twig radius inside `updateStructure` only. The pipe model alone gives a trunk set by the live tips (+70 % by year 3, 20 % under the table); this is the "rings" term. Each quantised step is a value change of a structure input, i.e. one full pass (the existing `sParams` path), so the incremental pass stays exact |
+| G3 vigor | Leader (order 0) elongation x (1, 0.6, 0.35) by growth year (`LEADER_VIGOR`); laterals unchanged |
+
+Growth (**M**, `node scripts/yearscensus.mjs` = headless node build of the sim, default oak, seed 7, 30 Hz; width = 2 x the 95th percentile of the leafy nodes' distance from the trunk axis, trunk = radius at 1.3 m; target = section 5 scaled to x1.6: height x1.6, width x1.9, trunk x2.16 at the end of year 3, 54 % of the gain in year 2; year-end rows compare at the end of the growing season, since G2 makes growth a staircase and the linear rows of section 5 cannot hold under it):
+
+| t (s) | Growth year, phase | Height m (target) | Crown width m (target) | Trunk r at 1.3 m cm (target) | Nodes | Sim leaves | Live attractors |
+|---|---|---|---|---|---|---|---|
+| 150 | 1, 0.62 (autumn) | 9.09 (9.09) | 7.36 (7.36) | 16.8 (16.8) | 4 910 | 37.6k | 1 |
+| 300 | 2, 0.12 (spring, growing) | 10.69 (10.04, +6 %) | 8.23 (8.50, -3 %) | 17.2 (20.0, -14 %) | 6 994 | 50.7k | 148 |
+| 450 | 2, 0.62 (season over) | 11.92 (12.07, -1 %) | 11.25 (10.94, +3 %) | 24.0 (26.7, -10 %) | 16 291 | 126k | 12 |
+| 600 | 3, 0.12 (spring, growing) | 13.26 (12.86, +3 %) | 11.56 (11.9, -3 %) | 25.6 (29.8, -14 %) | 18 538 | 139k | 561 |
+| 750 | 3, 0.62 (season over) | 15.05 (14.54, +4 %) | 13.95 (13.98, 0 %) | 32.4 (36.3, -11 %) | 33 153 | 258k | 45 |
+| 900 | 4, 0.12 (mature: no new shell) | 15.05 | 13.95 | 32.4 | 33 328 | 259k | 32 |
+
+Targets at the spring rows assume the season's gain spread evenly over phase 0.02 to 0.33 (32 % done at 0.12). Height and width are inside 10 % everywhere; the trunk is 10 to 14 % thin (the one constant to change is `YEAR_GIRTH`: 0.2 instead of 0.13 should land year 3 at about 36 cm; not run). Year 1 is today's tree exactly (same node count, height, width and radius as `YEARS=0` and main). No starvation: every spring revives tips and the shell is used up by midsummer (live attractors 12 and 45 at season end); a growing season adds about 9 000 (year 2) and 15 000 (year 3) nodes, so the node count is 6.8x today's at x1.6, in line with section 2. The app (phone path, `scripts/bigtree.mjs`, its own width metric = bounding box) reaches 9.07 / 11.5 / 14.4 m and 32 025 nodes at t = 750.
+
+Winter adds 0 nodes in every year (phase 0.62 to 0.98 counted step by step). `sim.structureCheck()` = 0 differing values at every sample time of the table (CHECK=1), through spring flushes and girth steps.
+
+Cost (**M**, `scripts/bigtree.mjs`, phone emulation at 4x CPU throttle, ANGLE Vulkan; both runs in the same session while a smoke run and a breakage calibration loaded the host, so absolute numbers are worse than section 2.3; compare the columns, not across sections):
+
+| Phone, 4x throttle | Today's finished tree (t = 120, 7000 cap) | `?years=3` end of year 3 (t = 750) |
+|---|---|---|
+| Nodes / sim leaves / drawn leaves (rank scale) | 5 685 / 43.3k / 29.9k (1.0) | 32 025 / 248k / 28.1k (0.22) |
+| `sim.step` (tree at rest) | 0.07 ms | 0.75 ms |
+| `updateLight` (2 Hz) | 9.3 ms | 106 ms |
+| Branch rebuild per frame (`geometry rebuild`, live 1x) | 15.8 ms | 51.4 ms |
+| Sway per frame | 3.9 ms | 29.2 ms |
+| Leaf pass slices (`leaves rebuild`) / follow per frame | 6.9 / 7.9 ms | 4.7 / 9.6 ms |
+| Live 1x: JS mean / p95, fps | 72 / 138 ms, 10.4 fps | 141 / 344 ms, 6.1 fps |
+| Paused: JS mean, fps | 33 ms, 14.7 fps | 55 ms, 13.0 fps |
+| JS heap, programs | 73 MB, 8 | 132 MB, 8 |
+
+Growing frames in year 3 were not timed live (the probe fast-forwards); unthrottled node steps during the year-3 flush average 4 to 21 ms (`yearscensus.mjs` msStep; every girth step and the trunk's thickening move every node, the P1 limit of section 6.1).
+
+Verdict: **not shippable on the phone at x1.6 yet.** The finished year-3 tree costs about twice today's frame on the same host; the walls are exactly the ones section 3 predicts: branch rebuild (P3), sway (P4) and the light tick (P5, a 106 ms hitch twice a second). The picture fails before the frame rate: 28k of 248k sim leaves are drawn (rank scale 0.22), so the phone crown is visibly thin and see-through (`shots/bigtree-yr-phone-sheet.jpg`); that needs P6 (leaf bookkeeping) and P7 / P8 (cluster cards). Order before shipping `years` on phones: P3, P4, P5, then P6 to P8. Desktop High could take `?years=3` sooner (not timed here).
+
+Breakage on the year-3 tree (**M**, `FF=750 Q='&years=3&season.date=0.3&season.hold=true' node scripts/breakcalib.mjs URL`; `breakcalib.mjs` now takes `FF` and `Q`): u at gust 1.0 p50 0.11, p95 0.84, p98 1.37 (t = 90 oak: 1.08), max 3.09 over 835 limbs; 120 s at `wind.base` 1.0 → 1 twig + 22 limbs, 0.8 → 0 + 20, 0.6 and 0.35 → 0. Far over the 1 to 3 limbs at 0.8 of P13: the long new limbs of years 2 and 3 are thin for their load (the trunk-girth term thickens the pipe floor, not the long laterals). `SIGMA_REF` was **not** recalibrated: one constant for both trees would weaken the default tree, and `years` is off by default; P13 (shedding + calibration at size) owns it.
+
+What the pictures say (`shots/bigtree-yr-{desktop,phone}-t{150,450}-{framed,close,wide}.png`, `shots/bigtree-yr-desktop-t750-*`, `shots/bigtree-yr-phone-y3-*`, sheets `shots/bigtree-yr-desktop-sheet.jpg` and `shots/bigtree-yr-phone-sheet.jpg`; summer held at 0.3, noon, calm): the automatic camera frames the crown, so the framed tree is the same size in every year; growth reads only through the meadow and the scenery trees (the tree stands taller against the hills) and close up (more and thicker wood). Year 2 reads as a fuller, rounder oak. Year 3 on desktop is a dense dome whose lowest limbs reach down to the meadow and hide the trunk: a big bush, not an older oak. Cause: the envelope keeps its crown base while the radius grows x1.9, so the widest shell is at the old base height, and nothing sheds the low limbs (G4). Next step: raise the crown base with the year (and G4), before any other tuning. On the phone path the year-3 crown is see-through (leaf cap, above).
+
+Open: trunk 10 to 14 % thin (`YEAR_GIRTH`); the low-crown look above; breakage at size (P13); phone cost (P3 to P8); a season scrub never changes the wood (by design, see the growth clock); the director and camera were not tuned for 15 m; only the default oak was run (presets, `crown.bole` = 0 trees and seasons off untested with `years`); never run on the device.
 
 ## 7. Not measured
 

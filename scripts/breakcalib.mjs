@@ -1,14 +1,15 @@
 // Breakage calibration (audit 3.5): distribution of the load ratio u on the t = 90 oak at gust 1.0 with strength 1 (sigma = SIGMA_REF),
 // then 120 s synthetic runs of the rule at several wind strengths with the given sigma values.
 // Usage: node scripts/breakcalib.mjs http://127.0.0.1:5401/ [sigma ...]   (no sigma: p99 and the app default)
+//   FF=750 Q='&years=3&season.date=0.3&season.hold=true' = the year-3 tree of `?years=3` (default FF 90, Q '')
 import { chromium } from 'playwright-core';
 const url = process.argv[2] ?? 'http://127.0.0.1:5401/';
 const browser = await chromium.launch({ executablePath: '/usr/sbin/chromium', args: ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.GPU ?? 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist'] });
 const open = async (q = '') => {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await page.goto(`${url}?cycle=false&nogui=1&cinema=false&speed=0&breakage=0${q}`);
+  await page.goto(`${url}?cycle=false&nogui=1&cinema=false&speed=0&breakage=0${q}${process.env.Q ?? ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
-  await page.evaluate(() => window.__arbor.fastForward(90));
+  await page.evaluate((ff) => window.__arbor.fastForward(ff), Number(process.env.FF ?? 90));
   return page;
 };
 try {
