@@ -101,15 +101,19 @@ export class CanopyShadow {
   }
 
   /** dir: toward the shadow-casting light (y clamped like the stage sun). Rebuilds at most every `minGap` s unless the sun moved. */
-  update(sim: TreeSim, dir: THREE.Vector3, time: number, minGap = 2, sunGap = 0.8) {
+  update(sim: TreeSim, now: THREE.Vector3, time: number, minGap = 2, sunGap = 1.5, onBake?: () => void, lead: THREE.Vector3 = now) {
     const G = sim.lightGrid;
     if (sim.nodes.length < 2) { this.mesh.visible = false; this.fr.has = false; this.ver = -1; return; }
     // Before the first light grid (seedling) the node count stands in for the light version.
     const ver = G ? sim.lightVersion : -2 - sim.nodes.length, cell = G ? G.cell : 0.25;
-    const key = `${dir.x.toFixed(2)},${dir.y.toFixed(2)},${dir.z.toFixed(2)}`;
+    const key = `${now.x.toFixed(2)},${now.y.toFixed(2)},${now.z.toFixed(2)}`;
     const gap = time - this.lastT;
     if (key === this.key && (ver === this.ver || gap < minGap)) return;
     if (gap < (key === this.key ? 0.5 : Math.max(0.5, sunGap))) return;
+    onBake?.();
+    // Baked for `lead` (where the light will be half a bake gap from now), drawn for `now` through `follow`: the
+    // re-projection error is then spread to both sides of the bake instead of growing over the whole gap.
+    const dir = lead;
     this.key = key;
     this.ver = ver;
     this.lastT = time;
@@ -265,12 +269,12 @@ export class CanopyShadow {
     // A paused or fast-forwarded tree with nothing drawn yet gets the bake at once.
     const P = this.fr, from = this.from, shown = this.shown;
     // The drawn plane follows the light between bakes (`follow`), so the old frame is resampled where it is drawn NOW:
-    // turned to the new azimuth and stretched along it by `kP` about its trunk base. A light that changed hands
+    // both frames sit at the azimuth of `now`, each stretched along it about the trunk base (ratio `kP`). A light that changed hands
     // (sun <-> moon, opacity 0 at that moment) starts from nothing.
     const turned = P.has && dir.x * P.dx + dir.y * P.dy + dir.z * P.dz < 0.8;
     if (!P.has || turned) from.fill(0);
     else {
-      const kP = CanopyShadow.kOf(P.slope, slope), bun = P.bx * ux + P.bz * uz, bwn = -P.bx * uz + P.bz * ux;
+      const hn = Math.hypot(now.x, now.z) / Math.max(0.3, now.y), kP = CanopyShadow.kOf(P.slope, hn) / CanopyShadow.kOf(slope, hn), bun = P.bx * ux + P.bz * uz, bwn = -P.bx * uz + P.bz * ux;
       const ax = P.toU / (toU * kP), ox0 = (P.bu + (u0 + 0.5 / toU - bun) / kP - P.u0) * P.toU - 0.5;
       for (let z = 0, i = 0; z < S; z++) {
         const oz = (P.bw + (w0 + (z + 0.5) / toW - bwn) - P.w0) * P.toW - 0.5, fz0 = Math.floor(oz + 1e-4);
@@ -294,7 +298,7 @@ export class CanopyShadow {
     this.fadeP = instant ? 1 : 0; this.fadeStep = instant ? FADE_STEPS - 1 : 0;
     this.fadeTo(this.fadeStep + 1);
     this.mesh.visible = true;
-    this.follow(dir);
+    this.follow(now);
     this.lastMs = performance.now() - t0;
     if (this.lastMs > this.maxMs) this.maxMs = this.lastMs;
     this.bakes++;
