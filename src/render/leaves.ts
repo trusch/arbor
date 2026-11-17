@@ -365,7 +365,7 @@ export class Leaves {
             float into = 0.9 * ic * ic + 1.6 * pow(ic, 6.0);
             float rim = pow(1.0 - abs(dot(normal, Vd)), 3.0) * (0.25 + 1.2 * ic);
             vec3 tcol = diffuseColor.rgb * vec3(1.2, 1.25, 0.5);
-            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.5 * back + (1.0 + 1.6 * uSunLow) * (into + rim));
+            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.5 * back + (1.0 + 2.6 * uSunLow) * (into + rim));
           }`,
         );
       sh.vertexShader = sh.vertexShader
@@ -927,8 +927,8 @@ export class Leaves {
         // (the crown's outline), so a backlit crown glows instead of reading as a silhouette.
         const lowK = 1 - smooth(0.08, 0.55, L.y);
         const edge = 1 - Math.abs(nx * vx + ny * vy + nz * vz);
-        const rimB = edge * edge * (0.25 + 0.75 * into) * (0.35 + 0.9 * lowK);
-        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + (0.55 + 0.8 * lowK) * into * into + rimB) * vis;
+        const rimB = edge * edge * (0.25 + 0.75 * into) * (0.35 + 1.5 * lowK);
+        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + (0.55 + 1.3 * lowK) * into * into + rimB) * vis;
         // Lit face full, the face turned away only partly (it is lit through the blade via `glow`): form across the crown.
         const sd = (ndl > 0 ? ndl : -0.45 * ndl) * vis;
         const fl = emg ? Math.hypot(e2[8], e2[9], e2[10]) : 0;
