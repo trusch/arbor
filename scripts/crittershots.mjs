@@ -72,20 +72,51 @@ try {
     }
     if (cases.includes('bird')) {
       const { ctx, page } = await open(13, '', { butterflies: 0, fireflies: 0, birds: 0 });
-      // Approach from the framed camera: start a visit now.
-      await page.evaluate(() => { const A = window.__arbor, c = A.critters; c.force = { butterflies: 0, fireflies: 0, birds: 1 }; c.birds.forEach((b, i) => { b.st = 0; b.wait = i; }); });
-      await burst(page, 'bird-approach', 18, 280, null);
-      await page.waitForFunction(() => window.__arbor.critters.stats.perched === 2, null, { timeout: 30000 }).catch(() => console.log('birds did not perch'));
-      await page.evaluate(`window.__look = ${look}; (() => { const b = window.__arbor.critters.state().birds[0]; window.__look(b, 1.6, 0.1); })()`);
+      // Both in the air, from the framed camera: start two visits now (each bird picks its own route).
+      await page.evaluate(() => { const A = window.__arbor, c = A.critters; c.force = { butterflies: 0, fireflies: 0, birds: 1 }; c.birds.forEach((b, i) => { b.st = 0; b.wait = 0.01 + i * 0.8; }); });
+      await page.waitForFunction(() => window.__arbor.critters.birds.every((b) => b.st === 1 && b.s > 0.45), null, { timeout: 20000 }).catch(() => console.log('not both in the air'));
+      await burst(page, 'bird-approach', 24, 0, null);
+      // Bird 0 stays; bird 1 is kept away for the close-ups.
+      await page.waitForFunction(() => window.__arbor.critters.birds[0].st === 2, null, { timeout: 30000 }).catch(() => console.log('bird did not perch'));
+      await page.evaluate(`window.__look = ${look}; (() => { const c = window.__arbor.critters, b = c.birds[0]; b.dur = 1e9; c.birds[1].wait = 1e9; window.__look(b, 1.6, 0.1); })()`);
       await page.waitForTimeout(800);
-      await burst(page, 'bird-perched', 12, 350, null);
-      // Land again right in front of the camera: second visit to the same node.
-      await page.evaluate(`(() => { const b = window.__arbor.critters.state().birds[0]; window.__look(b, 4.5, 0.12); window.__arbor.critters.flush(); })()`);
+      await burst(page, 'bird-perched', 18, 120, null);
+      await page.evaluate(`(() => { const b = window.__arbor.critters.birds[0]; window.__look(b, 5, 0.12); })()`);
+      await page.waitForFunction(() => window.__arbor.critters.birds[0].st === 2, null, { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(400);
+      await page.evaluate(() => { const b = window.__arbor.critters.birds[0]; b.dur = 0; });
       await burst(page, 'bird-takeoff', 18, 0, null);
-      await page.evaluate(`(() => { const A = window.__arbor, c = A.critters, keep = c.birds[0].node; c.birds.forEach((b, i) => { b.st = 0; b.wait = 0.01 + i; }); const pp = c.pickPerch.bind(c); c.pickPerch = (s, near) => (near < 0 ? keep : pp(s, near)); })()`);
-      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.s > 0.86; }, null, { timeout: 30000 }).catch(() => console.log('no approach'));
-      await burst(page, 'bird-landing', 18, 0, null);
+      // Land again in front of the same camera: second visit to the same node.
+      await page.evaluate(`(() => { const c = window.__arbor.critters, keep = c.birds[0].node; c.birds[0].st = 0; c.birds[0].wait = 0.01; c.pickPerch = () => keep; })()`);
+      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.s > 0.84; }, null, { timeout: 30000 }).catch(() => console.log('no approach'));
+      await burst(page, 'bird-landing', 24, 0, null);
       console.log(mode, 'birds', JSON.stringify(await stats(page)));
+      await ctx.close();
+    }
+    if (cases.includes('birdclose')) {
+      // Slow motion (SLOW x real time, so a frame every 50 ms of bird time or less), leaves hidden, camera 2.4 m beside
+      // bird 0 and following it: landing, perch, take-off.
+      const { ctx, page } = await open(13, '', { butterflies: 0, fireflies: 0, birds: 1 });
+      await page.evaluate((slow) => {
+        const A = window.__arbor, c = A.critters, f = c.frame.bind(c);
+        window.__slow = 1; c.frame = (dt, sim, env) => f(dt * window.__slow, sim, env);
+        A.leaves.mesh.visible = false; A.params.camera.autoFrame = false;
+        c.birds[0].st = 0; c.birds[0].wait = 0.01; c.birds[1].st = 0; c.birds[1].wait = 1e9;
+        window.__side = null;
+        window.__track = (d = 2.4) => { const b = c.birds[0], st = A.stage; if (!window.__side || b.st === 1 || b.st === 3) window.__side = [-b.hz, b.hx]; const [sx, sz] = window.__side; st.controls.target.set(b.x, b.y + 0.05, b.z); st.camera.position.set(b.x + sx * d, b.y + 0.25, b.z + sz * d); st.controls.update(); };
+        window.__slowBy = slow;
+      }, Number(process.env.SLOW ?? 0.2));
+      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.s > 0.9; }, null, { timeout: 30000 }).catch(() => console.log('no approach'));
+      await page.evaluate(() => { window.__slow = window.__slowBy; });
+      await burst(page, 'close-landing', 36, 0, 'window.__track()');
+      await page.evaluate(() => { window.__slow = 1; window.__arbor.critters.birds[0].dur = 1e9; });
+      await page.waitForFunction(() => window.__arbor.critters.birds[0].st === 2, null, { timeout: 20000 }).catch(() => console.log('did not perch'));
+      await burst(page, 'close-perched', 24, 120, 'window.__track(1.5)');
+      await page.waitForFunction(() => window.__arbor.critters.birds[0].st === 2, null, { timeout: 5000 }).catch(() => {});
+      await page.evaluate(() => { window.__slow = window.__slowBy; window.__arbor.critters.birds[0].dur = 0; });
+      await burst(page, 'close-takeoff', 36, 0, 'window.__track(3)');
+      await page.evaluate(() => { window.__slow = window.__slowBy * 2; });
+      await burst(page, 'close-bounding', 24, 0, 'window.__track(3.2)');
       await ctx.close();
     }
     if (cases.includes('framed')) {
