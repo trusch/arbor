@@ -113,9 +113,11 @@ const YEAR_EXEMPT = 150;
 /** G3: leader elongation rate per growth year; laterals keep theirs, so the crown widens faster than it rises. */
 const LEADER_VIGOR = [1, 0.6, 0.35];
 /** Spring flush: a tip sees new shell attractors within perception x this; buds on the last nodes of each chain. */
-const YEAR_REACH = 1.5, YEAR_BUDS = 4;
+const YEAR_REACH = 1.5, YEAR_BUDS = 2;
 /** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
-const YEAR_WAVES = [0.02, 0.1, 0.18, 0.26];
+/** G2 girth by age: twig radius of the pipe model +13 % per growing year after the first (trunk x1.25 by year 3). */
+const YEAR_GIRTH = 0.13;
+const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
 const SAG_RIGHT = 3;
@@ -206,6 +208,11 @@ export class TreeSim {
   private attrNext = 0;
   /** Thickening factor of this step (G2: 1 through summer, 0 in winter; 1 when `years` is 0). */
   private thickMul = 1;
+  /**
+   * G2 girth by age: factor on the pipe model's twig radius (1 in year 1). Ramps through each growing season in
+   * steps of 1/40 of a year (each step is a parameter change for the structure pass: one full pass, bit-exact).
+   */
+  girth = 1;
   private sAcc = 0;
   /** Nodes that elongated or were created since the last forward pass of any kind, parents before children. */
   private sTips: number[] = [];
@@ -236,7 +243,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
-    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.attrT = new Float64Array(0); this.attrNext = 0;
+    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -390,6 +397,8 @@ export class TreeSim {
       if (this.time >= YEAR_EXEMPT) {
         ext = smoothstep(0, 0.02, ph) * (1 - smoothstep(0.33, 0.4, ph));
         this.thickMul = 1 - smoothstep(0.5, 0.6, ph);
+        const prog = yi < 1 ? 0 : Math.min(this.years - 1, yi - 1 + smoothstep(0.02, 0.5, ph));
+        this.girth = 1 + YEAR_GIRTH * Math.round(prog * 40) / 40;
       }
       lead = LEADER_VIGOR[Math.min(LEADER_VIGOR.length - 1, this.growYear)];
     }
@@ -894,7 +903,7 @@ export class TreeSim {
     const nodes = this.nodes;
     const N = nodes.length;
     const n = Math.max(1.2, p.thickness.exponent);
-    const r0 = p.thickness.twigRadius;
+    const r0 = this.years > 0 ? p.thickness.twigRadius * this.girth : p.thickness.twigRadius;
     const k = 1 - Math.exp(-(this.years > 0 ? dt * this.thickMul : dt) * p.thickness.thickeningRate * 4);
     const gk = p.growth.gravity * p.growth.sag * 4e-6;
     // A weeping habit is the lack of that righting: `growth.weeping` >= 1 switches it off (sag sums up as it used to).

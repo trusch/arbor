@@ -34,8 +34,9 @@ for (const T of TIMES) {
   d.sort((a, b) => a - b);
   const w = 2 * (d[Math.floor(d.length * 0.95)] ?? 0);
   let r13 = 0; for (const id of sim.chains[0].nodes) { if (N[id].ry <= 1.3) r13 = N[id].radius; }
+  const chk = process.env.CHECK ? sim.structureCheck() : null;
   const live = sim.chains.filter((c) => !c.pruned).length;
-  rows.push({ t: T, h: +h.toFixed(2), w: +w.toFixed(2), r13cm: +(r13 * 100).toFixed(1), nodes: N.length, add: N.length - prevN, winterAdd, chains: live, leaves: sim.leaves.length, attr: sim.attractorCount, msStep: +ms.toFixed(2) });
+  rows.push({ t: T, h: +h.toFixed(2), w: +w.toFixed(2), r13cm: +(r13 * 100).toFixed(1), nodes: N.length, add: N.length - prevN, winterAdd, chains: live, leaves: sim.leaves.length, attr: sim.attractorCount, msStep: +ms.toFixed(2), ...(chk ? { diff: chk.differing } : {}) });
   prevN = N.length;
 }
 console.table(rows);

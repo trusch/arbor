@@ -263,6 +263,27 @@ try {
       `t=${grow.t} nodes=${grow.c.nodes} step=${JSON.stringify(grow.st)} check=${JSON.stringify(grow.c)} | break ${ev} nodes step=${JSON.stringify(brk.st)} check=${JSON.stringify(brk.c)} ${serr[0] ?? ''}`);
   }
 
+  {
+    // Growth over years (big tree P11/P12, `?years=3`): the tree grows on in years 2 and 3, adds nothing in winter,
+    // and the incremental structure pass stays bit-equal at the new size. Paused; time moves only by fastForward.
+    const yp = await browser.newPage({ viewport: { width: 640, height: 480 } });
+    const yerr = []; yp.on('pageerror', (e) => yerr.push(e.message));
+    await yp.goto(`${url}?cycle=false&quality=Low&weather=calm&years=3&t=200`);
+    await yp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    const ys = await yp.evaluate(() => {
+      const A = window.__arbor; A.params.time.paused = true;
+      const at = (dt) => { const r = A.fastForward(dt); return { t: Math.round(r.time), n: r.nodes, h: r.height, w: r.width }; };
+      const out = [at(0.01), at(60), at(160), at(120), at(180)];
+      const c = A.sim.structureCheck();
+      return { out, diff: c.differing + c.radius + c.pos + c.bbox, years: A.sim.years };
+    });
+    await yp.close();
+    const [w1, w1b, y2, w2, y3] = ys.out;
+    check('years=3: tree grows in years 2 and 3 (nodes, height, width), adds 0 nodes in winter, structure bit-equal',
+      ys.years === 3 && w1b.n === w1.n && y2.n > w1.n * 1.5 && y2.h > w1.h + 1 && y2.w > w1.w + 1 && w2.n === y2.n && y3.n > w2.n * 1.2 && y3.h > y2.h && ys.diff === 0 && yerr.length === 0,
+      JSON.stringify(ys));
+  }
+
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
