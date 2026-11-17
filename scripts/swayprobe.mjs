@@ -4,10 +4,11 @@
 //   lean     angle between rest and drawn segment (rad),
 //   drop     how far the lean falls below the largest lean nearer the chain base (informational: a shoot that arches
 //            over and hangs has its bend unwound by the wind on the hanging part, smoothly),
-//   flat     the same drop counted only where the accumulated rotation `sway.TH` has NOT unwound (>= 90 % of its
-//            length at the most-leaning node): wood that keeps its rotation but is drawn straighter = the defect
+//   flat     fall of the DRAWN ROTATION (tan(lean) / sin(angle segment-axis), axis = the accumulated rotation `sway.TH`)
+//            below the largest one nearer the base, counted only where the accumulated rotation has not unwound
+//            (>= 98 % of its length there): wood that keeps its rotation but is drawn straighter = the defect
 //            (a tip standing upright on a bent stem),
-//   kink     largest fall of the lean from one segment to the next (a corner),
+//   kink     largest fall of the drawn rotation from one segment to the next while the accumulated one holds (a corner),
 //   tipRatio |D tip| / |D parent of tip| (a tip standing still while its parent swings),
 // and returns the worst chain with its base-to-tip profile at the worst frame.
 export const swayProbe = (opt) => new Promise((res) => {
@@ -33,17 +34,24 @@ export const swayProbe = (opt) => new Promise((res) => {
       for (const ch of S.chains) {
         if (ch.pruned || ch.nodes.length < minNodes) continue;
         chains++;
-        let top = 0, topTh = 0, drop = 0, flat = 0, prev = 0;
+        let top = 0, topRot = 0, topTh = 0, drop = 0, flat = 0, prev = 0, prevTh = 0;
         for (let j = 1; j < ch.nodes.length; j++) {
           const i = ch.nodes[j], n = N[i], p = N[n.parent], o = i * 3, q = n.parent * 3;
           const sx = n.wx - p.wx, sy = n.wy - p.wy, sz = n.wz - p.wz, sl = Math.hypot(sx, sy, sz);
           if (sl < 0.02) continue; // a just-created tip segment has no direction yet
           const vx = sx + D[o] - D[q], vy = sy + D[o + 1] - D[q + 1], vz = sz + D[o + 2] - D[q + 2];
           const a = Math.acos(Math.min(1, (sx * vx + sy * vy + sz * vz) / (sl * Math.hypot(vx, vy, vz))));
-          const th = Math.hypot(TH[o], TH[o + 1], TH[o + 2]);
-          if (a > top) { top = a; topTh = th; } else { if (top - a > drop) drop = top - a; if (th >= 0.9 * topTh && top - a > flat) flat = top - a; }
-          if (prev - a > out.maxKink) out.maxKink = prev - a;
-          prev = a;
+          if (a > top) top = a; else if (top - a > drop) drop = top - a;
+          // Drawn rotation about the model's axis: tan(lean) / sin(angle between segment and axis). A segment lying
+          // along the axis does not turn under any rotation, so it says nothing (skipped).
+          const tx = TH[o], ty = TH[o + 1], tz = TH[o + 2], th = Math.hypot(tx, ty, tz);
+          if (th < 1e-4) continue;
+          const sin = Math.hypot(sy * tz - sz * ty, sz * tx - sx * tz, sx * ty - sy * tx) / (sl * th);
+          if (sin < 0.3) continue;
+          const rot = Math.tan(a) / sin;
+          if (rot > topRot) { topRot = rot; topTh = th; } else if (th >= 0.98 * topTh && topRot - rot > flat) flat = topRot - rot;
+          if (th >= 0.98 * prevTh && prev - rot > out.maxKink) out.maxKink = prev - rot;
+          prev = rot; prevTh = th;
           if (a > out.maxLean) out.maxLean = a;
         }
         const tip = ch.nodes[ch.nodes.length - 1] * 3, par = N[ch.nodes[ch.nodes.length - 1]].parent * 3;
