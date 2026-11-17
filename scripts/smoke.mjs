@@ -872,6 +872,28 @@ try {
     check('H hides the weather readout', hid === 'none', hid);
     await ctx.close();
   }
+  // Sound: nothing exists before the gesture; the speaker button starts a running context with live levels; off releases it.
+  {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
+    const errs = [];
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    page.on('pageerror', (e) => errs.push(e.message));
+    await page.goto(`${url}?cycle=false&quality=Low&weather=calm&t=30`);
+    await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await page.waitForTimeout(1500);
+    const before = await page.evaluate(() => { const A = window.__arbor.audio; return { ctx: A.ctx === null, levels: A.levels(), frames: A.stats.frames, btn: !!document.getElementById('arbor-sound') }; });
+    check('sound: no audio context before the gesture', before.ctx && before.levels === null && before.frames === 0 && before.btn, JSON.stringify(before));
+    await page.click('#arbor-sound');
+    await page.waitForTimeout(2000);
+    const on = await page.evaluate(() => { const L = window.__arbor.audio.levels(); return { state: L.state, on: L.on, rms: L.bus.master.rms, peak: L.bus.master.peak, frames: L.frames, finite: Object.values(L.bus).every((b) => Number.isFinite(b.rms) && Number.isFinite(b.peak)) }; });
+    check('sound: speaker button starts a running context with non-zero finite levels', on.state === 'running' && on.on && on.rms > 0 && on.peak < 1 && on.finite && on.frames > 0, JSON.stringify(on));
+    await page.click('#arbor-sound');
+    await page.waitForTimeout(900);
+    const off = await page.evaluate(() => { const A = window.__arbor.audio, f0 = A.stats.frames; return new Promise((res) => setTimeout(() => res({ state: A.ctx.state, on: A.on, frames: A.stats.frames - f0, stored: localStorage.getItem('arbor.sound') }), 600)); });
+    check('sound: off suspends the context and stops the per-frame work', off.state === 'suspended' && !off.on && off.frames === 0 && off.stored === '0', JSON.stringify(off));
+    check('sound: no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
+    await page.close();
+  }
   // Memory soak: fast growth + fast day cycle; GPU resource counters must stay flat, heap bounded.
   const SOAK = Number(process.env.SOAK_S ?? 120);
   if (SOAK > 0) {

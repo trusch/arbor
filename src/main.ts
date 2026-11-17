@@ -25,6 +25,7 @@ import { Blossom } from './render/blossom';
 import { Critters } from './render/critters';
 import { keepAwake } from './wake';
 import { wantsStartScreen, buildStartScreen } from './start';
+import { audio, type SoundEnv } from './audio';
 keepAwake();
 
 const query = new URLSearchParams(location.search);
@@ -46,13 +47,14 @@ function loadPreset(name: string) {
   presetName = name;
   const src = presetParams(name) as unknown as Record<string, Record<string, unknown>>;
   const dst = params as unknown as Record<string, Record<string, unknown>>;
-  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather' && g !== 'season') Object.assign(dst[g], src[g]);
+  for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather' && g !== 'season' && g !== 'sound') Object.assign(dst[g], src[g]);
   params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
   bumpParams();
   automation.drift = {};
   automation.journey = (PRESETS[name]?.journey ?? []).map((k) => ({ t: k.t, values: { ...k.values } }));
 }
 loadPreset(presetName);
+params.sound.volume = audio.storedVolume(params.sound.volume);
 applyQueryOverrides(params, location.search);
 // A link that names an hour without asking for the cycle holds that hour.
 if ((query.has('timeOfDay') || query.has('sky.timeOfDay')) && !query.has('cycle') && !query.has('sky.cycle')) params.sky.cycle = false;
@@ -266,6 +268,7 @@ function breakagePost(dt: number) {
     tel.phase('debris spawn');
     for (const ev of sim.breaks) {
       if (diag.leaves) debris.spawn(sim, ev, wind);
+      if (!ev.shed) { const n = sim.nodes[ev.root]; audio.limb(ev.nodeIds.length < 12 ? 0.08 : Math.min(1, 0.25 + ev.nodeIds.length / 400), n.wx, n.wy, n.wz, ev.leaves); }
       tel.log('limb_break', { root: ev.root, nodes: ev.nodeIds.length, leaves: ev.leaves, r: +ev.radius.toFixed(3), t: +ev.time.toFixed(1), ms: +debris.stats.lastBuildMs.toFixed(1) });
     }
     if (sim.breaks.some((e) => !e.shed)) critters?.flush(); // birds leave a breaking tree
@@ -493,7 +496,7 @@ function redraw(time: number, dt: number, force = false) {
 let startUi: ReturnType<typeof buildStartScreen> | null = null;
 const openStart = (roll?: number) => (startUi ??= buildStartScreen(params, automation, {
   proposed: () => { params.time.paused = true; stage.intro = true; regrow(); if (stage.manual) stage.autoCamera(); },
-  begin: (name) => { presetName = name; params.time.paused = false; stage.intro = false; },
+  begin: (name) => { presetName = name; params.time.paused = false; stage.intro = false; if (audio.wanted && !audio.on) audio.setOn(true); },
 })).open(roll);
 if (query.get('nogui') !== '1') {
   const qp = query.get('panel');
@@ -592,6 +595,25 @@ addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target as HTMLElement | null)) return;
   if (e.key === 'd' || e.key === 'D') { hudOn = !hudOn; applyHud(); }
 }, true);
+/** Sound (`src/audio.ts`): speaker button now, audio graph on the first "on" gesture; nothing per frame while off. */
+if (query.get('nogui') !== '1') audio.mount();
+weather.onStrike = (dist) => audio.strike(dist, weather.bolt.u);
+const soundEnv = { birds: [] } as unknown as SoundEnv, camRight = new THREE.Vector3();
+function soundFrame(dt: number) {
+  const e = soundEnv, c = stage.camera.position, bx = (sim.bboxMin[0] + sim.bboxMax[0]) / 2, bz = (sim.bboxMin[2] + sim.bboxMax[2]) / 2, h = Math.max(0, sim.bboxMax[1]);
+  e.gust = wind.gust(bx, bz); e.base = wind.base; e.windX = wind.dirX; e.windZ = wind.dirZ;
+  e.rain = weather.rain; e.night = stage.atmo.night; e.hour = params.sky.timeOfDay;
+  e.phase = season.active ? season.phase : 0.375; e.leafOn = season.leafOn; e.leaves = sim.leaves.length; e.height = h;
+  e.cx = bx; e.cz = bz; e.cy = h * 0.62; e.crownR = Math.max(0.5, (sim.bboxMax[0] - sim.bboxMin[0] + sim.bboxMax[2] - sim.bboxMin[2]) / 4);
+  camRight.setFromMatrixColumn(stage.camera.matrixWorld, 0);
+  const rl = Math.hypot(camRight.x, camRight.z) || 1;
+  e.camX = c.x; e.camY = c.y; e.camZ = c.z; e.rightX = camRight.x / rl; e.rightZ = camRight.z / rl;
+  e.birds.length = 0;
+  if (critters) for (const b of (critters as unknown as { birds: { st: number; x: number; y: number; z: number }[] }).birds) if (b.st === 2 || b.st === 4) e.birds.push(b);
+  e.wildlife = params.critters.amount; e.temp = weather.temp;
+  e.quiet = (params.time.paused || params.time.speed <= 0) && !stage.intro; e.volume = params.sound.volume;
+  audio.frame(e, dt);
+}
 const glow = new THREE.Color();
 const hud = document.getElementById('hud')!;
 let last = performance.now();
@@ -633,6 +655,7 @@ function frame(now: number) {
   leafFallFrame(dt);
   if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, wind, violence: weather.violence, formId: leaves.formId, type: params.season.blossomType, colour: params.season.blossomColour, accent: params.season.blossomCentre, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   if (critters) { tel.phase('critters', true); critters.frame(dt, sim, { amount: params.critters.amount, low: params.sky.quality === 'Low', night: stage.atmo.night, phase: season.active ? season.phase : 0.375, jumped: season.jumped, rain: weather.rain, cloud: weather.cloud, violence: weather.violence, wind, D: sway.D, cam: stage.camera.position, camQ: stage.camera.quaternion, sun: stage.sun, hemi: stage.hemi, flowers: critterFlowers }); }
+  if (audio.on) soundFrame(dt);
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
@@ -707,6 +730,7 @@ requestAnimationFrame(loop);
   leafFall,
   blossom,
   critters,
+  audio,
   season,
   stage,
   start: () => startUi,
