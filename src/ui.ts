@@ -3,6 +3,7 @@ import { season, seasonName } from './season';
 import type { ArborParams } from './params';
 import { type Automation, numericPaths } from './automation';
 import { LEAF_FORMS, leafFormCanvas } from './render/textures';
+import { BLOSSOM_TYPES, blossomThumb, blossomTypeFor, blossomColourFor } from './render/blossom';
 
 export interface UiActions {
   regrow(): void;
@@ -315,6 +316,61 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
       h('div', { class: 'ap-head' }, h('span', { class: 'ap-sw-name', text: 'Leaf shape' })),
       grid, h('p', { class: 'ap-help', text: 'What kind of leaf the tree wears. Changes at once, on the tree you are watching.' }));
   };
+  /** Blossom picker (sibling of the leaf picker): one painted button per type + automatic + none, then the petal and centre colours with the type's own suggestions. */
+  const blossomPicker = (): HTMLElement => {
+    const grid = h('div', { class: 'ap-forms', role: 'group', 'aria-label': 'Blossom' });
+    const btns: HTMLButtonElement[] = [], cvs: [HTMLCanvasElement, string][] = [];
+    const add = (id: string, name: string) => {
+      const cv = h('canvas', { width: 120, height: 120, 'aria-hidden': 'true' });
+      const b = h('button', { type: 'button', class: 'ap-form', 'data-blossom': id, 'aria-pressed': 'false' }, cv, h('span', { text: name }));
+      b.addEventListener('click', () => { set('season.blossomType', id); set('season.blossomColour', ''); set('season.blossomCentre', ''); refresh(); });
+      btns.push(b); cvs.push([cv, id]); grid.append(b);
+    };
+    add('auto', 'Automatic'); for (const t of BLOSSOM_TYPES) add(t.id, t.name); add('none', 'None');
+    const cur = () => String(get('season.blossomType') || 'auto'), form = () => String(get('leaves.form'));
+    const col = () => blossomColourFor(cur(), form(), String(get('season.blossomColour') || ''));
+    const mk = (name: string, key: string, id: string, value: () => string) => {
+      const input = h('input', { type: 'color', id: `ap-${uid++}`, 'data-colour': id });
+      trackDrag(input);
+      input.addEventListener('input', () => { set(key, input.value); syncers.forEach((s) => s()); });
+      const sw = h('div', { class: 'ap-swatches', role: 'group', 'aria-label': `${name} suggestions` });
+      return { input, sw, row: h('div', { class: 'ap-row ap-colour' }, h('div', { class: 'ap-head' }, h('label', { for: input.id, text: name }), input), sw), value };
+    };
+    const petal = mk('Blossom colour', 'season.blossomColour', 'blossom', col);
+    const centre = mk('Blossom centre', 'season.blossomCentre', 'blossom-centre', () => String(get('season.blossomCentre') || '') || blossomTypeFor(cur(), form())?.accent || '#e8c040');
+    let key = '', swKey = '';
+    syncers.push(() => {
+      const c = cur(), t = blossomTypeFor(c, form());
+      for (const b of btns) b.setAttribute('aria-pressed', String(b.dataset.blossom === c));
+      for (const m of [petal, centre]) if (dragging !== m.input) m.input.value = m.value();
+      if (swKey !== (t?.id ?? '')) {
+        swKey = t?.id ?? '';
+        petal.sw.replaceChildren(); centre.sw.replaceChildren();
+        const fill = (m: typeof petal, k: string, list: string[]) => list.forEach((hx, i) => {
+          const b = h('button', { type: 'button', class: 'ap-swatch', 'aria-label': `${i === 0 ? 'natural' : hx}`, title: i === 0 ? 'natural' : hx });
+          b.style.setProperty('--c', hx);
+          b.addEventListener('click', () => { set(k, i === 0 ? '' : hx); refresh(); });
+          m.sw.append(b);
+        });
+        if (t) { fill(petal, 'season.blossomColour', t.swatches); fill(centre, 'season.blossomCentre', [t.accent, '#f5d040', '#ffffff', '#e2603a', '#7a4a2a']); }
+      }
+      // Pictures follow the colours (the chosen type in the chosen colours, the others in their own).
+      const k = `${c}|${form()}|${col()}|${get('season.blossomCentre')}`;
+      if (k === key || dragging === petal.input || dragging === centre.input) return;
+      key = k;
+      cvs.forEach(([cv, id], i) => setTimeout(() => {
+        const tt = blossomTypeFor(id, form()), g = cv.getContext('2d')!;
+        g.clearRect(0, 0, 120, 120);
+        if (!tt) { g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 5; g.beginPath(); g.arc(60, 60, 30, 0, 6.283); g.moveTo(39, 81); g.lineTo(81, 39); g.stroke(); return; }
+        const mine = id === c || (id === 'auto' && c === 'auto');
+        blossomThumb(cv, tt, mine ? col() : blossomColourFor(id, form(), ''), mine ? String(get('season.blossomCentre') || '') : '');
+      }, 40 + i * 25));
+    });
+    return h('div', { class: 'ap-row' },
+      h('div', { class: 'ap-head' }, h('span', { class: 'ap-sw-name', text: 'Blossom' })),
+      grid, h('p', { class: 'ap-help', text: 'Which flowers the tree wears in spring, and their colour. Changes at once; drag "Time of year" in Seasons to spring to watch them.' }),
+      petal.row, centre.row);
+  };
   const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
   const surprise = () => {
     // One base hue; sky and sun sit at a harmonic offset (complementary, triadic or analogous), ground stays near the leaves.
@@ -324,10 +380,12 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     set('sky.sunHue', (base + off + 0.08) % 1); set('sky.sunTint', rnd(0.2, 0.5));
     set('sky.groundHue', (base + rnd(-0.06, 0.06) + 1) % 1); set('sky.groundTint', rnd(0.3, 0.6));
     set('leaves.glowHue', (base + 0.5) % 1); set('leaves.glow', Math.random() < 0.35 ? rnd(0.2, 0.5) : 0);
+    set('season.blossomColour', hslHex((base + off + rnd(-0.05, 0.05) + 1) % 1, rnd(0.6, 0.95), rnd(0.62, 0.8)));
   };
   const natural = () => {
     set('leaves.hue', 0.27); set('leaves.saturation', 0.55); set('leaves.lightness', 1); set('leaves.glow', 0);
     set('sky.skyTint', 0); set('sky.sunTint', 0); set('sky.groundTint', 0);
+    set('season.blossomColour', ''); set('season.blossomCentre', '');
   };
   tab('colours', 'Leaves',
     formPicker(),
@@ -337,6 +395,7 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
       get: () => hslHex(num('leaves.hue'), num('leaves.saturation'), Math.min(0.8, 0.36 * num('leaves.lightness'))),
       set: (hh, s, l) => { if (s > 0.02) set('leaves.hue', hh); set('leaves.saturation', s); set('leaves.lightness', Math.max(0.3, Math.min(2, l / 0.36))); },
       swatches: [leafSw('summer green', 0.27, 0.55, 1), leafSw('spring lime', 0.2, 0.65, 1.25), leafSw('autumn gold', 0.12, 0.8, 1.3), leafSw('autumn orange', 0.06, 0.8, 1.2), leafSw('red', 0.98, 0.75, 1), leafSw('blossom pink', 0.92, 0.6, 1.6), leafSw('violet', 0.76, 0.5, 1.1), leafSw('teal', 0.48, 0.55, 1.1)] }),
+    blossomPicker(),
     slider({ key: 'leaves.glow', name: 'Leaf glow at night', help: 'Leaves light up in the dark. Set the time of day to night to see it best.', min: 0, max: 1.5, step: 0.01, when: 'now' }),
     colour({ name: 'Glow colour', help: 'The colour of the night glow.', id: 'glow',
       get: () => hslHex(num('leaves.glowHue'), 0.9, 0.55), set: (hh, s) => { if (s > 0.02) set('leaves.glowHue', hh); },

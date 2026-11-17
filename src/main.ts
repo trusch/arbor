@@ -141,6 +141,8 @@ if (diag.skyBasic) {
 }
 tel.phase('init sim');
 const sim = new TreeSim(params);
+// Dev switch: `?structInterval=0` runs the forward structure pass every step (default 0.1 sim seconds, see `TreeSim.structureInterval`).
+if (query.get('structInterval') !== null && Number.isFinite(Number(query.get('structInterval')))) sim.structureInterval = Math.max(0, Number(query.get('structInterval')));
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
@@ -211,7 +213,7 @@ function weatherFrame(dt: number) {
 function weatherRender(dt: number) {
   tel.phase('weather', true);
   stage.applyFlash();
-  (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - 0.65 * weather.cloud;
+  (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = canopyStrength * (1 - 0.65 * weather.cloud);
   canopy.fade(dt);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
   clouds?.frame(stage.camera, { sunDir: stage.atmo.sunDir, sunH: stage.atmo.sunH, night: stage.atmo.night, sunColor: stage.atmo.sunColor, moonLight: stage.atmo.moonLight, cloud: weather.cloud, type: weather.cloudType, storm: weather.kind === 'storm', flash: weather.flash, dirX: wind.dirX, dirZ: wind.dirZ, speed: weather.cloudSpeed(wind.base), fogDensity: stage.fog.density, lowQ: params.sky.quality === 'Low' }, dt);
@@ -314,7 +316,11 @@ function leafFallFrame(dt: number) {
     rate: params.leaffall.rate, litter: params.leaffall.litter,
   });
 }
-const sunDirTmp = new THREE.Vector3();
+const sunDirTmp = new THREE.Vector3(), sunDirPrev = new THREE.Vector3(0, 1, 0), sunLead = new THREE.Vector3();
+/** Canopy decal opacity of this frame before the storm fade (set in `redraw`). */
+let canopyStrength = 0;
+/** Telemetry phase for a decal bake, entered only in the frames that bake (a per-frame phase switch costs 0.6 ms at 4x throttle). */
+const canopyPhase = () => tel.phase('canopy shadow');
 const hemiSky = new THREE.Color(), hemiGround = new THREE.Color(), sunLin = new THREE.Color();
 
 const MAX_STEP = 1 / 20;
@@ -411,6 +417,22 @@ function redraw(time: number, dt: number, force = false) {
   } else if (season.active && Math.abs(season.phase - leafPhase) > 0.004) { leavesDirty = true; leafPhase = season.phase; }
   const S = stage.sun, H = stage.hemi;
   sunDirTmp.copy(S.position).sub(S.target.position).normalize();
+  // Canopy decal (leaves cast no shadow-map shadows): checked every frame, independent of the leaf pass (it used to be
+  // baked only when a pass began, i.e. every 0.8 to 1.6 s, and stood still in between). `update` returns at once unless
+  // the light moved (2 decimals, >= 1.5 s apart) or the tree changed; between bakes `follow` re-projects the plane for
+  // this frame's light, and the strength (0 without a key light, so sun and moon hand over through 0) is the opacity.
+  const decal = !leaves.mesh.castShadow && S.castShadow;
+  branches.mesh.castShadow = !decal;
+  if (decal) {
+    // Lead direction: this frame's light extrapolated by half the sun-driven bake gap (rate from the last frame; a
+    // hand-over or scrub, i.e. a step over 0.05, gives no lead).
+    const SUN_GAP = 1.5, step = sunDirPrev.distanceTo(sunDirTmp);
+    sunLead.copy(sunDirTmp);
+    if (dt > 0 && step > 0 && step < 0.05) sunLead.addScaledVector(sunDirTmp, (0.5 * SUN_GAP) / dt).addScaledVector(sunDirPrev, (-0.5 * SUN_GAP) / dt).normalize();
+    sunDirPrev.copy(sunDirTmp);
+    canopy.update(sim, sunDirTmp, time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2, SUN_GAP, canopyPhase, sunLead);
+    canopyStrength = canopy.follow(sunDirTmp) ? Math.min(1, S.intensity * 6) * Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))) : 0;
+  } else canopy.mesh.visible = false;
   // Leaf pass inputs. Growth: every 0.12 s (diag rebuildHz overrides), 1 s once topology is stable for 5 s. Light grid,
   // sun direction (2 decimals, as the transmittance cache keys it), params and quality: at once. Camera (≤ 1/s):
   // distance changed > 25% (size LOD), or on the safe path the view direction turned > 12° (its bake is view-dependent).
@@ -437,13 +459,6 @@ function redraw(time: number, dt: number, force = false) {
     leaves.setLighting(stage.camera.position, sunDirTmp, sunLin.copy(S.color).multiplyScalar(S.intensity),
       hemiSky.copy(H.color).multiplyScalar(H.intensity), hemiGround.copy(H.groundColor).multiplyScalar(H.intensity));
     leaves.maxInstances = low ? 32000 : 0;
-    const decal = !leaves.mesh.castShadow && S.castShadow;
-    branches.mesh.castShadow = !decal;
-    if (decal) {
-      tel.phase('canopy shadow');
-      canopy.update(sim, sunDirTmp, Math.min(1, S.intensity * 6) * Math.min(1, 0.4 + S.intensity / 2.5) * (0.3 + 0.25 * Math.min(1, Math.max(0, (sunDirTmp.y - 0.1) / 0.6))), time, params.time.paused || params.time.speed <= 0 ? 0.5 : 2);
-      tel.phase('leaves rebuild');
-    } else canopy.mesh.visible = false;
     const repl = leaves.beginPass(sim, time);
     if (repl) {
       tel.log('leaves_realloc', { capacity: repl.instanceMatrix.count, leaves: sim.leaves.length });
@@ -602,6 +617,7 @@ function frame(now: number) {
   if (sig !== paramsSig) { paramsSig = sig; bumpParams(); }
   if (!params.time.paused && params.time.speed > 0) advance(dt * params.time.speed);
   else if (paramsVersion() !== structPV) sim.updateStructure(0); // paused: only after a params edit
+  else sim.flushStructure(); // paused: finish a deferred forward pass (no-op when positions are current)
   structPV = paramsVersion();
   season.update(sim.time, params.season);
   weatherFrame(dt);
@@ -612,7 +628,7 @@ function frame(now: number) {
   meadowFrame(dt);
   breakagePost(dt);
   leafFallFrame(dt);
-  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, fall: leafFall && params.leaffall.enabled ? leafFall : null, wind, violence: weather.violence, formId: leaves.formId, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
+  if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, wind, violence: weather.violence, formId: leaves.formId, type: params.season.blossomType, colour: params.season.blossomColour, accent: params.season.blossomCentre, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   if (critters) { tel.phase('critters', true); critters.frame(dt, sim, { amount: params.critters.amount, low: params.sky.quality === 'Low', night: stage.atmo.night, phase: season.active ? season.phase : 0.375, jumped: season.jumped, rain: weather.rain, cloud: weather.cloud, violence: weather.violence, wind, D: sway.D, cam: stage.camera.position, camQ: stage.camera.quaternion, sun: stage.sun, hemi: stage.hemi, flowers: critterFlowers }); }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);

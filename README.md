@@ -107,26 +107,39 @@ All of it is a function of the date, so scrubbing, holding and seasons off behav
 
 ### Blossom
 
-In spring the tree flowers. Pink buds show on the bare outer twigs right at the start of spring, open over a few days
-from the top and the sunny side of the crown, and at the peak (about a fifth of the way through spring, while the new
-leaves are still small and pale) the crown is white-pink with green coming through. Then the clusters shed: petals
-drift down through the falling-leaf system, more in a gust, and lie under the tree as a pale scatter. Only last
-year's wood on a grown tree flowers (a seedling or sapling does not), and a limb that breaks off loses its blossom.
+In spring a grown tree flowers. Pick the flowers in the controls panel, "Leaves" tab, right under the leaf shape:
+a painted button per type, "Automatic" (the type that suits the leaf form) and "None", then the blossom colour and
+the centre (stamen) colour, each with suggestions for the chosen type. Everything changes at once on the tree you
+are watching; any tree can wear any blossom. "Surprise me" also rolls a blossom colour, "Natural colours" resets it.
 
-The blossom follows the leaf form: the oak and the round leaf get a showy apple-like blossom (white-pink, cream; a
-real oak only has catkins, but the default tree has to be seen to bloom), the maple small yellow-green flower
-clusters, willow, birch and ginkgo hanging catkins (yellow-green, tan, pale green; fewer), the conifer spray none,
-and the alien forms star-shaped flowers (turquoise on the frond, pale gold on the ring, cold blue-white on the
-spiral). The "Blossom" slider in the Seasons tab sets the amount (0 = off, up to 150 %).
+| Type | Look | How it sits on the twig |
+| --- | --- | --- |
+| Cherry | five notched pink petals, long stamens | a spur on the twig, 5 long stalks fanning out of it |
+| Apple | white petals with a pink flush, pink buds | a short cluster on a spur with a rosette of small leaves |
+| Plum | small white flowers, dense | a short side shoot with 8 flowers close on it, 3 per twig |
+| Magnolia | one large goblet of long tepals | a single thick stalk with a furry bud scale, few and big |
+| Wisteria | hanging raceme of pea flowers | a hanging axis; flowers open from the twig end to the tip |
+| Lilac candle | upright branched panicle of four-lobed florets | an upright axis with side branches |
+| Catkins | hanging tassels, pollen when open | three tassels from one bud, lengthening |
+| Star lantern (alien) | six-rayed stars that glow at night | pale filaments from one foot |
+| Trefoil orb (alien) | three-fold bloom in a ring of beads, glows at night | one filament |
 
-URL: `?season.blossom=0` (amount), `?blossom=0` (system not built at all). Scripts: `node scripts/blossomshots.mjs
-[prefix] [desk,phone] [form] [name:date,...]` (bud, opening, peak, petal fall, early summer framed; twig close-up at
-peak; ground after the fall; stats and program count), `node scripts/blossomcost.mjs` (frame cost at peak, on / off).
+Defaults: oak apple, round leaf cherry, maple pale plum, willow and birch catkins, ginkgo cream magnolia, cypress
+none, frond star lantern, ring orb, spiral blue star lantern.
 
-URL: `?season.on=false`, `?season.date=0.62&season.hold=true` (0 = start of spring, 0.25 summer, 0.5 autumn, 0.78
-winter). Scripts: `node scripts/seasonshots.mjs` (eight stations round the year), `node scripts/seasoncost.mjs`
-(frame cost summer vs autumn). Not built yet: growth tied to the year, snow, seasonal
-weather, sun height by season.
+A cluster grows the way the real one does: a bud scale on the twig, the stalk lengthens and carries green buds
+out, the buds swell and show colour, the flowers open, pale a little with age, lose their petals one by one, and
+the bare stalks with the calyx and a fruitlet stay for a while, brown and wither. Sunny, high, south-facing twigs
+go first. Petals drift down on the wind and settle as a carpet under the crown that dries and fades over the
+following weeks; a gust lets more go, and a storm in bloom strips the tree early. Only last year's wood on a grown
+tree flowers (a seedling or sapling does not), and a limb that breaks off loses its blossom. The "Blossom" slider
+in the Seasons tab sets the amount (0 = off, up to 150 %).
+
+URL: `?season.blossomType=cherry|apple|plum|magnolia|wisteria|lilac|catkin|star|orb|none|auto`,
+`?season.blossomColour=%23ff6fa5`, `?season.blossomCentre=%23ffffff`, `?season.blossom=0` (amount), `?blossom=0`
+(system not built at all). Scripts: `TYPE=cherry COLOUR=ff6fa5 CLOSE=1 DIST=0.9 node scripts/blossomshots.mjs
+[prefix] [desk,phone] [form] [name:date,...]` (framed and twig close-up per station, ground after the fall, stats
+and program count), `node scripts/blossomcost.mjs` (frame cost at peak, on / off).
 
 ## Start screen
 
@@ -355,7 +368,7 @@ In storm-strength wind (`wind.base` above 0.6; the Wind slider near its top, or 
 Small life goes about its business around the tree (`src/render/critters.ts`):
 
 - **Butterflies** flutter between the meadow flowers on warm, calm, bright days from spring to early autumn, settle on a flower and open and close their wings. Gusts carry them; rain, strong wind, night and winter send them away.
-- **Fireflies** drift low over the grass and under the crown at dusk and at night in late spring and summer, each glowing and fading in its own rhythm; the darker it is, the more there are.
-- **A pair of small birds** arrives from the distance with a bounding flight, lands on a twig of the crown once the tree is big enough, sits, turns, hops and leaves again. They ride the swaying branch and flush together when a storm front or a limb break comes. One bird in winter, none at night.
+- **Fireflies** drift low over the grass and under the crown at dusk and at night in late spring and summer, each glowing and fading in its own rhythm; the darker it is, the more there are. They are pinpoints of yellow-green light with a small soft glow (a few pixels on a phone from the automatic camera), nearer ones a little larger.
+- **Two small birds** visit the crown once the tree is big enough, each on its own: its own timing, its own curved route in and out, its own twig, wing rhythm and speed (8.5 to 11.5 m/s). They fly the bounding flight of a small songbird (a burst of beats, then wings tucked on a short arc), bank into turns, flare and flutter onto the perch, sit with quick turns, bobs, tail flicks and hops, crouch and push off. The body always points along its travel. They ride the swaying branch and flush, each with its own reaction time, when a storm front or a limb break comes. One bird in winter, none at night.
 
-Sky tab, "Wildlife": amount (0 = off). `?critters.amount=0` turns them off, `?critters=0` does not build the system. They are decoration only and never touch the tree. Test hooks: `__arbor.critters.force = { butterflies: 1, fireflies: 1, birds: 1 }`, `__arbor.critters.stats`, `__arbor.critters.flush()`; `node scripts/crittershots.mjs` renders contact sheets.
+Sky tab, "Wildlife": amount (0 = off). `?critters.amount=0` turns them off, `?critters=0` does not build the system. They are decoration only and never touch the tree. Test hooks: `__arbor.critters.force = { butterflies: 1, fireflies: 1, birds: 1 }`, `__arbor.critters.stats`, `__arbor.critters.flush()`; `node scripts/crittershots.mjs` renders contact sheets (`birdclose` = slow-motion close-ups), `node scripts/crittercheck.mjs` is the gate that a flying bird is never drawn off its direction of travel and prints the firefly size on the phone layout.

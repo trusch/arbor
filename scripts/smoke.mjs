@@ -205,6 +205,25 @@ try {
     check('C key and a new tree (regrow) both return to the automatic camera', m1.manual && !m2.manual && m3.manual && !m4.manual && (await page.evaluate(() => window.__arbor.params.camera.cinema)), JSON.stringify([m1.manual, m2.manual, m3.manual, m4.manual]));
   }
 
+  {
+    // Stale structure: the incremental `updateStructure` must equal a full recomputation, bit for bit, after live
+    // growth (new segments, thickening, self-pruning, juvenile shedding) and after a limb break.
+    const sp = await browser.newPage({ viewport: { width: 640, height: 480 } });
+    const serr = []; sp.on('pageerror', (e) => serr.push(e.message));
+    await sp.goto(`${url}?cycle=false&quality=Low&weather=calm&season.on=false&t=40`);
+    await sp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await sp.waitForTimeout(5000);
+    const grow = await sp.evaluate(() => { const s = window.__arbor.sim, st = { ...s.structStats }; return { t: +s.time.toFixed(1), st, c: s.structureCheck() }; });
+    const ev = await sp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && e.nodeIds.length; });
+    await sp.waitForTimeout(1500);
+    const brk = await sp.evaluate(() => { const s = window.__arbor.sim, st = { ...s.structStats }; return { st, c: s.structureCheck() }; });
+    await sp.close();
+    const zero = (c) => c.incremental && c.radius === 0 && c.sag === 0 && c.pos === 0 && c.dir === 0 && c.subLen === 0 && c.bbox === 0 && c.differing === 0;
+    check('structure: incremental pass equals a full recomputation after 5 s of growth and after a limb break (bit-equal), and is incremental',
+      zero(grow.c) && zero(brk.c) && ev > 0 && grow.st.full === 0 && brk.st.full === 0 && grow.c.nodes > 300 && serr.length === 0,
+      `t=${grow.t} nodes=${grow.c.nodes} step=${JSON.stringify(grow.st)} check=${JSON.stringify(grow.c)} | break ${ev} nodes step=${JSON.stringify(brk.st)} check=${JSON.stringify(brk.c)} ${serr[0] ?? ''}`);
+  }
+
   check('no console errors overall', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // Reload twice (hot cache: 304s) after changing preset/params: the app must come back with a running loop.
@@ -562,6 +581,7 @@ try {
   // Blossom gate (PowerVR rule): the blossom mesh is a clone of the live leaf material with only the map swapped, so
   // the phone compiles as many programs at peak bloom as without the blossom system (?blossom=0), at noon and at night.
   {
+    const TYPES = ['cherry', 'apple', 'plum', 'magnolia', 'wisteria', 'lilac', 'catkin', 'star', 'orb'];
     const progs = async (q) => {
       const { ctx, mp, merr } = await phone(`?cycle=false&speed=0&weather=calm&season.date=0.056&season.hold=true${q}`);
       const out = {};
@@ -569,13 +589,25 @@ try {
         await mp.evaluate((h) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.fastForward(window.__ffDone ? 0 : 90); window.__ffDone = true; }, hour);
         await mp.waitForTimeout(name === 'noon' ? 7000 : 2500);
         out[name] = await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phase: +A.season.phase.toFixed(3), drawn: A.blossom?.stats.drawn ?? 0, open: A.blossom?.stats.open ?? 0, visible: !!A.blossom?.mesh.visible, fe: A.frameErrors() }; });
+        // Every type, then two colours and a centre colour on the last one: programs per step and a signature of the picture.
+        if (!q) {
+          const steps = [];
+          for (const [k, v] of [...TYPES.map((t) => ['season.blossomType', t]), ['season.blossomColour', '#ff3080'], ['season.blossomColour', '#40c0ff'], ['season.blossomCentre', '#202020'], ['season.blossomType', 'none'], ['season.blossomColour', ''], ['season.blossomCentre', ''], ['season.blossomType', 'auto']]) {
+            await mp.evaluate(([k, v]) => window.__arbor.automation.userSet(k, v), [k, v]);
+            await mp.waitForTimeout(700);
+            steps.push(await mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, sig: A.blossom.signature(), drawn: A.blossom.stats.drawn, fe: A.frameErrors() }; }));
+          }
+          out[name].types = { programs: [...new Set(steps.map((s) => s.programs))], distinct: new Set(steps.slice(0, TYPES.length + 3).map((s) => s.sig)).size, of: TYPES.length + 3, drawn: steps.map((s) => s.drawn).join('/'), fe: steps[steps.length - 1].fe };
+        }
       }
       await ctx.close();
       return { ...out, errs: merr.length };
     };
     const on = await progs(''), off = await progs('&blossom=0');
-    check('phone: blossom at peak adds no shader program (noon and night), clusters drawn and open',
-      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs && on.noon.drawn > 500 && on.noon.open > 0.8 * on.noon.drawn && on.noon.visible && off.noon.drawn === 0
+    check('phone: blossom at peak adds no shader program (noon and night, every type, colour changes), each type and colour changes the picture',
+      on.noon.programs === off.noon.programs && on.night.programs === off.night.programs
+        && ['noon', 'night'].every((h) => on[h].types.programs.length === 1 && on[h].types.programs[0] === off[h].programs && on[h].types.distinct === on[h].types.of && on[h].types.fe === 0)
+        && on.noon.drawn > 500 && on.noon.open > 0.8 * on.noon.drawn && on.noon.visible && off.noon.drawn === 0
         && on.noon.fe === 0 && on.night.fe === 0 && on.errs === 0 && off.errs === 0,
       `with ${JSON.stringify(on)} without ${JSON.stringify(off)}`);
   }
@@ -607,7 +639,7 @@ try {
     const probe = () => {
       const A = window.__arbor, m = A.leaves.mesh.material, others = [];
       let shared = 0;
-      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o === A.blossom?.mesh) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
+      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o.parent === A.blossom?.group) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
       return { programs: A.stage.renderer.info.programs.length, mat: m.uuid, map: m.map.uuid, ver: m.map.version, form: A.leaves.formId, shared, others: others.join(','), gb: !!A.leaves.mesh.userData.gbufferMaterial, fe: A.frameErrors(), leaves: A.leaves.mesh.count, textures: A.stage.renderer.info.memory.textures };
     };
     const run = async (pg, errs) => {
@@ -761,6 +793,18 @@ try {
       by.every((b) => !b.el && !b.paused && !b.intro && b.t > 0.3 && b.r === (b.q.includes('willow') ? 4.6 : 3.6) && b.hue === (b.q.includes('willow') ? 0.22 : 0.27)) && by[0].seed === 1 && by[0].form === 'oak' && by[0].h === 6.5 && by[1].form === 'willow' && by[1].t >= 5 && by[2].seed === 7,
       by.map((b) => `${b.q}: el=${b.el} t=${b.t.toFixed(1)} seed=${b.seed} form=${b.form}`).join(' | '));
     await sp.close();
+  }
+
+  // Ground shadow glides with the sun (scripts/shadowglide.mjs: day cycle at 20 s per day for 4 s, per-frame centroid
+  // of the darkening on the ground under a top-down camera). Stepping fails it: on the phone path the decal plane must
+  // move in every frame in which the sun moved (it used to stand still between bakes), and on both paths the largest
+  // shadow step per unit of sun movement stays within 6x the mean (before: 6.5 to 24 on the phone path).
+  {
+    const glide = (mode) => JSON.parse(execFileSync('node', [new URL('./shadowglide.mjs', import.meta.url).pathname, url.split('?')[0], `smoke-glide-${mode}`], { env: { ...process.env, JSON: '1', MODE: mode, DAY: '20', DUR: '4', GPU: process.env.SMOKE_GPU ?? 'swiftshader' } }).toString().trim().split('\n').pop());
+    const ph = glide('phone'), dk = glide('desktop');
+    check('ground shadow glides with the sun on both paths (phone: decal plane moves every sun frame; shadow step per sun step max <= 6x mean; no new program)',
+      ph.quality === 'Low' && ph.sunFrames >= 20 && ph.decalStill === 0 && ph.jump <= 6 && ph.pathM > 0.5 && dk.quality === 'High' && dk.frames >= 20 && dk.jump <= 6 && dk.pathM > 0.5,
+      `phone jump ${ph.jump} still ${ph.decalStill}/${ph.sunFrames} max ${ph.stepMaxM} m (${ph.stepMaxPx} px) programs ${ph.programs}; desktop jump ${dk.jump} max ${dk.stepMaxM} m`);
   }
 
   // Weather kinds, default pacing, temperature, readout (weather2).
