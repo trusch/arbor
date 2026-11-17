@@ -56,9 +56,9 @@ export interface BlossomType {
 }
 
 export const BLOSSOM_TYPES: BlossomType[] = [
-  { id: 'cherry', name: 'Cherry', kind: 'umbel', colour: '#f7a8c6', accent: '#e9b23a', swatches: ['#f7a8c6', '#ffffff', '#ff6fa5', '#e0457f', '#ffd9c8'], pale: 0.38, amount: 0.8, per: 2, size: 0.34, petals: true, n: 5, fr: 0.17, pn: 5, notch: true },
+  { id: 'cherry', name: 'Cherry', kind: 'umbel', colour: '#f590b8', accent: '#e9b23a', swatches: ['#f590b8', '#ffffff', '#ff6fa5', '#e0457f', '#ffd9c8'], pale: 0.38, amount: 0.8, per: 2, size: 0.34, petals: true, n: 5, fr: 0.17, pn: 5, notch: true },
   { id: 'apple', name: 'Apple', kind: 'spur', colour: '#ee6f9c', accent: '#f0d060', swatches: ['#ee6f9c', '#ffffff', '#ff9a8a', '#d9366e', '#ffc7de'], pale: 0.82, amount: 0.7, per: 2, size: 0.32, petals: true, n: 5, fr: 0.185, pn: 5 },
-  { id: 'plum', name: 'Plum', kind: 'spur', colour: '#ffffff', accent: '#e7c94e', swatches: ['#ffffff', '#ffe3ee', '#ffb3cf', '#fff3c4', '#e8d5ff'], pale: 0.3, amount: 0.95, per: 3, size: 0.26, petals: true, n: 8, fr: 0.115, pn: 5 },
+  { id: 'plum', name: 'Plum', kind: 'spur', colour: '#ffffff', accent: '#e7c94e', swatches: ['#ffffff', '#ffe3ee', '#ffb3cf', '#fff3c4', '#e8d5ff'], pale: 0.3, amount: 0.95, per: 3, size: 0.26, petals: true, n: 7, fr: 0.14, pn: 5 },
   { id: 'magnolia', name: 'Magnolia', kind: 'goblet', colour: '#d95f9f', accent: '#e8d38a', swatches: ['#d95f9f', '#ffffff', '#a43d86', '#ffe9a8', '#ff9db5'], pale: 0.7, amount: 0.32, per: 1, size: 0.5, petals: true, n: 1, fr: 0.4, pn: 8 },
   { id: 'wisteria', name: 'Wisteria', kind: 'raceme', colour: '#8f76e6', accent: '#f4e27a', swatches: ['#8f76e6', '#ffffff', '#f2d040', '#e58ad0', '#5e8df0'], pale: 0.45, amount: 0.5, per: 1, size: 0.7, hang: true, petals: true, n: 24, fr: 0.075, pn: 2 },
   { id: 'lilac', name: 'Lilac candle', kind: 'panicle', colour: '#c08be6', accent: '#f6e08a', swatches: ['#c08be6', '#ffffff', '#f3a0b8', '#7d5fd0', '#fff2c0'], pale: 0.35, amount: 0.42, per: 1, size: 0.58, petals: true, n: 46, fr: 0.05, pn: 4 },
@@ -617,7 +617,7 @@ export class Blossom {
       }
     } else {
       this.lastPh = ph; this.colKey = ck;
-      const glow = f.glow ? 1 + 7 * e.night : 1, dim = 0.72 * (1 - 0.5 * e.night) * glow;
+      const glow = f.glow ? 1 + 7 * e.night : 1, dim = 0.66 * (1 - 0.5 * e.night) * glow;
       // Lights as the Lambert shader of the card will see them.
       const S = e.sun, Hm = e.hemi, si = S.intensity, hi = Hm.intensity;
       let lx = S.position.x - S.target.position.x, ly = S.position.y - S.target.position.y, lz = S.position.z - S.target.position.z;
@@ -686,6 +686,9 @@ export class Blossom {
     if (st.lastMs > st.maxMs) st.maxMs = st.lastMs;
   }
 
+  /** Size cheat, as the critters have: petals grow with the camera distance (1x up to 7 m, 3.2x from 22 m) so the fall and the carpet read from the framed view. */
+  private boost(e: BlossomEnv) { return Math.min(3.2, Math.max(1, Math.hypot(e.cam.x - this.crown[0], e.cam.y - this.crown[3] * 0.5, e.cam.z - this.crown[1]) / 7)); }
+
   /** The carpet: petals lying under the crown, appearing as the tree sheds and fading over the following weeks. Pure function of the phase. */
   private carpetPass(e: BlossomEnv, f: BlossomType, ph: number) {
     const pet = this.pet, a = pet.instanceMatrix.array as Float32Array, col = pet.instanceColor!.array as Float32Array, A0 = this.air;
@@ -699,7 +702,7 @@ export class Blossom {
       if (i >= want || ph < born || ph > gone + 0.03) { a[q + 15] = 0; a[q] = a[q + 5] = a[q + 10] = 0; a[q + 1] = a[q + 2] = a[q + 4] = a[q + 6] = a[q + 8] = a[q + 9] = 0; continue; }
       shown++;
       // Denser under the drip line than at the trunk, drawn out downwind; lying nearly flat, caught in the grass.
-      const r = Rr * 1.25 * Math.sqrt(0.04 + 0.96 * h2) * (0.75 + 0.5 * h3), ang = h1 * 61.7, s = (0.05 + 0.035 * h3) * (1 - sm(gone, gone + 0.03, ph)) * (f.kind === 'goblet' ? 1.7 : 1);
+      const r = Rr * 1.25 * Math.sqrt(0.04 + 0.96 * h2) * (0.75 + 0.5 * h3), ang = h1 * 61.7, s = this.boost(e) * (0.05 + 0.035 * h3) * (1 - sm(gone, gone + 0.03, ph)) * (f.kind === 'goblet' ? 1.7 : 1);
       const hd = h3 * 6.283, tl = (h2 - 0.5) * 0.9, ct = Math.cos(tl), sn = Math.sin(tl), ch = Math.cos(hd), sh = Math.sin(hd);
       a[q] = ch * s; a[q + 1] = 0; a[q + 2] = -sh * s; a[q + 3] = 0;
       a[q + 4] = sh * ct * s; a[q + 5] = sn * s; a[q + 6] = ch * ct * s; a[q + 7] = 0;
@@ -726,6 +729,7 @@ export class Blossom {
       const g0 = w.base > 1e-3 ? w.gust(cx, cz) / w.base : 0, g3 = g0 * g0 * g0;
       // Open clusters let a few go (more in a gust, many in a storm); shedding clusters always do.
       const trickle = Math.min(1, 0.02 + 0.12 * g3 + 1.6 * e.violence);
+      const bst = this.boost(e);
       const drift = Wind.speed(w.base) * (0.16 + 0.5 * e.violence), vx = w.dirX * drift, vz = w.dirZ * drift, big = f.kind === 'goblet' ? 1.7 : 1;
       for (let j = 0, q = 0; j < A0; j++, q += 16) {
         const T = 6 + 5 * h01(j * 5 + 1), x = cl / T + h01(j * 5 + 2), cyc = Math.floor(x), t = (x - cyc) * T;
@@ -743,7 +747,7 @@ export class Blossom {
         const aa = down ? (h2 - 0.5) * 0.8 + 1.571 : tl * (3 + 4 * h1) + h2 * 6.283, bb = down ? h1 * 6.283 : tl * (1.5 + 2 * h2) + h1 * 6.283;
         const sa = Math.sin(aa), ca = Math.cos(aa), sb = Math.sin(bb), cb = Math.cos(bb);
         // Grows out of nothing in the first 0.25 s, shrinks away before the loop restarts.
-        const s0 = (0.05 + 0.035 * h1) * big * Math.min(1, t * 4) * Math.min(1, (T - t) * 2);
+        const s0 = (0.05 + 0.035 * h1) * big * bst * Math.min(1, t * 4) * Math.min(1, (T - t) * 2);
         const Yx = sa * cb, Yy = ca, Yz = sa * sb, Xx = -sb, Xz = cb;
         a[q] = Xx * s0; a[q + 1] = 0; a[q + 2] = Xz * s0; a[q + 3] = 0;
         a[q + 4] = Yx * s0; a[q + 5] = Yy * s0; a[q + 6] = Yz * s0; a[q + 7] = 0;
