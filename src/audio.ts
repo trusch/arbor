@@ -145,10 +145,13 @@ export class Soundscape {
   private reg(name: string, p: AudioParam, tc?: number) { return (this.p[name] = new P(p, this.ctx, tc)); }
   /** A unity gain stage whose gain wanders irregularly by `depth` (rms share): multiplicative, so silence stays silence. */
   private shimmer(hz: number, depth: number, hz2 = 0, depth2 = 0) { const g = this.gain(1); this.flutter(g.gain, hz, depth); if (hz2) this.flutter(g.gain, hz2, depth2); return g; }
-  /** Slow irregular modulation source: noise played 250x slower, low-passed, added to `target`. */
+  /** Slow modulation source added to `target`. */
   private flutter(target: AudioParam, hz: number, depth: number) {
-    const s = this.loop(this.white, 0.004), lp = this.filt('lowpass', hz, 0.5), g = this.gain(depth / (0.29 * Math.sqrt(Math.min(1, hz / 88))));
-    s.connect(lp).connect(g).connect(target);
+    // Two sines at unrelated rates: bounded by +-1.3 depth whatever happens (low-passed slow noise was tried first and
+    // swung the gain by several hundred percent).
+    const g = this.gain(depth * 0.65);
+    for (const k of [rnd(0.45, 0.8), rnd(1.15, 1.7)]) { const o = this.ctx.createOscillator(); o.frequency.value = hz * k; o.connect(g); o.start(); }
+    g.connect(target);
     return g;
   }
 
@@ -236,7 +239,7 @@ export class Soundscape {
     for (let i = 0; i < this.ou.length; i++) { const k = [0.5, 0.8, 0.3, 1.2, 0.15][i]; this.ou[i] += (-this.ou[i] * k + (Math.random() * 2 - 1) * 1.7 * Math.sqrt(k)) * Math.min(0.1, dt); this.ou[i] = clamp(this.ou[i], -1, 1); }
     const [o0, o1, o2, o3, o4] = this.ou;
     s.cx = e.camX; s.cy = e.camY; s.cz = e.camZ; s.rx = e.rightX; s.rz = e.rightZ;
-    this.masterP.set(e.quiet ? 0 : e.volume * 0.9, e.quiet ? 0.18 : 0.3);
+    this.masterP.set(e.quiet ? 0 : e.volume * 1.3, e.quiet ? 0.18 : 0.3);
     // Listener and tree.
     const tp = this.place(e.cx, e.cy, e.cz), dh = Math.hypot(e.camX - e.cx, e.camZ - e.cz);
     const foliage = sm(0, 1, Math.pow(clamp(e.leaves / 22000, 0, 1), 0.5)) * e.leafOn; // seedling ~0, grown crown 1
@@ -423,6 +426,8 @@ class ArborAudio {
   stats = { frames: 0, sumMs: 0, maxMs: 0 };
   private btn: HTMLButtonElement | null = null;
   private armed = false;
+  private tick = 0;
+  private carry = 0;
 
   constructor() {
     try { this.wanted = localStorage.getItem(KEY_ON) === '1'; } catch { /* private mode */ }
@@ -488,9 +493,11 @@ class ArborAudio {
   /** Once per frame from `main.ts`, only while `on`. */
   frame(e: SoundEnv, dt: number) {
     if (!this.on || !this.scape || this.ctx!.state !== 'running') return;
+    // Every second frame is enough (targets are smoothed over 70 ms and more); the skipped frame's dt is carried.
+    if ((this.tick ^= 1) === 1) { this.carry = dt; return; }
     const t0 = performance.now();
     this.saveVolume(e.volume);
-    this.scape.update(e, dt);
+    this.scape.update(e, dt + this.carry);
     const ms = performance.now() - t0;
     this.stats.frames++; this.stats.sumMs += ms; if (ms > this.stats.maxMs) this.stats.maxMs = ms;
   }

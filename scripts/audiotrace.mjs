@@ -14,7 +14,7 @@ try {
   const phone = process.env.PHONE === '1';
   const ctx = await browser.newContext(phone ? { ...devices['Pixel 7'] } : { viewport: { width: 1024, height: 640 } });
   const page = await ctx.newPage();
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('console', (m) => m.type() === 'error' && !/404/.test(m.text()) && errors.push(m.text())); // 404 = POST /log on a server without it (vite preview)
   page.on('pageerror', (e) => errors.push(e.message));
   if (process.env.THROTTLE) { const cdp = await ctx.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) }); }
   await page.goto(`${url}?t=90&timeOfDay=12&cycle=false&weather=calm&season.on=false&panel=closed&critters.amount=1`);
