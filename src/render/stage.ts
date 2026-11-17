@@ -9,9 +9,12 @@ import { makeTerrainGeometry } from './backdrop';
 import { tel } from '../tel';
 import { season } from '../season';
 import { groundSeason } from './landseason';
+import { Director } from './director';
 
 /** Seconds the camera takes to ease from a hand-set view back into the automatic camera. */
 const EASE_S = 3;
+/** Tree height from which the director's shots replace the close seedling camera. */
+const DIRECTOR_H = 2.7;
 
 /** Renderer, camera, light rig, atmosphere, ground, post; sun shadow + camera framing track the tree. */
 /** Linear ground colour factor with the backdrop on (the old 0xdcdcb4 is 0.72, 0.72, 0.46). */
@@ -62,6 +65,9 @@ export class Stage {
   private cineT = 0;
   private cineYaw = 0;
   private cineOn = false;
+  /** Shot repertoire of the cinema camera (`director.ts`); runs from `DIRECTOR_H` of tree on, the close seedling view below. */
+  director = new Director();
+  private dirOn = false;
   private center = new THREE.Vector3(0, 1, 0);
   private dist = 6;
   private sunUv = new THREE.Vector3();
@@ -292,6 +298,9 @@ export class Stage {
   takeControl() {
     this.manual = true;
     this.easeT = 1e9;
+    // Director shots may look up from below the target: keep the polar angle the user grabbed (no snap), else the old limit.
+    this.controls.maxPolarAngle = Math.max(Math.PI * 0.495, Math.min(Math.PI * 0.97, this.controls.getPolarAngle() + 0.02));
+    this.director.rest(0);
   }
 
   /** Hand the camera back to cinema / auto-rotate / auto-frame, easing from the current view over `EASE_S`. */
@@ -304,6 +313,7 @@ export class Stage {
     this.center.copy(this.controls.target);
     this.dist = this.camera.position.distanceTo(this.controls.target);
     this.cineOn = false;
+    this.director.rest(EASE_S + 6);
   }
 
   /** Per-frame: advance clock, atmosphere, lights, shadow frustum, camera. snap=true jumps instead of easing. */
@@ -424,6 +434,7 @@ export class Stage {
       const off = this.camera.position.clone().sub(this.controls.target);
       this.cineYaw = Math.atan2(off.x, off.z);
       p.camera.autoFrame = true;
+      this.director.reset(); // its first shot starts from the pose the camera has now
     }
     this.cineOn = cine;
     this.controls.autoRotate = p.camera.autoRotate && !cine && auto && !this.intro;
@@ -435,7 +446,19 @@ export class Stage {
       this.dist += (8 - this.dist) * kk;
       this.controls.target.copy(this.center);
       this.camera.position.set(this.center.x + Math.sin(this.cineYaw) * this.dist, this.center.y + 0.05 * this.dist, this.center.z + Math.cos(this.cineYaw) * this.dist);
+    } else if (cine && (this.dirOn = mx[1] > (this.dirOn ? DIRECTOR_H - 0.4 : DIRECTOR_H))) {
+      // Director: composed shots (pose from `director.ts`); the only camera write is here, inside the automatic branch.
+      const D = this.director;
+      this.controls.maxPolarAngle = Math.PI * 0.97;
+      D.update(sim, { aspect: this.camera.aspect, vf, fit: Math.max(MIN_DIST, fit), trunkR, sunDir: A.sunDir, sunH: A.sunH, moonDir: A.moonDir, night, cloud: this.wx.cloud, flash: this.wx.flash }, dt, snap, this.camera.position, this.controls.target);
+      this.controls.target.copy(D.tgt);
+      this.camera.position.copy(D.pos);
+      this.center.copy(D.tgt);
+      this.dist = D.pos.distanceTo(D.tgt);
+      const off = D.pos.clone().sub(D.tgt);
+      this.cineYaw = Math.atan2(off.x, off.z);
     } else if (cine) {
+      this.director.reset();
       // Cinematic dolly: slow orbit, breathing height, occasional slow push-ins; always frames the tree.
       this.cineT += dt;
       const t = this.cineT;

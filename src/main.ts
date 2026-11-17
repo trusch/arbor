@@ -261,6 +261,8 @@ function breakagePost(dt: number) {
       tel.log('limb_break', { root: ev.root, nodes: ev.nodeIds.length, leaves: ev.leaves, r: +ev.radius.toFixed(3), t: +ev.time.toFixed(1), ms: +debris.stats.lastBuildMs.toFixed(1) });
     }
     if (sim.breaks.some((e) => !e.shed)) critters?.flush(); // birds leave a breaking tree
+    // Director: a limb (not a twig, not juvenile shedding) is worth a look from its side of the tree.
+    for (const ev of sim.breaks) if (!ev.shed && ev.nodeIds.length >= 12) { const nd = sim.nodes[ev.root]; if (nd) stage.director.event('orbit', nd.wx, nd.wy, nd.wz); }
     sim.breaks.length = 0;
     // The live leaf set changed: restart the pass (an open one still holds the detached leaves).
     leavesDirty = true; leafRestart = true;
@@ -499,6 +501,8 @@ if (query.get('nogui') !== '1') {
     },
     cameraManual: () => stage.manual,
     autoCamera: () => stage.autoCamera(),
+    directorOn,
+    nextShot: () => { if (directorOn()) stage.director.go(); },
     crownChanged: () => sim.rebuildAttractors(),
     preset: (name) => { loadPreset(name); regrow(); stage.autoCamera(); },
     chooseTree: () => openStart(),
@@ -566,6 +570,9 @@ function typing(el: HTMLElement | null) {
   if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable) return true;
   return el.tagName === 'INPUT' && !['range', 'checkbox', 'color', 'button'].includes((el as HTMLInputElement).type);
 }
+let birdPoll = 0, birdSat = false;
+/** Next shot of the director (N key, the next-shot button); only while the automatic cinema camera runs. */
+function directorOn() { return !stage.manual && params.camera.cinema && !stage.intro; }
 // Capture phase: lil-gui stops keydown propagation on its controllers, so H/C would die after any GUI click.
 addEventListener('keydown', (e) => {
   const el = e.target as HTMLElement | null;
@@ -625,6 +632,13 @@ function frame(now: number) {
   leafFallFrame(dt);
   if (blossom) { tel.phase('blossom', true); blossom.frame(dt, sim, { amount: params.season.blossom, low: params.sky.quality === 'Low', night: stage.atmo.night, D: sway.D, wind, violence: weather.violence, formId: leaves.formId, type: params.season.blossomType, colour: params.season.blossomColour, accent: params.season.blossomCentre, sun: stage.sun, hemi: stage.hemi, cam: stage.camera.position }); }
   if (critters) { tel.phase('critters', true); critters.frame(dt, sim, { amount: params.critters.amount, low: params.sky.quality === 'Low', night: stage.atmo.night, phase: season.active ? season.phase : 0.375, jumped: season.jumped, rain: weather.rain, cloud: weather.cloud, violence: weather.violence, wind, D: sway.D, cam: stage.camera.position, camQ: stage.camera.quaternion, sun: stage.sun, hemi: stage.hemi, flowers: critterFlowers }); }
+  // Director: a bird that has just landed may get a close shot (polled at 2 Hz; the state copy allocates).
+  if (critters && (birdPoll += dt) > 0.5) {
+    birdPoll = 0;
+    const b = critters.state().birds.find((q) => q.st === 2);
+    if (b && !birdSat) stage.director.event('bird', b.x, b.y, b.z);
+    birdSat = !!b;
+  }
   activity += dt;
   overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;

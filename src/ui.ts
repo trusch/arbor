@@ -12,6 +12,10 @@ export interface UiActions {
   cameraManual(): boolean;
   /** Hand the camera back to the automatic camera. */
   autoCamera(): void;
+  /** True while the director (automatic cinema camera) has the camera. */
+  directorOn(): boolean;
+  /** Step the director to its next shot. */
+  nextShot(): void;
   crownChanged(): void;
   preset(name: string): void;
   /** Back to the start screen with a new proposal. */
@@ -519,11 +523,11 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     fold('Camera and quality',
       check('Auto-frame the tree', () => p.camera.autoFrame, (v) => (p.camera.autoFrame = v)),
       check('Auto-rotate', () => p.camera.autoRotate, (v) => (p.camera.autoRotate = v)),
-      check('Cinema camera (key C)', () => p.camera.cinema, (v) => (p.camera.cinema = v)),
+      check('Cinema camera: composed shots (key C; N = next shot)', () => p.camera.cinema, (v) => (p.camera.cinema = v)),
       h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-quality', text: 'quality' }), quality),
       raw('seed.seed', 'seed', 0, 999999, 1),
       raw('time.speed', 'speed', 0, 20, 0.05),
-      note('Keys: H hides all controls, C toggles the cinema camera, D shows a debug line.')));
+      note('Keys: H hides all controls, C toggles the cinema camera, N steps to the next shot, D shows a debug line.')));
 
   // ---- status ----
   syncers.push(() => {
@@ -546,10 +550,15 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   // Auto camera: shown only while the user holds the camera; outside the panel so the phone reaches it with the sheet closed.
   const autoCam = h('button', { type: 'button', class: 'arbor-ui ap-autocam', id: 'arbor-auto-camera', hidden: true, title: 'Return to the automatic camera (key C)' });
   autoCam.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg><span>Auto camera</span>';
-  const syncAutoCam = () => { const m = a.cameraManual(); if (autoCam.hidden === m) autoCam.hidden = !m; };
+  // Next shot: a small quiet target in the same corner, shown only while the director has the camera.
+  const nextShot = h('button', { type: 'button', class: 'arbor-ui ap-nextshot', id: 'arbor-next-shot', hidden: true, title: 'Next shot (key N)' });
+  nextShot.setAttribute('aria-label', 'Next shot');
+  nextShot.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5l9 7-9 7z"/><path d="M19 5v14"/></svg>';
+  nextShot.addEventListener('click', () => a.nextShot());
+  const syncAutoCam = () => { const m = a.cameraManual(); if (autoCam.hidden === m) autoCam.hidden = !m; const d = a.directorOn(); if (nextShot.hidden === d) nextShot.hidden = !d; };
   autoCam.addEventListener('click', () => { a.autoCamera(); syncAutoCam(); });
   setInterval(syncAutoCam, 200);
-  document.body.append(opener, root, autoCam);
+  document.body.append(opener, root, autoCam, nextShot);
   selectTab(tabs.some((t) => t.id === opts.tab) ? opts.tab! : 'grow');
   setOpen(opts.open ?? !matchMedia('(max-width: 700px)').matches);
   refresh();
