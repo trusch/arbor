@@ -54,7 +54,7 @@ try {
       const sp = st.sun.position, tp = st.sun.target.position, dx = sp.x - tp.x, dy = sp.y - tp.y, dz = sp.z - tp.z, dl = Math.hypot(dx, dy, dz);
       const me = a.canopy.mesh;
       S.rows.push({ now: performance.now(), hr: a.params.sky.timeOfDay, cx: m ? (mx / m) * k : 0, cy: m ? (my / m) * k : 0, m, sx: dx / dl, sy: dy / dl, sz: dz / dl, I: st.sun.intensity,
-        bakes: a.canopy.bakes, vis: me.visible, px: me.position.x, pz: me.position.z, rot: me.rotation.y, sc: me.scale.x, fills: a.meadow?.stats.bakes ?? 0 });
+        bakes: a.canopy.bakes, op: me.material.opacity, vis: me.visible, px: me.position.x, pz: me.position.z, rot: me.rotation.y, sc: me.scale.x, fills: a.meadow?.stats.bakes ?? 0 });
     };
     requestAnimationFrame(tick);
     a.params.sky.cycle = cycle; a.params.time.speed = speed; a.params.time.paused = speed <= 0;
