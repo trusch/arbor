@@ -1,6 +1,7 @@
 // Interaction smoke test in headless chromium (SwiftShader).
 // Usage: node scripts/smoke.mjs [url]   (default: the deployed app http://10.77.0.2:8050/; pass "dev" to start vite)
 // Checks: no console errors, reload survives, phone emulation picks Low (adaptive DPR start 2, no post RTs), memory soak stays flat (SOAK_S env, default 120; 0 skips), preset chips, drift, journey keyframes + interpolation, hand-set values winning over journey/drift (mouse + touch), H/C keys, cinema camera motion.
+import { swayProbe } from './swayprobe.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
 
@@ -430,6 +431,23 @@ try {
       calm.programs === calm0.programs && storm.programs === storm0.programs && calm.live && storm.live && !calm0.live && !storm0.live
         && calm.max > 0.005 && storm.max > calm.max && [calm, storm].every((r) => !r.restLive && r.offRest === 0 && !r.nonZero && r.fe === 0 && r.errs === 0 && r.leaves > 0),
       `calm ${JSON.stringify(calm)} sway=0 ${JSON.stringify(calm0)} storm ${JSON.stringify(storm)} sway=0 ${JSON.stringify(storm0)}`);
+  }
+  // Wind sway bend profile: in a held storm, growth running, every shoot bends as one curve (sapling and grown oak).
+  // Wood that kept its accumulated rotation must not be drawn straighter than wood nearer the chain base (the per-node
+  // offset ceiling drew upright tips on bent stems: 0.53 rad lost), no corner between two segments, tips follow their parent.
+  {
+    const run = async (age) => {
+      const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=storm&lightning=0');
+      await mp.evaluate((age) => { const A = window.__arbor; A.fastForward(age); A.params.time.speed = 1; A.params.time.paused = false; }, age);
+      await mp.waitForTimeout(2500);
+      const r = await mp.evaluate(swayProbe, { ms: 3000 });
+      await ctx.close();
+      return { age, frames: r.frames, chains: r.chains, grew: +(r.t1 - r.t0).toFixed(2), flat: r.maxFlat, kink: r.maxKink, tip: r.minTipRatio, maxOffset: r.maxOffset, maxLean: r.maxLean, errs: merr.length };
+    };
+    const R = [await run(20), await run(90)];
+    check('wind sway: in a held storm every shoot bends as one curve to its tip (sapling t=20 and oak t=90, growth running: no lean lost above a bent stem, no kink, tips follow their parent)',
+      R.every((r) => r.frames >= 10 && r.chains >= 5 && r.grew > 0 && r.flat <= 0.05 && r.kink <= 0.15 && r.tip >= 0.75 && r.maxLean > 0.2 && r.maxOffset < 3 && r.errs === 0),
+      JSON.stringify(R));
   }
   // Breakage program gate (WP10, PowerVR rule): a falling limb reuses the live bark and leaf programs. The count is read
   // once the page has settled (three re-keys the bark program by itself a few seconds after the first frames), then in

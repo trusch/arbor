@@ -29,6 +29,9 @@ export class Sway {
   private S = new Float32Array(0);
   private K = new Float32Array(0);
   private C = new Int32Array(0);
+  /** Rotation limit per node (rad) and scratch (flex-weighted path length below the node). */
+  private CAP = new Float32Array(0);
+  private W = new Float32Array(0);
   private cTime = NaN; private cTopo = -1; private cN = -1;
 
   /**
@@ -52,8 +55,8 @@ export class Sway {
     // Rest cache (segment vector, flex, chain per node): refilled only when the tree changed, so a grown or paused
     // tree runs on typed arrays alone.
     if (sim.time !== this.cTime || sim.topology !== this.cTopo || N !== this.cN) {
-      if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); }
-      const S = this.S, K = this.K, C = this.C;
+      if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); this.CAP = new Float32Array(D.length / 3); this.W = new Float32Array(D.length / 3); }
+      const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W;
       for (let i = 0, o = 0; i < N; i++, o += 3) {
         const nd = nodes[i], pi = nd.parent, pn = pi >= 0 ? nodes[pi] : undefined;
         P[i] = pi;
@@ -64,9 +67,29 @@ export class Sway {
         const r = nd.radius > 0.002 ? nd.radius : 0.002, k = FLEX / (r * Math.sqrt(r));
         K[i] = k > FLEX_MAX ? FLEX_MAX : k;
       }
+      // Rotation limit per node. The deflection limit acts on the whole shoot: the limit falls with the length of
+      // flexible wood (metres weighted by flex / FLEX_MAX, so a trunk counts for almost nothing) on the longest path
+      // root -> node -> tip, the same value all along that path, so a long whip bends less per metre from base to
+      // tip instead of being cut off where its offset reaches a ceiling. Side shoots lie on shorter paths: their
+      // limit is never below their parent's, so the limit never decreases toward a tip.
+      W.fill(0, 0, N);
+      for (let i = N - 1; i > 0; i--) {
+        if (C[i] < 0) continue;
+        const o = i * 3, w = W[i] + Math.sqrt(S[o] * S[o] + S[o + 1] * S[o + 1] + S[o + 2] * S[o + 2]) * K[i] * (1 / FLEX_MAX), pi = P[i];
+        CAP[i] = w; // own weighted segment + longest weighted path below
+        if (w > W[pi]) W[pi] = w;
+      }
+      for (let i = 0; i < N; i++) {
+        if (C[i] < 0) { W[i] = 0; continue; }
+        // W[i] becomes the weighted length root -> node; the longest path through the node is that + the part below.
+        const pi = P[i], up = W[pi] + (CAP[i] - (W[i] > 0 ? W[i] : 0));
+        const q = TH_MAX * (up + W[i]) * (1 / D_LIM);
+        W[i] = up;
+        CAP[i] = TH_MAX / Math.sqrt(1 + q * q);
+      }
       this.cTime = sim.time; this.cTopo = sim.topology; this.cN = N;
     }
-    const S = this.S, K = this.K, C = this.C;
+    const S = this.S, K = this.K, C = this.C, CAP = this.CAP;
     const wx = wind.dirX, wz = wind.dirZ, t = wind.t;
     // Per chain: force vector. The lean follows the gust wave at the chain base (0.35 s behind the front) and goes
     // with gust^2.5 (drag ~ v^2, v ~ gust^2): small in a breeze, dominant in a storm. The oscillation (own phase per
@@ -93,18 +116,22 @@ export class Sway {
       const sx = S[o], sy = S[o + 1], sz = S[o + 2];
       const fx = F[fo], fy = F[fo + 1], fz = F[fo + 2];
       // Bend added by this segment: (s x F) * flex, on top of the parent's rotation.
+      // TH is the accumulated (raw) rotation, hard-limited only far beyond what is drawn.
       let tx = TH[po] + (sy * fz - sz * fy) * k, ty = TH[po + 1] + (sz * fx - sx * fz) * k, tz = TH[po + 2] + (sx * fy - sy * fx) * k;
       const tq = tx * tx + ty * ty + tz * tz;
-      if (tq > TH_MAX * TH_MAX) { const q = TH_MAX / Math.sqrt(tq); tx *= q; ty *= q; tz *= q; }
+      if (tq > RAW_MAX * RAW_MAX) { const q = RAW_MAX / Math.sqrt(tq); tx *= q; ty *= q; tz *= q; }
       TH[o] = tx; TH[o + 1] = ty; TH[o + 2] = tz;
-      // Rotate the rest segment by the small rotation TH (first order, renormalised to the rest length: wood does not stretch).
+      // Drawn rotation: saturates gradually toward the node's limit (raw * cap / sqrt(cap^2 + raw^2): equal to raw
+      // while small, monotonic in raw and in cap), so the lean keeps growing toward the tip and never meets a corner.
+      const cap = CAP[i], sat = cap / Math.sqrt(cap * cap + (tq > RAW_MAX * RAW_MAX ? RAW_MAX * RAW_MAX : tq));
+      tx *= sat; ty *= sat; tz *= sat;
+      // Rotate the rest segment by the small rotation (first order, renormalised to the rest length: wood does not stretch).
       let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
       const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
       if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
-      let ox = D[po] + vx - sx, oy = D[po + 1] + vy - sy, oz = D[po + 2] + vz - sz;
-      let dq = ox * ox + oy * oy + oz * oz;
-      // Long thin whips (tens of metres of path) would otherwise travel metres.
-      if (dq > D_MAX * D_MAX) { const q = D_MAX / Math.sqrt(dq); ox *= q; oy *= q; oz *= q; dq = D_MAX * D_MAX; }
+      // No limit per node: the offset is the parent's plus this segment's turn, all the way to the tip.
+      const ox = D[po] + vx - sx, oy = D[po + 1] + vy - sy, oz = D[po + 2] + vz - sz;
+      const dq = ox * ox + oy * oy + oz * oz;
       D[o] = ox; D[o + 1] = oy; D[o + 2] = oz;
       if (dq > maxSq) { maxSq = dq; maxNode = i; }
     }
@@ -114,9 +141,15 @@ export class Sway {
     return true;
   }
 }
-/** Bend per metre of wood at unit force: FLEX / r^1.5 rad (r in m), at most FLEX_MAX; total rotation at most TH_MAX rad. */
-const FLEX = 3.5e-4, FLEX_MAX = 0.6, TH_MAX = 0.6;
+/**
+ * Bend per metre of wood at unit force: FLEX / r^1.5 rad (r in m), at most FLEX_MAX. Drawn rotation saturates toward
+ * TH_MAX rad (less on long flexible paths, see D_LIM); the accumulated rotation is held at RAW_MAX (drawn: 95 % of the limit).
+ */
+const FLEX = 3.5e-4, FLEX_MAX = 0.6, TH_MAX = 0.63, RAW_MAX = 1.9;
 /** Oscillating share of the force at gust 1. */
 const OSC = 0.25;
-/** Largest offset of any node, metres. */
-const D_MAX = 1.3;
+/**
+ * Deflection scale, metres: the rotation limit of a node is TH_MAX / sqrt(1 + (TH_MAX * L / D_LIM)^2), L = flex-weighted
+ * length of the longest path through the node, so limit * L stays below D_LIM however long the shoot is.
+ */
+const D_LIM = 2.0;

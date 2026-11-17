@@ -2,14 +2,18 @@
 // PAGE: for `ms` milliseconds it reads, every frame, the drawn pose of every unpruned chain of >= `minNodes` nodes
 // (rest segment s = node - parent, drawn segment s + D[node] - D[parent]) and records
 //   lean     angle between rest and drawn segment (rad),
-//   drop     how far the lean falls below the largest lean nearer the chain base (a rod bent by wind never
-//            straightens toward its tip: flat-topped or reversing profiles are the defect),
+//   drop     how far the lean falls below the largest lean nearer the chain base (informational: a shoot that arches
+//            over and hangs has its bend unwound by the wind on the hanging part, smoothly),
+//   flat     the same drop counted only where the accumulated rotation `sway.TH` has NOT unwound (>= 90 % of its
+//            length at the most-leaning node): wood that keeps its rotation but is drawn straighter = the defect
+//            (a tip standing upright on a bent stem),
+//   kink     largest fall of the lean from one segment to the next (a corner),
 //   tipRatio |D tip| / |D parent of tip| (a tip standing still while its parent swings),
 // and returns the worst chain with its base-to-tip profile at the worst frame.
 export const swayProbe = (opt) => new Promise((res) => {
   const { ms = 3000, minNodes = 5, profiles = 0 } = opt ?? {};
   const A = window.__arbor, S = A.sim, sw = A.sway;
-  const out = { frames: 0, chains: 0, maxDrop: 0, dropFrames: 0, minTipRatio: 9, maxOffset: 0, maxLean: 0, worst: null, worstTip: null, t0: S.time, n0: S.nodes.length };
+  const out = { frames: 0, chains: 0, maxDrop: 0, maxFlat: 0, maxKink: 0, dropFrames: 0, minTipRatio: 9, maxOffset: 0, maxLean: 0, worst: null, worstTip: null, t0: S.time, n0: S.nodes.length };
   const prof = (ch) => {
     const D = sw.D, TH = sw.TH, rows = [];
     for (let j = 1; j < ch.nodes.length; j++) {
@@ -25,31 +29,35 @@ export const swayProbe = (opt) => new Promise((res) => {
   const tick = () => {
     if (sw.live) {
       out.frames++;
-      const D = sw.D, N = S.nodes; let chains = 0, frameBad = false;
+      const D = sw.D, TH = sw.TH, N = S.nodes; let chains = 0, frameBad = false;
       for (const ch of S.chains) {
         if (ch.pruned || ch.nodes.length < minNodes) continue;
         chains++;
-        let top = 0, drop = 0;
+        let top = 0, topTh = 0, drop = 0, flat = 0, prev = 0;
         for (let j = 1; j < ch.nodes.length; j++) {
           const i = ch.nodes[j], n = N[i], p = N[n.parent], o = i * 3, q = n.parent * 3;
           const sx = n.wx - p.wx, sy = n.wy - p.wy, sz = n.wz - p.wz, sl = Math.hypot(sx, sy, sz);
           if (sl < 0.02) continue; // a just-created tip segment has no direction yet
           const vx = sx + D[o] - D[q], vy = sy + D[o + 1] - D[q + 1], vz = sz + D[o + 2] - D[q + 2];
           const a = Math.acos(Math.min(1, (sx * vx + sy * vy + sz * vz) / (sl * Math.hypot(vx, vy, vz))));
-          if (a > top) top = a; else if (top - a > drop) drop = top - a;
+          const th = Math.hypot(TH[o], TH[o + 1], TH[o + 2]);
+          if (a > top) { top = a; topTh = th; } else { if (top - a > drop) drop = top - a; if (th >= 0.9 * topTh && top - a > flat) flat = top - a; }
+          if (prev - a > out.maxKink) out.maxKink = prev - a;
+          prev = a;
           if (a > out.maxLean) out.maxLean = a;
         }
         const tip = ch.nodes[ch.nodes.length - 1] * 3, par = N[ch.nodes[ch.nodes.length - 1]].parent * 3;
         const dt = Math.hypot(D[tip], D[tip + 1], D[tip + 2]), dp = Math.hypot(D[par], D[par + 1], D[par + 2]);
         if (dt > out.maxOffset) out.maxOffset = dt;
         if (dp > 0.05 && dt / dp < out.minTipRatio) { out.minTipRatio = dt / dp; out.worstTip = { chain: S.chains.indexOf(ch), tip: +dt.toFixed(3), parent: +dp.toFixed(3) }; }
-        if (drop > 0.05) frameBad = true;
-        if (drop > out.maxDrop) { out.maxDrop = drop; out.worst = { chain: S.chains.indexOf(ch), order: ch.order, nodes: ch.nodes.length, simTime: +S.time.toFixed(2), profile: prof(ch) }; }
+        if (flat > 0.05) frameBad = true;
+        if (flat > out.maxFlat) out.maxFlat = flat;
+        if (flat > 0.05 ? flat >= out.maxFlat : (out.maxFlat <= 0.05 && drop > out.maxDrop)) { out.maxDrop = drop; out.worst = { chain: S.chains.indexOf(ch), order: ch.order, nodes: ch.nodes.length, simTime: +S.time.toFixed(2), profile: prof(ch) }; }
       }
       out.chains = chains; if (frameBad) out.dropFrames++;
     }
     if (performance.now() - t0 < ms) return requestAnimationFrame(tick);
-    out.t1 = S.time; out.n1 = S.nodes.length; out.maxDrop = +out.maxDrop.toFixed(3); out.minTipRatio = +out.minTipRatio.toFixed(3); out.maxOffset = +out.maxOffset.toFixed(3); out.maxLean = +out.maxLean.toFixed(3);
+    out.t1 = S.time; out.n1 = S.nodes.length; out.maxDrop = +Math.max(out.maxDrop, out.maxFlat).toFixed(3); out.maxFlat = +out.maxFlat.toFixed(3); out.maxKink = +out.maxKink.toFixed(3); out.minTipRatio = +out.minTipRatio.toFixed(3); out.maxOffset = +out.maxOffset.toFixed(3); out.maxLean = +out.maxLean.toFixed(3);
     if (profiles) {
       // Leader (chain 0) and the longest other chains, at the last frame.
       const cs = S.chains.filter((c, k) => k > 0 && !c.pruned && c.nodes.length >= minNodes).sort((a, b) => b.nodes.length - a.nodes.length).slice(0, profiles);
