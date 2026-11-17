@@ -189,7 +189,10 @@ if (rain) stage.scene.add(rain.group);
 const celestial = query.get('celestial') !== '0' ? new Celestial(canopy.mesh.material as THREE.MeshBasicMaterial, stage.atmo.stars) : null;
 if (celestial) stage.scene.add(celestial.group);
 /** Clouds by type: P-DECAL clones like the celestial planes (`?clouds=0` = not constructed). */
+performance.mark('clouds:ctor0');
 const clouds = query.get('clouds') !== '0' ? new Clouds(canopy.mesh.material as THREE.MeshBasicMaterial) : null;
+clouds?.paint();
+performance.measure('clouds ctor', 'clouds:ctor0');
 if (clouds) stage.scene.add(clouds.group);
 {
   const qw = query.get('weather');

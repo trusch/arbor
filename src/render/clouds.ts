@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ATLAS_W, ATLAS_H, BASE, CH, CW, DECK_S, paintClouds, type CloudMap } from './cloudpaint';
 
 /**
  * Clouds by type, phone-safe (PowerVR rule): every material is a clone of the canopy-shadow decal `MeshBasicMaterial`
@@ -27,114 +28,15 @@ function hash2(x: number, y: number) {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
   return s - Math.floor(s);
 }
-function vnoise(x: number, y: number, wrap = 0) {
-  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
-  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
-  const w = (a: number) => (wrap ? ((a % wrap) + wrap) % wrap : a);
-  const x0 = w(xi), x1 = w(xi + 1), y0 = w(yi), y1 = w(yi + 1);
-  return (hash2(x0, y0) * (1 - u) + hash2(x1, y0) * u) * (1 - v) + (hash2(x0, y1) * (1 - u) + hash2(x1, y1) * u) * v;
-}
-/** 4 octaves; `wrap` = period of the first octave in cells (0 = none). */
-function fbm(x: number, y: number, wrap = 0) {
-  let s = 0, a = 0.5;
-  for (let o = 0; o < 4; o++) { s += a * vnoise(x, y, wrap); x *= 2; y *= 2; wrap *= 2; a *= 0.5; }
-  return s / 0.9375;
-}
 
-/** Atlas: 2 x 2 cells of CW x CH. Cells 0..2 = cumulus heaps (light from the upper left), cell 3 = storm tower. */
-const CW = 256, CH = 128;
-const BASE = 0.2; // flat base line, as a fraction of the cell height from the bottom
-
-function paintAtlas() {
-  const W = CW * 2, H = CH * 2, d = new Uint8Array(W * H * 4);
-  for (let cell = 0; cell < 4; cell++) {
-    const ox = (cell & 1) * CW, oy = (cell >> 1) * CH, tower = cell === 3;
-    // Blobs: x, y (0..1 in the cell, y up), radius (in cell heights).
-    const blobs: [number, number, number][] = [];
-    let s = 11 + cell * 7.3;
-    const rnd = () => { s = (s * 16807) % 2147483647; return (s % 100000) / 100000; };
-    for (let i = 0; i < 40; i++) rnd();
-    if (tower) {
-      // A wide dark body, a rising column, an anvil spreading at the top.
-      for (let i = 0; i < 14; i++) blobs.push([0.12 + 0.76 * (i / 13), 0.2 + 0.1 * rnd(), 0.22 + 0.08 * rnd()]);
-      for (let i = 0; i < 9; i++) blobs.push([0.5 + 0.12 * (rnd() - 0.5) - 0.05 * (i / 8), 0.3 + 0.42 * (i / 8), 0.2 - 0.05 * (i / 8) + 0.05 * rnd()]);
-      for (let i = 0; i < 11; i++) blobs.push([0.2 + 0.62 * (i / 10), 0.76 + 0.04 * rnd(), 0.1 + 0.05 * rnd()]);
-    } else {
-      const n = 9 + cell * 2, wide = 0.26 + 0.05 * cell;
-      for (let i = 0; i < n; i++) {
-        const u = (i + 0.5) / n, x = 0.5 + (u - 0.5) * 2 * wide + 0.05 * (rnd() - 0.5);
-        // Tallest in the middle, low shoulders: a heap.
-        const hgt = (1 - Math.pow(Math.abs(u - 0.5) * 2, 1.7)) * (0.3 + 0.2 * rnd()) + 0.06;
-        blobs.push([x, BASE + 0.1 + hgt * 0.5, 0.15 + hgt * 0.42]);
-        if (rnd() > 0.4) blobs.push([x + 0.06 * (rnd() - 0.5), BASE + 0.14 + hgt, 0.09 + 0.1 * rnd()]);
-      }
-    }
-    const asp = CW / CH;
-    for (let j = 0; j < CH; j++) for (let i = 0; i < CW; i++) {
-      const x = (i + 0.5) / CW, y = 1 - (j + 0.5) / CH;
-      // Billowy edge: the sample point is displaced by noise before the blob test.
-      const nx = fbm(x * 9 + cell * 5, y * 5), ny = fbm(x * 9 + 31, y * 5 + cell * 3), fine = fbm(x * 30, y * 15 + cell);
-      const px = x + 0.035 * (nx - 0.5), py = y + 0.07 * (ny - 0.5);
-      let den = 0;
-      for (const [bx, by, br] of blobs) {
-        const dx = (px - bx) * asp, dy = py - by, q = 1 - Math.sqrt(dx * dx + dy * dy) / br;
-        if (q > 0) den += q * q * (3 - 2 * q) * 1.4;
-      }
-      den += 0.6 * (fine - 0.5) * (1 - smooth(0.8, 2, den));
-      let a = smooth(0.33, 0.63, den);
-      // Flat base (cumulus) / ragged foot (tower); nothing touches the cell border (mips of neighbours stay clean).
-      const baseY = tower ? 0.08 : BASE + 0.025 * (nx - 0.5);
-      a *= smooth(baseY - 0.012, baseY + (tower ? 0.1 : 0.03), y);
-      a *= smooth(0, 0.04, x) * smooth(1, 0.96, x) * smooth(1, 0.95, y);
-      // Shade: bright where the heap is thin toward the upper left (the lit side), grey-blue toward the base and the
-      // lower right, darker in the creases between billows.
-      const up = Math.min(1, Math.max(0, (y - baseY) / (tower ? 0.8 : 0.5)));
-      const edge = 1 - smooth(0.4, tower ? 2.4 : 1.5, den), bil = fbm(x * 16 + cell * 3, y * 9 + 5);
-      let b: number;
-      if (tower) {
-        // Dark body, bright rim along the upper outline, a little structure inside.
-        b = 0.2 + 0.12 * up + 0.16 * (bil - 0.5) + 0.8 * edge * edge * smooth(0.2, 0.6, up);
-      } else {
-        const side = (0.5 - x) * 0.5 + (up - 0.5) * 0.7;
-        b = 0.8 + 0.2 * smooth(-0.3, 0.2, side + 0.5 * (nx - 0.5)) + 0.06 * edge - 0.34 * (1 - smooth(0.0, 0.45, up)) + 0.3 * (bil - 0.5) + 0.08 * (fine - 0.5);
-      }
-      b = Math.min(1, Math.max(tower ? 0.08 : 0.42, b));
-      const o = ((oy + j) * W + ox + i) * 4;
-      // sRGB bytes: white tops, grey-blue shade.
-      d[o] = 255 * b * (0.84 + 0.16 * b);
-      d[o + 1] = 255 * b * (0.9 + 0.1 * b);
-      d[o + 2] = 255 * b;
-      d[o + 3] = 255 * a;
-    }
-  }
-  return { d, W, H };
-}
-
-/** Tileable layer for the deck: soft rolls in grey, alpha never far below 1 (a ceiling, not separate clouds). */
-function paintDeck() {
-  const S = 256, d = new Uint8Array(S * S * 4);
-  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
-    const x = i / S, y = j / S;
-    const wv = fbm(x * 4 + 3 * fbm(x * 4 + 9, y * 4, 4), y * 4 + 7, 4), fine = fbm(x * 16, y * 16, 16);
-    const v = 0.62 * wv + 0.38 * fine, b = 0.72 + 0.28 * smooth(0.3, 0.75, v);
-    const o = (j * S + i) * 4;
-    d[o] = 255 * b * 0.95; d[o + 1] = 255 * b * 0.975; d[o + 2] = 255 * b;
-    d[o + 3] = 255 * (0.8 + 0.2 * smooth(0.25, 0.6, v));
-  }
-  return { d, W: S, H: S };
-}
-
-function dataTex(p: { d: Uint8Array; W: number; H: number }, cs: string, repeat: boolean) {
-  // Painted top row first; a data texture's first row is v = 0: reverse the rows here.
-  const f = new Uint8Array(p.d.length), row = p.W * 4;
-  for (let j = 0; j < p.H; j++) f.set(p.d.subarray(j * row, (j + 1) * row), (p.H - 1 - j) * row);
-  const t = new THREE.DataTexture(f, p.W, p.H, THREE.RGBAFormat);
+/** Empty (transparent) map of the final size; `Clouds.setMaps` swaps the painted bytes in. Not uploaded while hidden. */
+function dataTex(W: number, H: number, cs: string, repeat: boolean) {
+  const t = new THREE.DataTexture(new Uint8Array(W * H * 4), W, H, THREE.RGBAFormat);
   t.colorSpace = cs as THREE.ColorSpace;
   t.generateMipmaps = true;
   t.minFilter = THREE.LinearMipmapLinearFilter;
   t.magFilter = THREE.LinearFilter;
   if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.needsUpdate = true;
   return t;
 }
 
@@ -143,6 +45,8 @@ const LAYER = 0.05, HEAP_LAYER = 0.032;
 /** Half side of the square of slots around the camera, and of the deck plane, in layer heights. */
 const BOX = 10, DECK = 30;
 const GRID = 12, SLOTS = GRID * GRID;
+/** Seconds of opacity fade-in once the painted maps have arrived. */
+const FADE_S = 1.5;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
   none: [0.07, 0.55, 0], cumulus: [0.5, 1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
@@ -162,10 +66,15 @@ export class Clouds {
   deck: THREE.Mesh;
   tower: THREE.Mesh;
   /** Mean JS cost per frame = sumMs / frames; quads = cumulus quads this frame; amount / size = eased type targets. */
-  stats = { frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0 };
+  stats = { paintMs: 0, frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0 };
   private pos: THREE.BufferAttribute;
   private uv: THREE.BufferAttribute;
-  private deckTex: THREE.Texture;
+  private deckTex: THREE.DataTexture;
+  private atlas: THREE.DataTexture;
+  /** Painted maps are in (`setMaps`); until then nothing is drawn and nothing is uploaded. */
+  ready = false;
+  /** Opacity ramp after the maps arrive (`FADE_S`), so clouds never pop in; `amount = -1` (scripts) snaps it to 1. */
+  private fade = 0;
   private amount = -1;
   private size = 1;
   private dark = 0;
@@ -180,9 +89,10 @@ export class Clouds {
 
   constructor(decal: THREE.MeshBasicMaterial) {
     const cs = decal.map?.colorSpace ?? THREE.SRGBColorSpace;
-    const atlas = dataTex(paintAtlas(), cs, false);
-    this.deckTex = dataTex(paintDeck(), cs, true);
+    const atlas = this.atlas = dataTex(ATLAS_W, ATLAS_H, cs, false);
+    this.deckTex = dataTex(DECK_S, DECK_S, cs, true);
     this.deckTex.repeat.set(9, 9);
+    this.group.visible = false;
     // The GTAO g-buffer pass must not see these planes (its override material would draw solid quads).
     const hidden = new THREE.MeshBasicMaterial({ visible: false });
     (hidden as unknown as { allowOverride: boolean }).allowOverride = false;
@@ -230,6 +140,30 @@ export class Clouds {
     (this.heaps.material as THREE.MeshBasicMaterial).side = decal.side;
   }
 
+  /**
+   * Paints the maps without blocking the page start: in a Web Worker (the bytes come back as transferred buffers);
+   * where a worker cannot be started the painting runs on the main thread a few seconds after the start instead.
+   */
+  paint() {
+    const t0 = performance.now();
+    const local = () => setTimeout(() => { if (!this.ready) { const m = paintClouds(); this.setMaps(m.atlas, m.deck, t0); } }, 4000);
+    try {
+      const w = new Worker(new URL('./cloudpaint.worker.ts', import.meta.url), { type: 'module' });
+      w.onmessage = (e: MessageEvent<{ atlas: CloudMap; deck: CloudMap }>) => { this.setMaps(e.data.atlas, e.data.deck, t0); w.terminate(); };
+      w.onerror = () => { w.terminate(); local(); };
+      w.postMessage(0);
+    } catch { local(); }
+  }
+
+  setMaps(atlas: CloudMap, deck: CloudMap, t0 = performance.now()) {
+    (this.atlas.image as { data: Uint8Array }).data = atlas.d;
+    (this.deckTex.image as { data: Uint8Array }).data = deck.d;
+    this.atlas.needsUpdate = this.deckTex.needsUpdate = true;
+    this.ready = true;
+    this.stats.paintMs = performance.now() - t0;
+    performance.measure('clouds maps ready', { start: t0 });
+  }
+
   /** One upright quad: centre of its base (camera-relative x, z; world y), half width along (rx, rz), height, atlas cell, mirrored. */
   private quad(q: number, cx: number, cy: number, cz: number, rx: number, rz: number, hw: number, hh: number, cell: number, flip: boolean) {
     const P = this.pos.array as Float32Array, U = this.uv.array as Float32Array, o = q * 12, u = q * 8;
@@ -245,8 +179,13 @@ export class Clouds {
 
   /** Once per frame, right before `render` and after `Stage.applyWeather` (it reads the live fog density). */
   frame(cam: THREE.PerspectiveCamera, E: CloudEnv, dt: number) {
+    this.group.visible = this.ready;
+    if (!this.ready) return;
     const t0 = performance.now(), S = this.stats;
     this.t += dt;
+    // Scripts snap with `amount = -1` (then the fade is over too); the first frames after the maps arrive fade in.
+    this.fade = this.amount < 0 && this.fade > 0 ? 1 : Math.min(1, this.fade + Math.min(dt, 0.1) / FADE_S + 1e-3);
+    const fade = this.fade * this.fade * (3 - 2 * this.fade);
     const c = E.cloud, h = E.sunH;
     const T = TYPES[E.type] ?? TYPES.none;
     // Type targets ease (clouds grow and shrink over a few seconds); the first frame and a hidden-tab gap snap.
@@ -286,7 +225,7 @@ export class Clouds {
       const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
       dm.color.setRGB(this.tmp.r + nightL + flash * 0.5, this.tmp.g + nightL * 1.1 + flash * 0.52, this.tmp.b + nightL * 1.3 + flash * 0.6);
-      dm.opacity = dOp;
+      dm.opacity = dOp * fade;
     }
 
     // ---- storm tower: rises on the upwind side, then the deck closes over it ----
@@ -295,6 +234,7 @@ export class Clouds {
     tw.visible = rise > 0.01;
     S.tower = rise;
     if (tw.visible) {
+      tm.opacity = fade;
       const R = 6 * HD, top = (4 + 38 * rise) * DEG, wdt = 1.7 * R, hgt = R * (Math.tan(top) + 0.4) / 0.86;
       tw.position.set(cam.position.x - E.dirX * R, cam.position.y - 0.4 * R + hgt * 0.5 - hgt * 0.08, cam.position.z - E.dirZ * R);
       tw.scale.set(wdt, hgt, 1);
@@ -306,6 +246,7 @@ export class Clouds {
     // ---- heaps ----
     const hm = this.heaps.material as THREE.MeshBasicMaterial;
     const dark = Math.max(this.dark, 0.75 * smooth(0.3, 0.9, c));
+    hm.opacity = fade;
     this.tmp.copy(this.shade).lerp(this.lit, mixLit).multiplyScalar(1 - 0.8 * dark);
     hm.color.setRGB(this.tmp.r + nightL + flash * 0.3, this.tmp.g + nightL * 1.1 + flash * 0.3, this.tmp.b + nightL * 1.3 + flash * 0.35);
     const sx = E.sunDir.x, sz = E.sunDir.z;
