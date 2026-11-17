@@ -207,6 +207,44 @@ try {
   }
 
   {
+    // Director: the cinema camera cycles through distinct composed shots; between shots it either travels (bounded
+    // per-frame step) or switches under the black overlay (`cutFrame`, the intended cut); a hand-set view is never moved.
+    const dp = await browser.newPage({ viewport: { width: 1024, height: 640 } });
+    await dp.goto(`${url}?cycle=false&timeOfDay=13&weather=calm&season.on=false&t=60&speed=0&panel=closed`);
+    await dp.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 30000 });
+    await dp.waitForTimeout(3000);
+    const r = await dp.evaluate(() => new Promise((res) => {
+      const A = window.__arbor, cam = A.stage.camera, D = A.stage.director, last = cam.position.clone();
+      const o = { kinds: [], cuts: 0, frames: 0, maxStep: 0, maxSpeed: 0, at: '', overlay: 0, minY: 1e9 };
+      let lt = performance.now(), t0 = lt, nextGo = lt + 1500, i = 0;
+      const order = ['hero', 'wide', 'canopy', 'rise', 'branch', 'orbit'];
+      const tick = () => {
+        const now = performance.now(), dt = (now - lt) / 1000, s = D.state(), step = cam.position.distanceTo(last);
+        if (s.kind && o.kinds.indexOf(s.kind) < 0) o.kinds.push(s.kind);
+        o.minY = Math.min(o.minY, cam.position.y);
+        if (s.cutFrame) { o.cuts++; o.overlay = Math.max(o.overlay, Number(document.querySelector('#arbor-cut')?.style.opacity ?? 0)); }
+        else if (dt > 0 && dt < 0.25) { o.frames++; if (step > o.maxStep) { o.maxStep = step; o.at = s.kind; } o.maxSpeed = Math.max(o.maxSpeed, step / dt); }
+        last.copy(cam.position); lt = now;
+        if (now > nextGo && i < order.length) { D.go(order[i], i % 2 === 1); i++; nextGo = now + 2600; }
+        if (now - t0 < 19000) requestAnimationFrame(tick); else res(o);
+      };
+      requestAnimationFrame(tick);
+    }));
+    check('director cycles through distinct shots: no per-frame jump outside its cuts, cuts happen under black, camera above ground',
+      r.kinds.length >= 5 && r.cuts >= 2 && r.overlay > 0.95 && r.maxSpeed < 14 && r.maxStep < 1.2 && r.minY > 0.3, JSON.stringify({ ...r, maxStep: +r.maxStep.toFixed(3), maxSpeed: +r.maxSpeed.toFixed(2), minY: +r.minY.toFixed(2) }));
+    await dp.mouse.move(300, 250); await dp.mouse.down(); await dp.mouse.move(420, 290, { steps: 8 }); await dp.mouse.up();
+    await dp.waitForTimeout(2500);
+    const pose = () => dp.evaluate(() => { const st = window.__arbor.stage; return [...st.camera.position.toArray(), ...st.controls.target.toArray(), st.manual ? 1 : 0, document.querySelector('#arbor-next-shot').hidden ? 1 : 0]; });
+    const a0 = await pose();
+    await dp.evaluate(() => { const D = window.__arbor.stage.director; D.event('bird', 2, 5, 2); D.go('wide'); });
+    await dp.keyboard.press('n');
+    await dp.waitForTimeout(5000);
+    const a1 = await pose();
+    check('director never moves a hand-set view (N key, forced shot and an event while manual); next-shot button hidden',
+      a0[6] === 1 && a1[6] === 1 && a1[7] === 1 && Math.max(...a0.slice(0, 6).map((v, j) => Math.abs(v - a1[j]))) < 1e-3, JSON.stringify(a1.map((v) => +v.toFixed(3))));
+    await dp.close();
+  }
+  {
     // Stale structure: the incremental `updateStructure` must equal a full recomputation, bit for bit, after live
     // growth (new segments, thickening, self-pruning, juvenile shedding) and after a limb break.
     const sp = await browser.newPage({ viewport: { width: 640, height: 480 } });
