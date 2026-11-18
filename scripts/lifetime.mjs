@@ -1,7 +1,7 @@
 // Lifetime (`growth.years`, docs/bigtree.md 6.16) read from the running app: what every preset and start-screen kind
 // defaults to on desktop and on the phone path, the Lifetime control on both layouts (screenshots), the remembered
 // choice across a reload, and a live switch on a tree that has stopped.
-// Usage: node scripts/lifetime.mjs URL [table,control,switch]   (built app; PREFIX=life)
+// Usage: node scripts/lifetime.mjs URL [table,control,switch]   (built app; PREFIX=life, DEVS=desk,phone, STORED=3|1 = remembered choice for the table)
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 const url = process.argv[2] ?? 'http://127.0.0.1:5880/', what = (process.argv[3] ?? 'table,control,switch').split(','), PREFIX = process.env.PREFIX ?? 'life';
@@ -17,12 +17,16 @@ const open = async (ctx, q) => { const page = await ctx.newPage(); page.setDefau
 const ff = async (page, T) => { while (await page.evaluate(() => window.__arbor.sim.time) < T - 0.01) await page.evaluate((T) => window.__arbor.fastForward(Math.min(15, T - window.__arbor.sim.time)), T); };
 try {
   if (what.includes('table')) for (const dev of ['desk', 'phone']) for (const extra of ['', '&years=3', '&years=0']) {
+    if (process.env.DEVS && !process.env.DEVS.split(',').includes(dev)) continue;
     const ctx = await browser.newContext(DEV[dev]);
-    const page = await open(ctx, `start=0&speed=0&${Q}${extra}`);
+    if (process.env.STORED) await ctx.addInitScript((v) => localStorage.setItem('arbor.years', v), process.env.STORED); // the device's remembered choice
+    const page = await open(ctx, `start=0&speed=0&panel=open&tab=grow&${Q}${extra}`);
     const names = await page.evaluate(() => window.__arbor.presetNames ?? [...document.querySelectorAll('.ap-chip[data-preset]')].map((e) => e.dataset.preset));
     const out = [];
     for (const n of names) { await page.evaluate((n) => window.__arbor.loadPreset(n), n); await page.waitForTimeout(150); const s = await state(page); out.push(`${n}: ${s.sim > 1 ? s.sim : 1} (sim.years ${s.sim}, maxNodes ${s.maxNodes})`); }
     console.log(`PRESETS ${dev}${extra || ' default'} | ${out.join(' | ')}`);
+    await page.evaluate(() => window.__arbor.loadPreset('Weeping willow')); await page.waitForTimeout(1500);
+    { const w = await state(page); await page.evaluate(() => window.__arbor.loadPreset('Oak meadow')); await page.waitForTimeout(1500); const o = await state(page); console.log(`CONTROL SHOWS ${dev}${extra || ' default'} | willow: ${w.pressed} (param ${w.param}) | oak: ${o.pressed} (param ${o.param})`); }
     // Start-screen kinds: rolls until every kind was seen; the kind is the title's first word (or the world's name).
     const seen = {};
     await page.evaluate(() => document.querySelector('#arbor-choose').click());
