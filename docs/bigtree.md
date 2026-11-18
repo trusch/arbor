@@ -526,6 +526,37 @@ Breakage at size on this tree (**M**, `BASES=1,0.8,0.6 node scripts/breaksize.mj
 
 Lever-1+2 tree (before the domes, `YEAR_SETTLE` 0.11) at -0.25: p98 0.70, 3 / 2 limbs at 1.0 / 0.8, 0 at 0.6. Gain 0 means year-3 wood is exactly as strong per `SIGMA_REF r³` as year-1 wood (the -0.25 that made it weaker was backwards). Why the big tree carries so little load: u = wind load / (strength x `SIGMA_REF` x r³), and the pipe model makes r^n proportional to the tips carried with n about 2.5 (x (1 - `YEAR_EXP` x ageQ), lower still on old wood), so r³ grows like (load)^(3/n) = load^1.2 or faster: every doubling of what a limb carries more than doubles its section modulus. On the 15 m tree the scaffold sits at u 0.1 to 0.3 and only thin (1 to 4 cm) laterals with long subtrees ever pass 1. At gain 0 a wind of 0.8 still reaches 1 limb in 120 s (a 33-node, 1 cm lateral), but 1.0 breaks no more than 0.8: the curve is flat because there is one weak lateral and then a gap. A real large-limb failure would need a size term (strength falling with r, e.g. r^2.5 instead of r³), not a year gain.
 
+### 6.9 Upper limbs out, smooth scaffold, open bays (branch `bigtree-crown`, behind `?years=3`)
+
+Cause, from the per-limb profiles (`PROF=1 node scripts/archcensus.mjs`, world / rest elevation per 3-node chord base to tip, sag): the steep middles of the upper limbs (eM 65 and 82 degrees) are in the REST direction, not missing sag; these limbs carry 345 to 433 m of wood (load 0.96), so settling was never short of load. The shell above pulled them up and `settle` scales with the horizontal share h, which is near 0 on steep wood. The waves are in the rest direction too (sag is smooth along every limb): most of them sit in the year-1 part of each limb (chords 0 to 13, out of reach of a years-2-3 rule), the rest came from the patchy shell pull and the per-segment turn. Bays: with 5 scaffold azimuths 0.85 to 1.6 rad apart and `SCAF_SIGMA` 0.38, a gaussian lobe never drops below 0.12 between neighbours, so there were no bays to keep empty, and side wood of the neighbouring domes grew into them.
+
+Rules (only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 untouched):
+
+| Rule | Built as |
+|---|---|
+| Upper limbs out (lever 1) | scaffold wood (order 1-2, not `sup`) never wants a direction steeper than `YEAR_UP_MAX` 0.7 (sine, 44 degrees; order 2: 0.6), applied in `completeSegment` next to `DOWN_MAX`; `settle` uses sqrt(h) instead of h |
+| Smooth sweep (lever 2) | scaffold wood: wander x `YEAR_SCAF_CALM` 0, attractor pull x `YEAR_SCAF_ATT` 0.35, straightness x `YEAR_SCAF_STR` 2, maxTurn x `YEAR_SCAF_TURN` 0.5 |
+| Open bays (lever 3) | in `updateLight`, side wood (order >= 2 or `sup`) whose tip is beyond `YEAR_BAY_R` 0.45 x the crown reach and at `scafLobe(.., YEAR_BAY_SIGMA 0.25)` < `YEAR_BAY_CUT` 0.15 counts as shaded (pruned after 4 ticks through the normal path, `sChainDirty`); shell domes narrower, `SCAF_SIGMA` 0.3, `SCAF_BAY` 0.95 |
+
+All three are growth / prune rules; the only structure-pass change is sqrt(h) inside `settle` (same expression in all three passes). `structureCheck` 0 at t = 750 after every lever (CHECK=1) and in every shot.
+
+Census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; waves = sign changes of the chord-elevation slope (steps under 3 degrees ignored) on the year-2/3 part of the 5 thickest limbs; bay share = leafy nodes beyond half the leaf reach at sigma-0.25 lobe < 0.15):
+
+| Year 3, t = 750 | Before (34873c5) | Lever 1 | Levers 1+2 | After (a9a5de9) |
+|---|---|---|---|---|
+| Height / width / w:h | 13.86 / 20.30 / 1.46 | 14.07 / 20.16 / 1.43 | 14.86 / 20.37 / 1.37 | 14.08 / 20.41 / 1.45 |
+| Limb eB / eM / eT, thickest first | 54/0/-22, 47/25/1, 33/82/4, 52/65/-2, 35/-7/-27 | 54/10/-12, 47/26/-31, 36/34/-7, 52/34/-11, 35/-17/-2 | 47/29/-10, 54/15/2, 52/64/-11, 33/33/-8, 36/-13/-10 | 54/11/-13, 47/28/-18, 52/63/-8, 34/35/-9, 34/-12/0 |
+| Waves on year-2/3 wood (5 limbs) | 3 2 2 2 2 = 11 | | 3 1 0 4 0 = 8 | |
+| Bay share of outer leafy nodes | 5.9 % | | | 0.3 % (lobe < 0.3: 14.4 % → 4.6 %) |
+| Nodes / sim leaves | 31 526 / 243.5k | 32 728 / 252.3k | 31 292 / 241.6k | 30 308 (-3.9 %) / 232.9k (-4.4 %) |
+| Trunk r at 1.3 m | 40.4 cm | 38.2 | 39.5 | 38.1 cm |
+
+The limb from 4.5 m is now 34/35/-9 (was 33/82/4). The one that stays steep (eM 63-65, from 2.7 m) is steep in its year-1 wood (rest 72 to 85 degrees over chords 5 to 10), which this pass may not touch. Run-to-run the limbs swap places (rng order), compare by base height.
+
+Pictures (`GPU=vulkan node scripts/majestic.mjs URL majF-after`, built app, real GPU, phone and desktop; before = `shots/majE-after-*` (34873c5); in the app the tree has 28.0k nodes / 214.7k sim leaves, `structureCheck` 0, programs phone 8 / desktop 33): `shots/majF-after-{phone,desktop}-{summer,winter}-{wide,framed,under}.png`. What they say: in summer the crown is no longer one closed dome: two or three leaf masses with meadow and sky showing through the notches between them (clear on desktop, readable on the phone). In winter the crown is broader and the upper limbs lean out instead of standing up as a vase; the silhouette is a wide umbrella. Still not majestic: the under shot shows thick limbs that loop and kink (year-1 rest waves plus sag), the upper crown is still a fine twig ball in winter, and all limbs leave the trunk below 3 m at similar angles, so the scaffold reads as similar arcs.
+
+Breakage (`BASES=1,0.8,0.6 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, 30 308 nodes, 633 limbs evaluated): at `YEAR_SIGMA` 0, u p98 0.34, max 1.17; 1.0 → 1 limb (2.9 cm, 202 nodes), 0.8 → 0, 0.6 → 0. The change moved it below the target (1 to 3 limbs at 0.8). Within `YEAR_SIGMA` >= 0 it cannot be recalibrated (a positive gain only makes wood stronger): -0.1 gives p98 0.42, 1 / 1 / 0 and -0.2 gives p98 0.57, 1 / 1 / 0. `YEAR_SIGMA` is left at 0; the size term from 6.8 is still the fix.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
