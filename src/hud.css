@@ -1,0 +1,75 @@
+/* Info overlay ("almanac"). One dark translucent plate, no backdrop-filter (phone GPUs pay for blurring the canvas).
+   Layout system: the instrument is top left (phone: the full width at the top); the camera buttons (auto-camera pill,
+   next shot) sit right under it via --hud-h; Controls is top right (phone: bottom left) and sound bottom left. */
+:root { --hud-h: 0px; --hud-top: calc(12px + env(safe-area-inset-top, 0px)); }
+.hud {
+  position: fixed; z-index: 5; left: calc(14px + env(safe-area-inset-left, 0px)); top: var(--hud-top); width: max-content; max-width: min(460px, calc(100vw - 190px));
+  background: rgba(10, 14, 16, 0.62); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 16px; color: #fff;
+  font: 400 13px/1.25 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; letter-spacing: 0.02em; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7); box-sizing: border-box; overflow: hidden;
+}
+.hud *, .hud *::before { box-sizing: border-box; }
+body.watch .hud, body.starting .hud, body.hud-off .hud { display: none; }
+.hud-strip {
+  display: flex; align-items: center; gap: 0; width: 100%; min-height: 52px; margin: 0; padding: 7px 10px; background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit;
+  text-align: left; text-shadow: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.hud-strip:focus-visible { outline: 2px solid #c3e88d; outline-offset: -3px; border-radius: 14px; }
+.hud-seg { display: flex; align-items: center; gap: 7px; min-width: 0; flex: none; }
+.hud-seg + .hud-seg { margin-left: 10px; padding-left: 10px; border-left: 1px solid rgba(255, 255, 255, 0.2); }
+.hud-wx { flex: 1 1 auto; }
+.hud-txt { display: flex; flex-direction: column; min-width: 0; }
+.hud-txt b, #wx .wx-sky { font-weight: 650; font-size: 14px; white-space: nowrap; }
+.hud-txt i, #wx .wx-temp, #wx .wx-wind { font-style: normal; font-size: 12.5px; color: #dfe7e2; white-space: nowrap; }
+.hud-clock { font-size: 16px !important; min-width: 5ch; }
+/* day dial */
+.hud-dial { width: 48px; height: 30px; flex: none; overflow: visible; }
+.hud-sky { fill: #6fb1e6; transition: fill 1.5s; }
+.hud-dial[data-sky='twilight'] .hud-sky { fill: #d9793f; }
+.hud-dial[data-sky='night'] .hud-sky { fill: #1b2748; }
+.hud-arc { fill: none; stroke: rgba(255, 255, 255, 0.85); stroke-width: 1.2; }
+.hud-tick { fill: none; stroke: rgba(255, 255, 255, 0.55); stroke-width: 1; stroke-linecap: round; }
+.hud-ground { fill: #0b0f0d; stroke: none; }
+.hud-horizon { stroke: #fff; stroke-width: 1.4; stroke-linecap: round; }
+.hud-sun circle { fill: #ffd257; stroke: #7a4a00; stroke-width: 0.8; }
+.hud-sun path { fill: none; stroke: #ffd257; stroke-width: 1.3; stroke-linecap: round; }
+.hud-dial:not([data-sky='day']) .hud-sun path { display: none; }
+.hud-dial[data-sky='night'] .hud-sun circle { fill: #8a7a4a; stroke: none; opacity: 0.8; }
+.hud-moon circle { fill: #2b3350; stroke: #c9d3f2; stroke-width: 0.7; }
+.hud-moon path { fill: #f3f1e4; }
+/* year ring */
+.hud-ring { width: 32px; height: 32px; flex: none; }
+.hud-q[data-s='0'] { stroke: #8fd46a; } .hud-q[data-s='1'] { stroke: #f2c84b; } .hud-q[data-s='2'] { stroke: #e0803a; } .hud-q[data-s='3'] { stroke: #b9d4ee; }
+.hud-mark path { stroke: #fff; stroke-width: 1.6; stroke-linecap: round; }
+.hud-mark circle { fill: #fff; stroke: #10160f; stroke-width: 1.4; }
+.hud.no-seasons .hud-ring { opacity: 0.45; } .hud.no-seasons .hud-mark { display: none; }
+/* weather = #wx, folded in */
+#wx { display: grid; grid-template-columns: 24px auto auto; column-gap: 7px; align-items: center; justify-content: start; min-width: 0; color: #fff; }
+#wx svg { grid-row: 1 / 3; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#wx .wx-sky { grid-column: 2 / 4; overflow: hidden; text-overflow: ellipsis; }
+#wx .wx-temp { grid-column: 2; font-weight: 600; color: #fff; }
+#wx .wx-wind { grid-column: 3; }
+/* tree line */
+.hud-tree { padding: 5px 12px 7px; border-top: 1px solid rgba(255, 255, 255, 0.14); font-size: 12.5px; color: #e6ece8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.hud-tree::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #9be36a; }
+.hud-tree[data-state='fully grown']::before { background: #f2c66d; } .hud-tree[data-state='resting for winter']::before { background: #b9d4ee; } .hud-tree[data-state='paused']::before { background: #9aa39d; }
+body.hud-compact .hud-tree { display: none; }
+/* card */
+.hud-card { margin: 0; padding: 6px 12px 9px; border-top: 1px solid rgba(255, 255, 255, 0.14); display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; background: rgba(6, 9, 10, 0.25); }
+.hud-card[hidden] { display: none; }
+.hud-card div { min-width: 0; } .hud-card div:first-child { grid-column: 1 / 3; }
+.hud-card dt { font-size: 12px; color: #b9c4ba; letter-spacing: 0.04em; }
+.hud-card dd { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* camera buttons follow the instrument */
+.ap-autocam { left: calc(14px + env(safe-area-inset-left, 0px)); top: calc(var(--hud-top) + var(--hud-h) + 10px); }
+.ap-nextshot { left: calc(14px + env(safe-area-inset-left, 0px)); top: calc(var(--hud-top) + var(--hud-h) + 8px); background: rgba(10, 14, 16, 0.5); opacity: 0.8; }
+body.hud-off .ap-autocam, body.hud-off .ap-nextshot, body.starting .ap-autocam { top: var(--hud-top); }
+@media (max-width: 700px) {
+  .hud { left: calc(10px + env(safe-area-inset-left, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); width: auto; max-width: none; }
+  .hud-strip { padding: 7px 8px; }
+  .hud-seg { gap: 6px; } .hud-seg + .hud-seg { margin-left: 8px; padding-left: 8px; }
+  .hud-dial { width: 44px; height: 28px; } .hud-ring { width: 28px; height: 28px; }
+  #wx { grid-template-columns: 22px auto auto; column-gap: 5px; } #wx svg { width: 22px; height: 22px; }
+  .ap-autocam, .ap-nextshot { left: calc(10px + env(safe-area-inset-left, 0px)); }
+}
+@media (max-width: 380px) { .hud-part, .hud-day .hud-txt i { display: none; } }
