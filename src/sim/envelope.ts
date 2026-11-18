@@ -82,10 +82,28 @@ export function yearLobe(seed: number, a: number, h: number): number {
 }
 
 /**
+ * Domes and bays (lever 3 of 6.8): with the scaffold picked, the shell lobes sit on the scaffold limbs' azimuths (one
+ * dome per limb, gaussian SCAF_SIGMA rad wide, a slight twist with height) and the bays between them are thinned to
+ * 1 - SCAF_BAY and pulled in by SCAF_LOBE. The attractor count stays the same (it is redistributed, not removed).
+ */
+export const SCAF_SIGMA = 0.38, SCAF_LOBE = 0.3, SCAF_BAY = 0.85;
+export function scafLobe(az: number[], a: number, h: number): number {
+  let m = 0;
+  for (const b of az) {
+    const d = Math.atan2(Math.sin(a - b - 0.25 * (h - 0.5)), Math.cos(a - b - 0.25 * (h - 0.5)));
+    const v = Math.exp(-(d * d) / (2 * SCAF_SIGMA * SCAF_SIGMA));
+    if (v > m) m = v;
+  }
+  return m;
+}
+
+/**
  * Attractors in the shell between the envelope of year `yi - 1` and year `yi` (T9), at YEAR_DENSITY x the year-1
  * density. Own rng stream per year (seed ^ year), the sim rng is not consumed.
  */
-export function sampleShell(p: ArborParams, seed: number, yi: number, years: number): Float32Array {
+export function sampleShell(p: ArborParams, seed: number, yi: number, years: number, az?: number[]): Float32Array {
+  const scaf = az !== undefined && az.length > 0;
+  const LOBE = scaf ? SCAF_LOBE : YEAR_LOBE, BAY = scaf ? SCAF_BAY : YEAR_BAY;
   const rng = new Rng((seed ^ 0x51ed27) + yi * 7919);
   const a = envelopeDimsYear(p, yi - 1, years), b = envelopeDimsYear(p, yi, years);
   const vol = (e: { radius: number; height: number }) => e.radius * e.radius * e.height;
@@ -97,8 +115,8 @@ export function sampleShell(p: ArborParams, seed: number, yi: number, years: num
     const x = rng.range(-1.25, 1.25), z = rng.range(-1.25, 1.25), h = rng.next();
     const rr = Math.sqrt(x * x + z * z);
     // Lobed crown: reach x (1 - YEAR_LOBE .. 1 + YEAR_LOBE) by azimuth, and bays thinned (density down to 1 - YEAR_BAY).
-    const lb = yearLobe(seed, Math.atan2(z, x), h);
-    if (rr > envelopeProfile(sh, h) * (1 + YEAR_LOBE * (2 * lb - 1)) || rng.next() > 1 - YEAR_BAY * (1 - lb)) continue;
+    const lb = scaf ? scafLobe(az, Math.atan2(z, x), h) : yearLobe(seed, Math.atan2(z, x), h);
+    if (rr > envelopeProfile(sh, h) * (1 + LOBE * (2 * lb - 1)) || rng.next() > 1 - BAY * (1 - lb)) continue;
     const px = x * b.radius, py = b.base + h * b.height, pz = z * b.radius;
     // Inside last year's envelope: already colonised.
     const ha = (py - a.base) / a.height;

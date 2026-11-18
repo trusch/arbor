@@ -163,10 +163,10 @@ const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = 0.02, YEAR_CALM = 
  * growing weight: extra bend per node = YEAR_SETTLE x ageQ x len x h x load x reach (order 2: x YEAR_SETTLE_O2), with
  * h = horizontal share of the rest direction (no moment on vertical wood), load = subLen / (subLen + YEAR_SETTLE_L)
  * (metres of wood carried) and reach = smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, distance from the axis), so the
- * steep year-1 limbs sweep out and level toward the crown edge. Computed in the structure pass (exact; inputs are the
+ * steep year-1 limbs sweep out and level toward the crown edge. 0.11 with the scaffold lobes hung an order-6 twig 1 m below the ground; 0.08 does not. Computed in the structure pass (exact; inputs are the
  * node's own rest data, subLen, the chain's order / `sup` and the quantised ageQ, whose steps are full passes).
  */
-const YEAR_SETTLE = 0.11, YEAR_SETTLE_O2 = 0.5, YEAR_SETTLE_L = 15, YEAR_SETTLE_R0 = 0.6, YEAR_SETTLE_R1 = 4.5;
+const YEAR_SETTLE = 0.08, YEAR_SETTLE_O2 = 0.5, YEAR_SETTLE_L = 15, YEAR_SETTLE_R0 = 0.6, YEAR_SETTLE_R1 = 4.5;
 const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
@@ -304,7 +304,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
-    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.scafPicked = false; this.attrT = new Float64Array(0); this.attrNext = 0;
+    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.scafPicked = false; this.scafAz = []; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -699,6 +699,9 @@ export class TreeSim {
   /** Settling is on once the scaffold is picked and the tree has aged (years 2-3). */
   private get settleOn() { return this.years > 0 && this.scafPicked && this.ageQ > 0; }
 
+  /** Tip azimuths of the scaffold limbs (pickScaffold); the year-2/3 shell lobes sit on them (`scafLobe`). */
+  private scafAz: number[] = [];
+
   private pickScaffold() {
     const nodes = this.nodes, chains = this.chains;
     const o1: number[] = [];
@@ -719,6 +722,7 @@ export class TreeSim {
       else if (chains[nodes[c.nodes[0]].chain].sup) c.sup = 1;
     }
     this.scafPicked = true;
+    this.scafAz = az;
     this.sFull = true; // `sup` is a structure input now (settling)
   }
 
@@ -728,7 +732,7 @@ export class TreeSim {
     if (wave === 0) {
       // This year's shell, sorted inside-out (distance from the crown base point in envelope units) and opened at an
       // even rate from bud break (t0) to SHELL_OPEN of the year, so the crown grows through the season, not in a burst.
-      const add = sampleShell(p, p.seed.seed, yi, this.years);
+      const add = sampleShell(p, p.seed.seed, yi, this.years, this.scafAz);
       const env = envelopeDimsYear(p, yi, this.years), m = add.length / 3;
       const key = new Float64Array(m), ord = new Uint32Array(m);
       for (let i = 0; i < m; i++) {
