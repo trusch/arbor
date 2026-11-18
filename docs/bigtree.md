@@ -487,6 +487,38 @@ Breakage at size on this tree (**M**, `YSIG=g BASES=1,0.8,0.6,0.35 node scripts/
 
 `YEAR_SIGMA` = -0.25: wood of a year-3 tree counts as 0.5 x year-1 strength per `SIGMA_REF r³` (the r³ normalisation over-rewards the thick scaffold; the limbs that break are 1.0 to 1.5 cm laterals of 25 to 43 nodes). Strength is clamped at 0.25 (from year 5 on with this gain). Year 1 is exactly 1 (ageQ 0).
 
+### 6.8 Settling scaffold, open twig haze, domes and bays (branch `bigtree-crown`, behind `?years=3`)
+
+Cause of the upright dome: the year-1 limbs keep their 37 to 59 degree rest angles (wood is not regrown), the sag of a 10 to 20 cm limb under the pipe-model bend term is near 0, so the silhouette is a vase; every tip on the year-2/3 shell branches at the same rate, so in winter the outer twigs form one fine haze; the shell lobes (6.6) have seeded phases unrelated to where the limbs are, so no dome sits on a limb and no bay is empty.
+
+Rules (only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 untouched: t = 150 gives 4910 nodes, 9.09 m, 16.8 cm):
+
+| Rule | Built as |
+|---|---|
+| Settling (lever 1) | in the structure pass, scaffold wood (order 1 and 2, not `sup`, not `juv`) adds a rest-pose bend per node `YEAR_SETTLE` 0.08 x `ageQ` x len x h x load x reach (order 2 x 0.5): h = horizontal share of the rest direction, load = subLen / (subLen + 15 m), reach = smoothstep(0.6, 4.5 m, rest distance from the axis). It goes into `sag` like the gravity bend (inherited, fading over `SAG_RIGHT`), so the wood the limb carries follows it. Inputs are rest data, `subLen`, chain order / `sup` and the quantised `ageQ` (each step is a full pass); `pickScaffold` sets `sFull` because `sup` is now a structure input. Same expression in `structureFull`, `structureForward` and `structureTips`: `structureCheck` 0 |
+| Open twig haze (lever 2) | bud break on order >= 2 wood (new shoots of order >= 3) x `YEAR_TWIG` 0.4 |
+| Domes and bays (lever 3) | `sampleShell(.., az)` with the scaffold tip azimuths (`scafAz`, stored by `pickScaffold`): lobe = max over limbs of a gaussian `SCAF_SIGMA` 0.38 rad (twist 0.25 rad over the height), reach x (1 +- `SCAF_LOBE` 0.3), bays thinned to 1 - `SCAF_BAY` 0.85; the attractor count is unchanged (redistributed) |
+
+Census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; eB / eM / eT = world (sagged) chord elevation of the first, middle and last fifth of each order-1 limb, new in the script):
+
+| Year 3, t = 750 | Before (2680543) | After |
+|---|---|---|
+| Height / width / w:h | 14.74 / 17.74 m / 1.20 | 13.86 / 20.30 m / 1.46 |
+| Trunk r at 1.3 m | 37.1 cm | 40.4 cm |
+| Order-1 limbs: girth | 21.1 / 19.3 / 13.2 / 11.3 / 11.2 cm | 22.5 / 20.1 / 15.0 / 13.8 / 7.6 cm |
+| Limb elevation eB / eM / eT (deg), thickest first | 48/39/10, 54/24/13, 36/50/-18, 52/69/33, 36/-12/9 | 54/0/-22, 47/25/1, 33/82/4, 52/65/-2, 35/-7/-27 |
+| Limb tip height / reach (m) | 9.4/8.2, 9.4/7.7, 11.2/8.1, 10.7/6.7, 7.8/8.4 | 5.0/9.4, 6.9/9.2, 11.7/6.1, 8.8/8.2, 5.5/9.3 |
+| Order 3 / 4 / 5 / 6 count | 114 / 174 / 176 / 91 | 184 / 231 / 163 / 68 (fewer finest twigs, but more order 3-4 chains: the denser domes start more shoots) |
+| Leafy radius by band | 0.2 4.4 8.1 9.1 10.2 10.5 10.0 9.6 8.4 6.3 | 7.0 6.9 9.8 11.0 11.2 11.3 11.7 11.0 9.3 7.1 |
+| Lowest leaf | 0.04 m | 0.04 m |
+| Nodes / sim leaves | 33 000 / 251k | 31 526 (-4.5 %) / 243.5k (-3 %) |
+
+Intermediate measurements (same census): lever 1 alone at `YEAR_SETTLE` 0.16 / 0.11 / 0.08 gave limb tips at -24..-32 / -18..-31 / -10..-15 degrees (0.16 too much droop); lever 2 at `YEAR_TWIG` 0.4 / 0.25: 29.8k / 27.9k nodes (0.25 outside the 10 % band), orders 5 and 6 138 / 69 against 176 / 91; lever 3 with `YEAR_SETTLE` 0.11 hung an order-6 twig 1 m below the ground (lowest leaf -0.97 m; 0.08 keeps 0.04 m). Run-to-run the limbs differ (any rule change moves the rng order), so compare the pattern, not one limb.
+
+PICTURES_AFTER
+
+BREAK_AFTER
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
