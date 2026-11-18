@@ -29,6 +29,12 @@ const FADE_S = 0.45, FADE_STEPS = 6;
  * sun / growing tree; a bake that still meets a running fade starts from what is drawn, so it stays continuous).
  */
 const FADE_MAX_STEP = 5, FADE_STEPS_MAX = 16;
+/**
+ * Moving sun flecks: layers, drift in m at wind strength 1, flicker depth, height of each layer above the decal (the
+ * second one sits in the grass, so flecks also land on the tufts), additive gain and the ground / grass albedo the
+ * light is multiplied with (a fleck must not be brighter than sunlit meadow).
+ */
+const FLECK_LAYERS = 2, FLECK_DRIFT = 0.42, FLECK_FLICKER = 0.75, FLECK_Y = [0.012, 0.19], FLECK_GAIN = 0.8, FLECK_ALBEDO = [0.05, 0.06, 0.022];
 
 export class CanopyShadow {
   readonly mesh: THREE.Mesh;
@@ -66,6 +72,11 @@ export class CanopyShadow {
   fadeUploads = 0;
   /** Summed ms of all fade steps incl. the one inside each bake (pixel blend + canvas write). */
   fadeMs = 0;
+  /** Moving sun-fleck layers (see `flicker`). */
+  readonly flecks: { mesh: THREE.Mesh; ctx: CanvasRenderingContext2D; img: ImageData; tex: THREE.CanvasTexture }[] = [];
+  /** Azimuth of the drawn plane this frame (set by `follow`). */
+  private fux = 1;
+  private fuz = 0;
   private key = '';
   private lastT = -1e9;
   private ver = -1;
@@ -107,6 +118,93 @@ export class CanopyShadow {
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), mat);
     this.mesh.renderOrder = 1;
     this.mesh.visible = false;
+    // Moving sun flecks: planes cloned from the decal material (map, colour, additive blending changed: the rain /
+    // celestial recipe, same program), children of the decal plane, so they share its frame and are never drawn without it.
+    const hidden = new THREE.MeshBasicMaterial({ visible: false });
+    (hidden as unknown as { allowOverride: boolean }).allowOverride = false;
+    for (let l = 0; l < FLECK_LAYERS; l++) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = S;
+      const ctx = cv.getContext('2d')!, img = ctx.createImageData(S, S);
+      img.data.fill(255);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = this.tex.colorSpace;
+      const m = mat.clone();
+      m.map = tex; m.color.setRGB(0, 0, 0); m.blending = THREE.AdditiveBlending; m.depthWrite = false; m.opacity = 1;
+      const fm = new THREE.Mesh(this.mesh.geometry, m);
+      fm.renderOrder = 1.1 + 0.01 * l;
+      fm.visible = false;
+      fm.userData.gbufferMaterial = hidden;
+      this.mesh.add(fm);
+      this.flecks.push({ mesh: fm, ctx, img, tex });
+    }
+  }
+
+  /**
+   * Fleck layer textures for the frame just baked: one hashed soft ellipse per cell of a world lattice (own lattice per
+   * layer, so the layers never coincide), times a mask from the baked shadow alpha (flecks exist only inside the shade,
+   * fewer under the dense core). World-anchored like the decal's own flecks: a bake does not move them.
+   */
+  private bakeFlecks(u0: number, u1: number, w0: number, w1: number, toU: number, toW: number, ux: number, uz: number, fe: number) {
+    const S = this.S, to = this.to, buf = this.tmp;
+    let f = 1;
+    const fr = () => { f = Math.imul(f ^ (f >>> 15), 2246822519); f = Math.imul(f ^ (f >>> 13), 3266489917); f ^= f >>> 16; return (f >>> 8) / 16777216; };
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let c = 0; c < 4; c++) {
+      const u = c & 1 ? u1 : u0, w = c & 2 ? w1 : w0, x = u * ux - w * uz, z = u * uz + w * ux;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    for (let l = 0; l < this.flecks.length; l++) {
+      const FL = 0.46 + 0.09 * l, F = this.flecks[l], px8 = F.img.data;
+      buf.fill(0);
+      const i1 = Math.ceil(x1 / FL), j1 = Math.ceil(z1 / FL);
+      for (let jj = Math.floor(z0 / FL); jj < j1; jj++) for (let ii = Math.floor(x0 / FL); ii < i1; ii++) {
+        f = (Math.imul(ii, 374761393) ^ Math.imul(jj, 668265263) ^ Math.imul(l + 3, 1274126177)) | 0;
+        const fx = (ii + fr()) * FL, fz = (jj + fr()) * FL;
+        const gx = (fx * ux + fz * uz - u0) * toU, gz = (-fx * uz + fz * ux - w0) * toW;
+        if (!(gx >= 0 && gz >= 0 && gx < S && gz < S)) continue;
+        if (to[(gz | 0) * S + (gx | 0)] < 20 || fr() < 0.25) continue;
+        const rr = 0.07 + 0.12 * fr(), ru = Math.min(6, Math.max(0.9, rr * fe * toU)), rw = Math.min(4, Math.max(0.9, rr * toW)), wgt = 0.5 + 0.5 * fr();
+        const eu = Math.ceil(ru * 1.7), ew = Math.ceil(rw * 1.7), iu2 = 1 / (ru * ru), iw2 = 1 / (rw * rw);
+        for (let z = Math.max(0, (gz | 0) - ew); z <= Math.min(S - 1, (gz | 0) + ew); z++) for (let x = Math.max(0, (gx | 0) - eu); x <= Math.min(S - 1, (gx | 0) + eu); x++) {
+          const du = x - gx, dw = z - gz, q = du * du * iu2 + dw * dw * iw2;
+          if (q < 2.9) { const h = wgt * Math.exp(-q); if (h > buf[z * S + x]) buf[z * S + x] = h; }
+        }
+      }
+      for (let i = 0, n = S * S; i < n; i++) {
+        const h = buf[i];
+        if (h <= 0) { px8[i * 4 + 3] = 0; continue; }
+        const a = to[i] * (1 / 255), m = Math.min(1, a * 3.2) * (1 - 0.55 * a * a);
+        px8[i * 4 + 3] = (h * m * 255 + 0.5) | 0;
+      }
+      F.ctx.putImageData(F.img, 0, 0);
+      F.tex.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Per frame, after the decal's opacity is set: the fleck layers drift and flicker with the wind. Everything is a
+   * pure function of this frame's inputs (wind clock, strength, light), nothing accumulates: no wind = the layers lie
+   * still at full weight; the shadow itself does not move. `light` = key colour x intensity of this frame (after the
+   * weather, without the lightning flash); `day` = 1 - night (no flecks from the moon).
+   */
+  flicker(w: { t: number; base: number; dirX: number; dirZ: number; gust(x: number, z: number): number }, light: THREE.Color, day: number) {
+    const P = this.fr, op = (this.mesh.material as THREE.MeshBasicMaterial).opacity, on = this.mesh.visible && P.has && op > 0.004 && day > 0.02;
+    const sx = this.mesh.scale.x || 1, sz = this.mesh.scale.z || 1, ux = this.fux, uz = this.fuz;
+    const b = Math.min(1.2, Math.max(0, w.base)), g = b > 1e-3 ? w.gust(P.bx, P.bz) / b : 0;
+    // Breeze 0.35: about 0.1 m of drift at 0.2 m/s; storm (base 1, clock up to 2.6x faster): 0.45 m, several times the speed.
+    const amp = FLECK_DRIFT * Math.pow(b, 1.25) * (0.55 + 0.6 * g), fl = Math.min(1, b / 0.3) * FLECK_FLICKER;
+    for (let l = 0; l < this.flecks.length; l++) {
+      const F = this.flecks[l], m = F.mesh;
+      m.visible = on;
+      if (!on) continue;
+      const ph = 2.4 * l + 0.7, a = Math.sin(1.9 * w.t + ph) + 0.35 * Math.sin(4.3 * w.t + 1.7 * ph), c = Math.sin(1.37 * w.t + 2.1 * ph + 1) + 0.35 * Math.sin(3.4 * w.t + ph);
+      const ox = (w.dirX * a - w.dirZ * 0.6 * c) * amp, oz = (w.dirZ * a + w.dirX * 0.6 * c) * amp;
+      m.position.set((ox * ux + oz * uz) / sx, FLECK_Y[l % FLECK_Y.length], (-ox * uz + oz * ux) / sz);
+      // The layers flicker in turn (out of phase), so patches brighten and fade without the sum pumping.
+      const k = (1 - fl * (0.5 + 0.5 * Math.sin(2.7 * w.t + Math.PI * l + 0.6 * Math.sin(0.9 * w.t + l)))) * (op / 0.55) * day * day * FLECK_GAIN;
+      (m.material as THREE.MeshBasicMaterial).color.setRGB(light.r * k * FLECK_ALBEDO[0], light.g * k * FLECK_ALBEDO[1], light.b * k * FLECK_ALBEDO[2]);
+    }
   }
 
   /** dir: toward the shadow-casting light (y clamped like the stage sun). Rebuilds at most every `minGap` s unless the sun moved. */
@@ -273,6 +371,7 @@ export class CanopyShadow {
         to[i] = a8;
       }
     }
+    this.bakeFlecks(u0, u1, w0, w1, toU, toW, ux, uz, fe);
     // Cross-fade: what is drawn now is resampled into the new frame (exact while the grid only shifted by whole
     // texels) and blended to the new bake in `FADE_STEPS` uploads over `FADE_S`, so a bake never shows as a step.
     // A paused or fast-forwarded tree with nothing drawn yet gets the bake at once.
@@ -335,6 +434,7 @@ export class CanopyShadow {
     const k = CanopyShadow.kOf(P.slope, hl / ly), du = (P.uc - P.bu) * k, dw = P.wc - P.bw;
     this.mesh.position.set(P.bx + du * ux - dw * uz, 0.015, P.bz + du * uz + dw * ux);
     this.mesh.rotation.y = Math.atan2(-uz, ux); // local +x → U, local +z → W
+    this.fux = ux; this.fuz = uz;
     this.mesh.scale.set(P.extU * k, 1, P.extW);
     return dir.x * P.dx + dir.y * P.dy + dir.z * P.dz >= 0.8;
   }

@@ -242,7 +242,7 @@ export class Celestial {
       sg.lookAt(cam.position);
       const gain = (0.12 + 1.1 * low) * sunVis * (h < 0 ? 0.55 + 0.45 * smooth(-0.13, 0, h) : 1);
       // Setting sun: the glow is the grade around the disc (orange-red, weaker so the disc under it keeps its colour).
-      sm.color.copy(A.sunColor).lerp(SET_GLOW, 0.8 * ss).multiplyScalar(gain * (1 - 0.5 * ss));
+      sm.color.copy(A.sunColor).lerp(SET_GLOW, 0.9 * ss).multiplyScalar(gain * (1 - 0.7 * ss));
     }
     // Veiling glare (Low only; High has bloom): a small glow that ignores depth, so a low sun behind the crown bleeds
     // through and over the gaps. Off once the terrain hides the sun.
@@ -259,7 +259,7 @@ export class Celestial {
     if (gl.visible) {
       this.place(gl, cam, A.sunDir, dist, 8 * DEG);
       gl.lookAt(cam.position);
-      (gl.material as THREE.MeshBasicMaterial).color.copy(A.sunColor).lerp(SET_GLOW, 0.8 * ss).multiplyScalar(gv * (1 - 0.5 * ss));
+      (gl.material as THREE.MeshBasicMaterial).color.copy(A.sunColor).lerp(SET_GLOW, 0.9 * ss).multiplyScalar(gv * (1 - 0.6 * ss));
     }
 
     // ---- moon ----

@@ -204,9 +204,9 @@ export class Atmosphere {
     if (h > 0.02) this.fogColor.copy(lerpC(duskFog, dayFog, smooth(0.02, 0.35, h)));
     else this.fogColor.copy(h > -0.1 ? lerpC(blueHour, duskFog, smooth(-0.1, 0.02, h)) : lerpC(nightFog, blueHour, smooth(-0.22, -0.1, h)));
 
-    // Setting (and rising) sun: 1 with the sun on the horizon, 0 from elevation sine 0.28 up and 0.1 down. The horizon
+    // Setting (and rising) sun: 1 with the sun at the hills' horizon (they hide it below about 9 degrees), 0 from elevation sine 0.36 up and 0.1 down. The horizon
     // haze goes from pale peach to orange, so the distant land and the ambient light are warm.
-    const ss = (this.sunset = (1 - smooth(0.05, 0.28, h)) * smooth(-0.1, -0.01, h));
+    const ss = (this.sunset = (1 - smooth(0.1, 0.36, h)) * smooth(-0.1, -0.01, h));
     this.fogColor.lerp(this.setFog, 0.55 * ss);
 
     const tint = new THREE.Color().setHSL(k.skyHue, 0.6, 0.5);
@@ -263,6 +263,8 @@ export class Atmosphere {
     // Sunset sky, both paths, uniforms only (after the calm values went to `envU`: the env map keeps them): the horizon
     // colour the sky blends into is a deep orange, far less Mie (its forward lobe is what pins the sky at the sun to
     // the 1.8 clamp, i.e. white), lower gain. The glow plane (`Celestial`) grades outward from the disc.
+    // The stock sky's own sun disc sits at the 1.8 clamp (white); it gives way to the orange `disc1` core as the sun sets.
+    u.showSunDisc.value = 1 - ss;
     if (ss > 0) {
       const U = this.skyUniforms;
       U.fogCol.value.lerp(this.setSky, 0.85 * ss);
