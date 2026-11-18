@@ -662,6 +662,51 @@ Breakage (`YSIG=g BASES=1,0.8 node scripts/breaksize.mjs 'growth.maxNodes=40000'
 
 Pictures (`GPU=vulkan node scripts/majestic.mjs http://localhost:5860/ majH-after`, built app, real GPU; before = `shots/majG-after-*`; in the app 26.9k nodes / 209.1k sim leaves, 18.15 m, `structureCheck` 0, programs desktop 33): `shots/majH-after-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`, sheets `shots/majH-{desktop,phone}-sheet.jpg` (rows: before summer, after summer, before winter, after winter). What they say: the umbrella is gone. In the wide and framed shots the tree is a tall rounded crown about as high as wide on a visibly clear bole, widest near mid-height; in winter the trunk runs up to 3 m and divides into a few limbs, some spreading with lifted ends, some ascending into the top, and the crown has branches through its volume instead of one outer shell. Not majestic yet; a viewer would first name: (1) the wood is thin for the size: a 43 cm bole and 12 to 21 cm limbs under an 18 m crown read as a young tree enlarged, not an old one (three growth years of pipe-model girth; a field oak of this crown has a bole 2 to 3 times as thick); (2) in summer a vertical cleft divides the crown into two lobes (the bay rule of 6.9 with only 5 scaffold azimuths cuts from rim to top; bays should stop below the dome); (3) limbs are still long smooth arcs without elbows or level heavy stretches; (4) the outer twigs are wiry and of one radius, and single twigs hang to 1 m.
 
+### 6.13 One dome, heavier wood (branch `bigtree-crown`, behind `?years=3`)
+
+Cause of the cleft (`MAP=1 node scripts/cleft.mjs 'growth.maxNodes=40000'`, t = 750, seed 7 on e2652e6: p95 reach and count of leafy nodes per 15 degree sector seen from above, whole crown and upper half; side outline from 8 directions): the 6.9 bay rule. Between the five scaffold azimuths (-108, -32, 48, 97, 179 degrees) four sectors (-150, -75, 0, 135 degrees) reach 3.6 to 4.4 m where the domes reach 8.5 to 10 m, with 63 to 117 leafy nodes against 800 to 1 140: bays 5.5 m (0.6 crown radii) deep. The upper half of the crown shows the same numbers, so every bay runs to the top. Two parts of the rule do it: `SCAF_BAY` 0.95 leaves 5 % of the shell attractors in a bay at every height and `SCAF_LOBE` 0.3 pulls the envelope in by 30 % there; `YEAR_BAY_R` 0.45 prunes side wood in a bay over the outer 55 % of the reach. The gap between the two ascending leaders and the shed limbs are not the cause (the bays sit between scaffold azimuths, the leaders are at 48 and 97 degrees with a filled sector between them). The side outline (p97 leaf height per column) does not show the cleft (notch 0.12 R): from the side the far domes fill the column; the eye sees the bay as a dark slot of sky and shade, so the top-down map is the instrument.
+
+Rules (years 2-3 only; year 1 and `years` = 0 untouched):
+
+| Rule | Built as |
+|---|---|
+| Shallow bays | `SCAF_BAY` 0.45 (was 0.95), `SCAF_LOBE` 0.1 (was 0.3); reach factor of the scaffold shells = `SCAF_REACH` 1.3 - 2 x `SCAF_LOBE` x (1 - lobe): domes at 1.3, bays at 1.1 |
+| No bay to the top | the lobe value rises to 1 between `SCAF_TOP0` 0.4 and `SCAF_TOP1` 0.75 of the crown height (smoothstep) |
+| Bay cut at the rim only | `YEAR_BAY_R` 0.85 (was 0.45) |
+| Girth | `YEAR_GIRTH` 0.4 (was 0.2: twig radius of the pipe model x 1.8 in year 3, 1.35 cm), `YEAR_EXP` 0.05 (was 0.03: pipe exponent 1.71 in year 3). Both are sim inputs of the structure pass; nothing is drawn fatter than the sim |
+
+Census (t = 750, `CHECK=1`: `structureCheck` 0 on seeds 3, 7, 11):
+
+| | Before (e2652e6), seed 7 | After, seed 7 | After, seed 11 | After, seed 3 |
+|---|---|---|---|---|
+| Height; p95 leaf radius | 17.61 m; 9.04 m | 18.71 m; 9.01 m | 18.87; 9.10 | 18.48; 8.84 |
+| Sector reach min / max (top-down, 24 sectors) | 3.6 / 10.0 m (bay 0.60 R) | 7.5 / 9.9 m (bay 0.14 R below the median 8.8) | not mapped on the final constants (6.6 to 8.6 m with `SCAF_REACH` 1.15) | not mapped |
+| Deepest notch of the side outline, 8 directions | 0.12 R | 0.10 R | 0.13 R | 0.10 R |
+| Trunk r at 1.3 m / 4 m | 43.1 / 23.0 cm | 70.1 / 46.9 cm | | |
+| Scaffold limbs at the base | 12 to 21 cm | 21.4 to 31.9 cm | | |
+| Lowest wood | 1.06 m | 3.02 m | 2.86 m | 2.64 m |
+| Nodes / sim leaves | 28 543 / 222.3k | 31 777 (+11.3 %) / 248.6k (+11.8 %) | 31 364 / 245.2k | 30 746 / 240.2k |
+
+Counts: the closed bays carry wood now (+8.8 % with `SCAF_REACH` 1.15, +11.3 % at 1.3); this is just over the 10 % budget. Orders (seed 7, girth step with `SCAF_REACH` 1.15): order 1 limbs 22.8 to 31.4 cm, order 2 max 14.9 cm (median 5.3), order 3 max 9.1 (median 2.0), orders 4 to 6 median 1.35 cm (the twig radius). The trunk above the last scaffold fork is unchanged (4.9 cm at 6 m): the dome is carried by the ascending limbs (30 cm at their base).
+
+Forks (`node scripts/forkcensus.mjs 'growth.maxNodes=40000'`): trunk 5 forks 0.89 to 1.04 (median 0.93): 70.1 → 64.6 + 21.4, 64.6 → 57.5 + 23.7, 57.5 → 46.9 + 28.1, 46.9 → 31.9 + 30.6; order 1: 53 forks 0.89 to 1.34 (median 0.94, 52 inside 0.85 to 1.25); order 2: 51 forks 0.84 to 1.26 (median 0.91, 49 inside). The lower exponent moves an even fork from 0.92 to 0.89 (2^(1 - 2/n)); `YEAR_EXP` above 0.06 would leave the band.
+
+Year 1 and `years` = 0: `T=150 YEARS=0` and `T=150 YEARS=3` (`CHECK=1`) both 4 910 nodes, 37 642 leaves, 9.09 m, 16.8 cm, `structureCheck` 0.
+
+Sag: scaffold limb ends (seed 7, girth step) at 8.3 to 11 m with end elevations 0 to +21 degrees (6.12: 8 to 10 m, 0 to +24): no visible rise or drop.
+
+Breakage (`YSIG=g BASES=1,0.8 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, 31 777 nodes, 885 limbs evaluated; limbs in 120 s):
+
+| `YEAR_SIGMA` | u p50 / p98 / max | 1.0 | 0.8 |
+|---|---|---|---|
+| **-0.2 (kept)** | **0.13 / 0.35 / 1.36** | **1 limb (1.4 cm, 62 nodes)** | **1 limb (1.4 cm, 62 nodes)** |
+| -0.1 | 0.10 / 0.27 / 1.02 | 0 | 0 |
+| 0 | 0.08 / 0.21 / 0.82 | 0 | 0 |
+
+Thicker wood halves the stress (p98 0.73 → 0.35); one outlier limb still breaks at -0.2, so the target (1 to 3 at 1.0, 0 to 2 at 0.8) holds without a change, but the storm now takes one small limb only; -0.3 and below were not rerun.
+
+Twigs: no twig rule was added. The lowest wood rose from 1.06 m to 2.6 to 3.0 m on the three seeds as a side effect of the bay change (the hanging twigs were side wood of the bays' edges). The outer wood is still of one thickness (orders 4 to 6 all at the twig radius, now 1.35 cm instead of 1.05 cm): a visible step from branch to fine spray needs outer shoots that are shorter and more ramified (`YEAR_TWIG_HI` up with `YEAR_WHIP` down, at constant node count) and a twig radius that does not grow with `YEAR_GIRTH` for wood younger than a year.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
