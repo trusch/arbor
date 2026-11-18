@@ -385,7 +385,9 @@ let swayLeafMs = 0;
 /** Wind sway (render-side offsets from the rest pose; ?sway=0). */
 const sway = new Sway();
 /** ?swayrate=1: every node every update (P4 two-rate sway off, the reference). */
-if (query.get('swayrate') === '1') sway.twoRate = false;
+if (query.get('swayrate') === '1') sway.keyMin = Infinity;
+/** ?swaykey=N: key poses from N live nodes on (0 = always; default 9000, docs/bigtree.md 6.14). */
+if (query.get('swaykey') !== null) sway.keyMin = Number(query.get('swaykey'));
 /** Tree was reset: rebuild everything on the next frame, drop an open leaf pass, re-run the paused structure pass. */
 function invalidate() {
   branchGeom = -1; leavesDirty = true; structPV = -1;

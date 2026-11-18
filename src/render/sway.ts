@@ -24,7 +24,9 @@ export class Sway {
   maxOffset = 0;
   maxNode = -1;
   lastMs = 0;
-  private TH = new Float32Array(0);
+  /** Accumulated (raw) rotation per node: of the pose itself (direct), of the newest complete key (keyed). Probes read it. */
+  TH = new Float32Array(0);
+  private THd = new Float32Array(0);
   private F = new Float32Array(0);
   private S = new Float32Array(0);
   private K = new Float32Array(0);
@@ -36,25 +38,22 @@ export class Sway {
   /** Ids of the live nodes (parent present, chain not pruned), ascending, and their count: the cascade runs over these only. */
   private LV = new Int32Array(0); private nLive = 0;
   /**
-   * Two rates (big tree P4 / T5). Thick wood (radius > `THICK_R` on a thick parent) is evaluated every update. Thin
-   * wood is drawn as its thick anchor's CURRENT offset (`A` = nearest thick ancestor) plus an offset relative to that
-   * anchor, interpolated between the last two complete keys (`R0` -> `R1`); the next key (`RN`, with its raw
-   * rotations `TN`) is computed in `RATE` slices by node id, one slice per update, so no update pays the whole thin
-   * cascade and junctions cannot tear (a thin node's relative offset is 0 at its anchor by construction).
+   * Key poses (big tree, docs/bigtree.md 6.14). From `keyMin` live nodes on, the cascade is not run per update: whole
+   * poses of the WHOLE tree (`R*` offsets, `T*` raw rotations) are computed for a wind time ahead, in `kR` slices by
+   * node id, one slice per update, every slice at the same key time and from the same forces `FN`, so a key is one
+   * consistent pose. Every node is drawn as the linear blend of the last two keys `R0 -> R1`, which lands on `R1` in
+   * the update `R1` was computed for: uniform in space (no anchor split, no seam between rates) and no latency while
+   * the update interval holds. Below `keyMin` nothing here runs (the default tree is the direct cascade, bit for bit).
    */
-  private A = new Int32Array(0);
   private R0 = new Float32Array(0); private R1 = new Float32Array(0); private RN = new Float32Array(0);
-  private TN = new Float32Array(0);
-  private slice = 0; private keys = 0; private thin = 0; private cyN = 0;
-  /** Update counter inside the current key cycle and how many thin nodes the last update evaluated (stats). */
-  stats = { thick: 0, thin: 0, evaluated: 0, keys: 0 };
-  /**
-   * Two-rate switch, OFF by default: every node every update. The two-rate path draws thin wood 3 to 6 updates behind
-   * (keys interpolated R0 -> R1) while its anchor is current; thin wood oscillates at up to 7 rad/s, so on Low (update
-   * every second frame) that is 1.4 to 2.8 rad of phase against the anchor and the one-curve check fails (lean lost
-   * 0.33 to 0.71 rad in a storm, `swaycheck.mjs`). Keep it off until the keys are computed for a lead time.
-   */
-  twoRate = false;
+  private T1 = new Float32Array(0); private TN = new Float32Array(0);
+  private FN = new Float32Array(0); private fnChains = 0; private keyT = 0; private keyAmount = 0;
+  private keyed = false; private slice = 0; private kR = 1; private kB = new Int32Array(KEY_MAX + 1);
+  private lastT = NaN; private lastNow = NaN; private dtW = 0.05; private dtR = 0.05;
+  /** Live-node count from which key poses are used (`Infinity` = never: every node every update; 0 = always). Leaves at 0.8 x. */
+  keyMin = KEY_ON;
+  /** Last update: nodes run through the cascade, keyed or not, slices per key. */
+  stats = { evaluated: 0, live: 0, keyed: false, slices: 1, keys: 0 };
 
   /**
    * Recompute D. Returns true when the pose changed (moving, or it just returned to rest and consumers must draw
@@ -63,7 +62,7 @@ export class Sway {
   update(sim: TreeSim, wind: Wind, amount: number): boolean {
     const nodes = sim.nodes, chains = sim.chains, N = nodes.length;
     if (!(amount > 0) || !(wind.base > 0) || N === 0) {
-      this.keys = 0; this.slice = 0;
+      this.keyed = false; this.lastT = NaN;
       if (!this.live) return false;
       this.D.fill(0); this.live = false; this.maxOffset = 0; this.maxNode = -1;
       return true;
@@ -71,18 +70,22 @@ export class Sway {
     const t0 = performance.now();
     if (this.D.length < N * 3) {
       const cap = Math.ceil(N * 1.5) + 256;
-      this.D = new Float32Array(cap * 3); this.TH = new Float32Array(cap * 3); this.P = new Int32Array(cap);
-      this.A = new Int32Array(cap); this.R0 = new Float32Array(cap * 3); this.R1 = new Float32Array(cap * 3);
-      this.RN = new Float32Array(cap * 3); this.TN = new Float32Array(cap * 3); this.keys = 0; this.slice = 0;
+      this.D = new Float32Array(cap * 3); this.THd = new Float32Array(cap * 3); this.TH = this.THd; this.P = new Int32Array(cap);
+      // Key arrays exist only once a tree is large enough to use them.
+      this.R0 = this.R1 = this.RN = this.T1 = this.TN = new Float32Array(0); this.keyed = false;
     }
-    if (this.F.length < chains.length * 3) this.F = new Float32Array((chains.length * 2 + 64) * 3);
-    const D = this.D, TH = this.TH, F = this.F, P = this.P;
+    if (this.F.length < chains.length * 3) {
+      const f = new Float32Array((chains.length * 2 + 64) * 3), fn = new Float32Array(f.length);
+      fn.set(this.FN); this.F = f; this.FN = fn;
+    }
+    const D = this.D, F = this.F, P = this.P;
     // Rest cache (segment vector, flex, chain per node): refilled only when the tree changed, so a grown or paused
     // tree runs on typed arrays alone.
     if (sim.geomVersion !== this.cGeom || sim.topology !== this.cTopo || N !== this.cN) {
       if (this.LV.length < N) this.LV = new Int32Array(D.length / 3);
       if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); this.CAP = new Float32Array(D.length / 3); this.W = new Float32Array(D.length / 3); }
-      const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W, LV = this.LV, RNz = this.RN, TNz = this.TN;
+      const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W, LV = this.LV, TH = this.THd;
+      const kz = this.keyed ? [this.R0, this.R1, this.RN, this.T1, this.TN] : [];
       let nLive = 0;
       for (let i = 0, o = 0; i < N; i++, o += 3) {
         const nd = nodes[i], pi = nd.parent, pn = pi >= 0 ? nodes[pi] : undefined;
@@ -90,7 +93,8 @@ export class Sway {
         // Not live (root, pruned or detached wood): offset and rotations are 0, written here once; the cascade skips it.
         if (!pn || chains[nd.chain].pruned) {
           C[i] = -1;
-          D[o] = D[o + 1] = D[o + 2] = 0; TH[o] = TH[o + 1] = TH[o + 2] = 0; RNz[o] = RNz[o + 1] = RNz[o + 2] = 0; TNz[o] = TNz[o + 1] = TNz[o + 2] = 0;
+          D[o] = D[o + 1] = D[o + 2] = 0; TH[o] = TH[o + 1] = TH[o + 2] = 0;
+          for (const z of kz) z[o] = z[o + 1] = z[o + 2] = 0;
           continue;
         }
         LV[nLive++] = i;
@@ -120,52 +124,113 @@ export class Sway {
         W[i] = up;
         CAP[i] = TH_MAX / Math.sqrt(1 + q * q);
       }
-      // Anchors: -1 = thick (evaluated every update), else the nearest thick ancestor. A node whose anchor changed
-      // (new wood, a limb thickening past THICK_R, a break) has its keys re-expressed against the new anchor from the
-      // offsets drawn last update (D), so its drawn position does not jump: new = old drawn - new anchor's offset.
-      const A = this.A, R0 = this.R0, R1 = this.R1, RN = this.RN, TN = this.TN, two = this.twoRate && this.keys >= 2;
-      const oldN = this.cN > 0 ? Math.min(this.cN, N) : 0;
-      let thin = 0;
-      for (let i = 0, o = 0; i < N; i++, o += 3) {
-        const pi = P[i], was = i < oldN ? A[i] : -2;
-        let a = -1;
-        if (pi >= 0 && C[i] >= 0 && this.twoRate && !(A[pi] < 0 && nodes[i].radius > THICK_R)) { a = A[pi] < 0 ? pi : A[pi]; thin++; }
-        A[i] = a;
-        if (a >= 0 && a !== was && two) {
-          const ao = a * 3, po = pi * 3;
-          // New node: starts where its parent is drawn (the parent's keys, set earlier in this loop; 0 on its anchor).
-          // D of a new parent is not written yet, so new nodes never read D.
-          // Its own segment is turned by the parent's rotation (raw, saturated by its own limit) on top of the parent's
-          // relative offset; copying the parent's keys alone drew the new segment in rest orientation (upright) on a
-          // leaning parent until two keys had passed (growing sapling in a storm: lean drop 0.37 rad above the stem).
-          if (i >= oldN) {
-            const PT = A[pi] >= 0 ? TN : TH, th = A[pi] >= 0;
-            let tx = PT[po], ty = PT[po + 1], tz = PT[po + 2];
-            const tq = tx * tx + ty * ty + tz * tz, cap = CAP[i], sat = cap / Math.sqrt(cap * cap + (tq > RAW_MAX * RAW_MAX ? RAW_MAX * RAW_MAX : tq));
-            tx *= sat; ty *= sat; tz *= sat;
-            const sx = S[o], sy = S[o + 1], sz = S[o + 2];
-            let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
-            const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
-            if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
-            const dx = vx - sx, dy = vy - sy, dz = vz - sz;
-            R0[o] = (th ? R0[po] : 0) + dx; R0[o + 1] = (th ? R0[po + 1] : 0) + dy; R0[o + 2] = (th ? R0[po + 2] : 0) + dz;
-            R1[o] = (th ? R1[po] : 0) + dx; R1[o + 1] = (th ? R1[po + 1] : 0) + dy; R1[o + 2] = (th ? R1[po + 2] : 0) + dz;
-            RN[o] = (th ? RN[po] : 0) + dx; RN[o + 1] = (th ? RN[po + 1] : 0) + dy; RN[o + 2] = (th ? RN[po + 2] : 0) + dz;
-          } else for (let j = 0; j < 3; j++) { const r = D[o + j] - D[ao + j]; R0[o + j] = R1[o + j] = RN[o + j] = r; }
-          const to = was === -1 && i < oldN ? o : pi * 3, TT = was === -1 && i < oldN ? TH : (A[pi] >= 0 ? TN : TH);
-          TN[o] = TT[to]; TN[o + 1] = TT[to + 1]; TN[o + 2] = TT[to + 2];
+      // Keyed: wood added since the last refill gets both drawn keys from its parent's: the parent's offset plus its
+      // own segment turned by the parent's key rotation (copying the offset alone draws a new segment in rest
+      // orientation on a leaning parent). The key in progress reaches it in its last slice (new ids are the largest).
+      if (this.keyed) {
+        const R0 = this.R0, R1 = this.R1, T1 = this.T1, oldN = this.cN > 0 ? Math.min(this.cN, N) : 0;
+        for (let i = oldN, o = oldN * 3; i < N; i++, o += 3) {
+          if (C[i] < 0) continue;
+          const po = P[i] * 3;
+          let tx = T1[po], ty = T1[po + 1], tz = T1[po + 2];
+          const tq = tx * tx + ty * ty + tz * tz, cap = CAP[i], sat = cap / Math.sqrt(cap * cap + tq);
+          T1[o] = tx; T1[o + 1] = ty; T1[o + 2] = tz;
+          tx *= sat; ty *= sat; tz *= sat;
+          const sx = S[o], sy = S[o + 1], sz = S[o + 2];
+          let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
+          const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
+          if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
+          const dx = vx - sx, dy = vy - sy, dz = vz - sz;
+          R0[o] = R0[po] + dx; R0[o + 1] = R0[po + 1] + dy; R0[o + 2] = R0[po + 2] + dz;
+          R1[o] = R1[po] + dx; R1[o + 1] = R1[po + 1] + dy; R1[o + 2] = R1[po + 2] + dz;
         }
       }
-      this.thin = thin;
       this.nLive = nLive;
       this.cGeom = sim.geomVersion; this.cTopo = sim.topology; this.cN = N;
     }
-    const S = this.S, K = this.K, C = this.C, CAP = this.CAP;
-    const wx = wind.dirX, wz = wind.dirZ, t = wind.t;
-    // Per chain: force vector. The lean follows the gust wave at the chain base (0.35 s behind the front) and goes
-    // with gust^2.5 (drag ~ v^2, v ~ gust^2): small in a breeze, dominant in a storm. The oscillation (own phase per
-    // chain, faster on thinner wood) goes with gust^1.25, so a breeze is mostly stir and a storm mostly lean + whip.
-    for (let c = 0; c < chains.length; c++) {
+    const t = wind.t, now = performance.now(), nLive = this.nLive, LV = this.LV;
+    // Update interval, wind clock and real time (smoothed; a gap such as a hidden tab does not count).
+    if (this.lastT === this.lastT) {
+      const dw = t - this.lastT, dr = (now - this.lastNow) / 1000;
+      if (dw > 0 && dw < 0.6) this.dtW += (dw - this.dtW) * 0.3;
+      if (dr > 0 && dr < 0.6) this.dtR += (dr - this.dtR) * 0.3;
+    }
+    this.lastT = t; this.lastNow = now;
+    const wasKeyed = this.keyed;
+    const keyed = nLive >= (wasKeyed ? this.keyMin * 0.8 : this.keyMin);
+    let maxSq = 0, maxNode = -1, evaluated = 0;
+    if (!keyed) {
+      // Direct: the pose of this instant, every live node.
+      this.keyed = false; this.TH = this.THd;
+      this.forces(sim, wind, amount, F, 0, t);
+      evaluated = this.cascade(F, this.THd, D, 0, N);
+    } else {
+      if (this.R0.length < D.length) {
+        this.R0 = new Float32Array(D.length); this.R1 = new Float32Array(D.length); this.RN = new Float32Array(D.length);
+        this.T1 = new Float32Array(D.length); this.TN = new Float32Array(D.length);
+      }
+      const FN = this.FN;
+      if (!wasKeyed) {
+        // Entering (the tree grew past `keyMin`, the wind came back from zero): this update draws the pose of now in
+        // full, as the direct path would, and takes it as the newest key; the following key is computed in full too,
+        // once, so the blend continues from here without a stop.
+        this.keyed = true; this.stats.keys = 0;
+        this.R0.fill(0); this.R1.fill(0); this.RN.fill(0); this.T1.fill(0); this.TN.fill(0);
+        this.forces(sim, wind, amount, F, 0, t);
+        evaluated = this.cascade(F, this.T1, this.R1, 0, N);
+        this.kR = this.pickR();
+        this.forces(sim, wind, amount, FN, 0, t + this.kR * this.dtW);
+        evaluated += this.cascade(FN, this.TN, this.RN, 0, N);
+        this.slice = this.kR; // the key in progress is complete: the next update starts a cycle
+        D.set(this.R1.subarray(0, N * 3));
+        for (let j = 0; j < nLive; j++) { const o = LV[j] * 3, dq = D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2]; if (dq > maxSq) { maxSq = dq; maxNode = LV[j]; } }
+      } else {
+        if (this.slice >= this.kR) {
+          // Cycle start: the finished key becomes the target; the next one is for the last update of the NEXT cycle.
+          const r = this.R0; this.R0 = this.R1; this.R1 = this.RN; this.RN = r;
+          const th = this.T1; this.T1 = this.TN; this.TN = th;
+          this.slice = 0; this.stats.keys++;
+          const R = this.kR = this.pickR(), kB = this.kB;
+          for (let s = 0; s < R; s++) kB[s] = LV[Math.floor(nLive * s / R)] ?? 0;
+          kB[0] = 0; kB[R] = 0x7fffffff;
+          this.keyT = t + (2 * R - 1) * this.dtW; this.keyAmount = amount;
+          this.forces(sim, wind, amount, FN, 0, this.keyT);
+        } else if (chains.length > this.fnChains) this.forces(sim, wind, this.keyAmount, FN, this.fnChains, this.keyT);
+        evaluated = this.cascade(FN, this.TN, this.RN, this.kB[this.slice], this.kB[this.slice + 1]);
+        this.slice++;
+        const al = this.slice / this.kR, R0 = this.R0, R1 = this.R1;
+        for (let j = 0; j < nLive; j++) {
+          const i = LV[j], o = i * 3;
+          const x = D[o] = R0[o] + (R1[o] - R0[o]) * al, y = D[o + 1] = R0[o + 1] + (R1[o + 1] - R0[o + 1]) * al, z = D[o + 2] = R0[o + 2] + (R1[o + 2] - R0[o + 2]) * al;
+          const dq = x * x + y * y + z * z;
+          if (dq > maxSq) { maxSq = dq; maxNode = i; }
+        }
+      }
+      this.TH = this.T1;
+    }
+    if (!keyed) { maxSq = this.mSq; maxNode = this.mNode; }
+    this.stats.evaluated = evaluated; this.stats.live = nLive; this.stats.keyed = keyed; this.stats.slices = keyed ? this.kR : 1;
+    this.maxOffset = Math.sqrt(maxSq); this.maxNode = maxNode;
+    this.live = true;
+    this.lastMs = performance.now() - t0;
+    return true;
+  }
+
+  /** Slices per key: a key about every `KEY_S` seconds of real time, at most `KEY_MAX` updates apart. */
+  private pickR(): number {
+    const r = Math.round(KEY_S / this.dtR);
+    return r < 1 ? 1 : r > KEY_MAX ? KEY_MAX : r;
+  }
+
+  /**
+   * Force vector per chain (from chain `from` on) at wind time `t`. The lean follows the gust wave at the chain base
+   * (0.35 s behind the front) and goes with gust^2.5 (drag ~ v^2, v ~ gust^2): small in a breeze, dominant in a storm.
+   * The oscillation (own phase per chain, faster on thinner wood) goes with gust^1.25, so a breeze is mostly stir and
+   * a storm mostly lean + whip.
+   */
+  private forces(sim: TreeSim, wind: Wind, amount: number, F: Float32Array, from: number, t: number) {
+    const nodes = sim.nodes, chains = sim.chains, wx = wind.dirX, wz = wind.dirZ;
+    for (let c = from; c < chains.length; c++) {
       const ch = chains[c], o = c * 3;
       if (ch.pruned || ch.nodes.length <= 2) { F[o] = F[o + 1] = F[o + 2] = 0; continue; } // stubs ride their parent
       const b = nodes[ch.nodes[1]];
@@ -179,48 +244,30 @@ export class Sway {
       F[o + 1] = osc * 0.6 * s3;
       F[o + 2] = wz * lean + wx * cross;
     }
-    let maxSq = 0, maxNode = -1;
-    const A = this.A, R0 = this.R0, R1 = this.R1, RN = this.RN, TN = this.TN;
-    // Until two keys exist (start, wind back from zero, anchors changed) every node is evaluated in full and both
-    // keys are written, so the first interpolated update continues exactly from the last full one.
-    const full = this.thin === 0 || this.keys < 2;
-    // Slice bounds are fixed by the node count at the start of the cycle; the last slice also takes every node added
-    // since (new ids are larger), so each thin node is evaluated exactly once per key.
-    if (this.slice === 0) this.cyN = N;
-    const cyN = Math.min(this.cyN, N);
-    const lo = full ? 0 : Math.floor(cyN * this.slice / RATE), hi = full || this.slice === RATE - 1 ? N : Math.floor(cyN * (this.slice + 1) / RATE);
-    const al = full ? 1 : (this.slice + 1) / RATE;
-    let evaluated = 0;
-    const LV = this.LV, nLive = this.nLive;
-    for (let j = 0; j < nLive; j++) {
-      const i = LV[j], o = i * 3, c = C[i];
-      const an = A[i];
-      if (an >= 0 && !(i >= lo && i < hi) && !full) {
-        // Thin, not in this update's slice: anchor's current offset + interpolated relative offset.
-        const ao = an * 3;
-        D[o] = D[ao] + R0[o] + (R1[o] - R0[o]) * al;
-        D[o + 1] = D[ao + 1] + R0[o + 1] + (R1[o + 1] - R0[o + 1]) * al;
-        D[o + 2] = D[ao + 2] + R0[o + 2] + (R1[o + 2] - R0[o + 2]) * al;
-        const dq = D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2];
-        if (dq > maxSq) { maxSq = dq; maxNode = i; }
-        continue;
-      }
-      evaluated++;
-      const pi = P[i], po = pi * 3, fo = c * 3, k = K[i];
-      // Raw rotation and relative offset of the parent: thick and parent thick -> TH / D; thin -> the key in progress
-      // (its parent is thick: TH of the anchor now and relative 0).
-      const pThin = an >= 0 && A[pi] >= 0;
-      const T = an >= 0 && pThin ? TN : TH;
+    if (F === this.FN) this.fnChains = chains.length;
+  }
+
+  private mSq = 0; private mNode = -1;
+  /**
+   * The bend cascade over the live nodes with lo <= id < hi: raw rotations into `TH`, offsets into `O` (both read
+   * for the parent, so a call continues a pose begun by earlier calls with lower ids). Returns the nodes evaluated.
+   */
+  private cascade(F: Float32Array, TH: Float32Array, O: Float32Array, lo: number, hi: number): number {
+    const S = this.S, K = this.K, C = this.C, CAP = this.CAP, P = this.P, LV = this.LV, nLive = this.nLive;
+    let maxSq = 0, maxNode = -1, n = 0, j = 0;
+    if (lo > 0) { let a = 0, b = nLive; while (a < b) { const m = (a + b) >> 1; if (LV[m] < lo) a = m + 1; else b = m; } j = a; }
+    for (; j < nLive; j++) {
+      const i = LV[j];
+      if (i >= hi) break;
+      n++;
+      const o = i * 3, po = P[i] * 3, fo = C[i] * 3, k = K[i];
       const sx = S[o], sy = S[o + 1], sz = S[o + 2];
       const fx = F[fo], fy = F[fo + 1], fz = F[fo + 2];
       // Bend added by this segment: (s x F) * flex, on top of the parent's rotation.
       // TH is the accumulated (raw) rotation, hard-limited only far beyond what is drawn.
-      let tx = T[po] + (sy * fz - sz * fy) * k, ty = T[po + 1] + (sz * fx - sx * fz) * k, tz = T[po + 2] + (sx * fy - sy * fx) * k;
+      let tx = TH[po] + (sy * fz - sz * fy) * k, ty = TH[po + 1] + (sz * fx - sx * fz) * k, tz = TH[po + 2] + (sx * fy - sy * fx) * k;
       const tq = tx * tx + ty * ty + tz * tz;
       if (tq > RAW_MAX * RAW_MAX) { const q = RAW_MAX / Math.sqrt(tq); tx *= q; ty *= q; tz *= q; }
-      // TH is written for thin wood too (its key-in-progress rotation): nothing in the cascade reads TH of a thin node,
-      // but probes take the model axis from it (it stayed 0 on thin wood, and swayProbe skipped every thin segment).
-      if (an >= 0) { TN[o] = tx; TN[o + 1] = ty; TN[o + 2] = tz; }
       TH[o] = tx; TH[o + 1] = ty; TH[o + 2] = tz;
       // Drawn rotation: saturates gradually toward the node's limit (raw * cap / sqrt(cap^2 + raw^2): equal to raw
       // while small, monotonic in raw and in cap), so the lean keeps growing toward the tip and never meets a corner.
@@ -230,30 +277,13 @@ export class Sway {
       let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
       const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
       if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
-      if (an >= 0) {
-        // Thin node of the key in progress: offset relative to its anchor.
-        const rx = (pThin ? RN[po] : 0) + vx - sx, ry = (pThin ? RN[po + 1] : 0) + vy - sy, rz = (pThin ? RN[po + 2] : 0) + vz - sz;
-        RN[o] = rx; RN[o + 1] = ry; RN[o + 2] = rz;
-        const ao = an * 3;
-        if (full) { R0[o] = R1[o] = rx; R0[o + 1] = R1[o + 1] = ry; R0[o + 2] = R1[o + 2] = rz; }
-        D[o] = D[ao] + R0[o] + (R1[o] - R0[o]) * al;
-        D[o + 1] = D[ao + 1] + R0[o + 1] + (R1[o + 1] - R0[o + 1]) * al;
-        D[o + 2] = D[ao + 2] + R0[o + 2] + (R1[o + 2] - R0[o + 2]) * al;
-      } else {
-        // No limit per node: the offset is the parent's plus this segment's turn, all the way to the tip.
-        D[o] = D[po] + vx - sx; D[o + 1] = D[po + 1] + vy - sy; D[o + 2] = D[po + 2] + vz - sz;
-      }
-      const dq = D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2];
+      // No limit per node: the offset is the parent's plus this segment's turn, all the way to the tip.
+      const dx = O[o] = O[po] + vx - sx, dy = O[o + 1] = O[po + 1] + vy - sy, dz = O[o + 2] = O[po + 2] + vz - sz;
+      const dq = dx * dx + dy * dy + dz * dz;
       if (dq > maxSq) { maxSq = dq; maxNode = i; }
     }
-    // Key cycle: after the last slice the key in progress becomes the newest key.
-    if (full) { this.keys = this.thin === 0 ? 0 : this.keys + 1; this.slice = 0; }
-    else if (++this.slice >= RATE) { this.slice = 0; const t0r = this.R0; this.R0 = this.R1; this.R1 = this.RN; this.RN = t0r; }
-    this.stats.thick = N - this.thin; this.stats.thin = this.thin; this.stats.evaluated = evaluated; this.stats.keys = this.keys;
-    this.maxOffset = Math.sqrt(maxSq); this.maxNode = maxNode;
-    this.live = true;
-    this.lastMs = performance.now() - t0;
-    return true;
+    this.mSq = maxSq; this.mNode = maxNode;
+    return n;
   }
 }
 /**
@@ -268,5 +298,8 @@ const OSC = 0.25;
  * length of the longest path through the node, so limit * L stays below D_LIM however long the shoot is.
  */
 const D_LIM = 2.0;
-/** Two-rate sway: wood thicker than THICK_R (m) on thick wood every update, thin wood keyed every RATE updates. */
-const THICK_R = 0.03, RATE = 3;
+/**
+ * Key poses: used from KEY_ON live nodes (the default tree stays under 6k; left again below 0.8 x), one key about
+ * every KEY_S seconds of real time and at most KEY_MAX updates apart.
+ */
+const KEY_ON = 9000, KEY_S = 0.2, KEY_MAX = 4;
