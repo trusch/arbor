@@ -44,14 +44,14 @@ function dataTex(W: number, H: number, cs: string, repeat: boolean) {
 const LAYER = 0.05, HEAP_LAYER = 0.032;
 /** Half side of the square of slots around the camera, and of the deck plane, in layer heights. */
 const BOX = 10, DECK = 30;
-const GRID = 12, SLOTS = GRID * GRID, PARTS = 3;
+const GRID = 16, SLOTS = GRID * GRID, PARTS = 3;
 /**
  * The sky as a dome: a cloud at ground distance r (layer heights) is drawn `dome(r)` layer heights above the camera.
  * It falls to the horizon at `R_HOR` and well under it by `R_OUT`, where slots are dropped, so a cloud enters and
  * leaves the picture over the horizon at its full size and is never scaled in or out.
  */
 const R_HOR = 7.6, R_OUT = 9.6;
-const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
+const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
 /** Drift in layer heights per m/s of cloud speed, and the speed of the layer (heights / s) while a change of weather is on its way in. */
 const DRIFT = 0.008, TRANSIT = 0.5;
 /** Deck: seconds to close once the bank has arrived, seconds to open; share of slots that must already carry the new weather. */
@@ -66,6 +66,8 @@ const DECK_E = 9, DECK_V = 0.5, EDGE_N = 12;
 const TILES = 9, TILES_U = 5, TILE = (2 * DECK) / TILES, DECK_L = TILES_U * TILE, DECK_REST = 12;
 /** Largest angular width (rad) of a cloud at its closest approach: a limit on the size of clouds on high routes, fixed at entry. */
 const MAX_ANG = 0.34;
+/** Flash glow under the deck: map size, half side of the plane and its ground distance from the camera toward the strike (deck heights), share of the flash left on the whole deck. */
+const GLOW_S = 128, GLOW_R = 8, GLOW_D = 3.4, DECK_FLASH = 0.12;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
@@ -74,7 +76,7 @@ const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.8, SCUD_NIGHT = 0.6, S
 const LOW_SPLIT = 0.75, LOW_GAIN = 0.85;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
-  none: [0.07, 0.55, 0], cumulus: [0.5, 1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
+  none: [0.07, 0.6, 0], cumulus: [0.55, 1.1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
   nimbostratus: [0.3, 1.3, 1], cumulonimbus: [0.8, 1.5, 0.55], fog: [0, 0.7, 0.1],
 };
 
@@ -95,7 +97,7 @@ export class Clouds {
   /** The heaps' geometry again with the `lit` map: the side facing a low sun, in the sun's colour (hidden otherwise). */
   heapsLit: THREE.Mesh;
   /** Mean JS cost per frame = sumMs / frames; quads = cumulus quads this frame; amount / size = eased type targets. */
-  stats = { paintMs: 0, frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0 };
+  stats = { paintMs: 0, frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0, glow: 0 };
   /** Script hook: when set, every drawn cloud writes [slot, generation, world x, y, z of its base centre, width, height] here (`probeN` entries). */
   probe: Float32Array | null = null;
   probeN = 0;
@@ -128,6 +130,9 @@ export class Clouds {
   edgeLead: THREE.Mesh;
   edgeTrail: THREE.Mesh;
   private deckE = DECK_E;
+  /** Lightning under the closed deck: one plane just under it around the strike (radial falloff x the deck's own structure in its pixels). */
+  glow: THREE.Mesh;
+  private glowTex: THREE.DataTexture;
   private litPos: THREE.BufferAttribute;
   private litUv: THREE.BufferAttribute;
   private cnt = new Uint8Array(SLOTS * PARTS);
@@ -185,6 +190,8 @@ export class Clouds {
     this.edgeLead = mk(eg(0.5), this.edgeTex, 3.41);
     this.edgeTrail = mk(eg(0), this.edgeTex, 3.42);
     this.edgeTrail.material = this.edgeLead.material;
+    this.glowTex = dataTex(GLOW_S, GLOW_S, cs, false);
+    this.glow = mk(dg, this.glowTex, 3.45);
     // Batched quads: position / normal / uv / index, like a PlaneGeometry (same attributes, same program).
     const N = SLOTS * PARTS, g = new THREE.BufferGeometry();
     this.pos = new THREE.BufferAttribute(new Float32Array(N * 12), 3);
@@ -241,6 +248,22 @@ export class Clouds {
     (this.atlas.image as { data: Uint8Array }).data = atlas.d;
     (this.deckTex.image as { data: Uint8Array }).data = deck.d;
     this.atlas.needsUpdate = this.deckTex.needsUpdate = true;
+    // Glow map: soft disc whose alpha and tone carry the deck tile's structure (three tiles across), so the lit region shows the cloud.
+    {
+      const D = deck.d, G = GLOW_S, o = new Uint8Array(G * G * 4), lum = (k: number) => (0.3 * D[k] + 0.55 * D[k + 1] + 0.15 * D[k + 2]) * D[k + 3] / 255;
+      let lo = 255, hi = 0;
+      for (let k = 0; k < D.length; k += 4) { const l = lum(k); if (l < lo) lo = l; if (l > hi) hi = l; }
+      const flat = hi - lo < 6;
+      for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) {
+        const dx = (x + 0.5) / G * 2 - 1, dy = (y + 0.5) / G * 2 - 1, f0 = Math.max(0, 1 - Math.hypot(dx, dy)), f = f0 * f0 * (3 - 2 * f0);
+        const sx = Math.floor(x * 3 * DECK_S / G) % DECK_S, sy = Math.floor(y * 3 * DECK_S / G) % DECK_S;
+        let st = flat ? 0.5 + 0.5 * Math.sin(dx * 9 + 3 * Math.sin(dy * 7)) * Math.sin(dy * 11 + 2 * Math.sin(dx * 5)) : (lum((sy * DECK_S + sx) * 4) - lo) / (hi - lo);
+        st = st * st * (3 - 2 * st);
+        const k = (y * G + x) * 4;
+        o[k] = 190 + 65 * st; o[k + 1] = 200 + 55 * st; o[k + 2] = 255; o[k + 3] = 255 * f * (0.3 + 0.7 * st) * (0.55 + 0.45 * f);
+      }
+      (this.glowTex.image as { data: Uint8Array }).data = o; this.glowTex.needsUpdate = true;
+    }
     this.ready = true;
     this.stats.paintMs = performance.now() - t0;
     performance.measure('clouds maps ready', { start: t0 });
@@ -323,7 +346,7 @@ export class Clouds {
     this.lit.copy(E.sunColor).multiplyScalar(1.9 * sunUp * (0.55 + 0.45 * smooth(0, 0.35, h)));
     this.shade.setRGB(0.5, 0.58, 0.72).multiplyScalar(1.15 * day);
     // The painted shade is in the texture; the material colour is one mix of both lights. Under a deck the heaps grey.
-    const mixLit = 0.72 * (1 - 0.8 * c);
+    const mixLit = 0.5 * (1 - 0.8 * c);
     const flash = E.flash * 1.6;
 
     // ---- deck ----
@@ -343,7 +366,7 @@ export class Clouds {
       // Mid grey for stratus, dark grey-blue for rain cloud and the storm; warm cast from a low sun.
       const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
-      dm.color.setRGB(this.tmp.r + nightL + flash * 0.5, this.tmp.g + nightL * 1.1 + flash * 0.52, this.tmp.b + nightL * 1.3 + flash * 0.6);
+      dm.color.setRGB(this.tmp.r + nightL + flash * DECK_FLASH, this.tmp.g + nightL * 1.1 + flash * DECK_FLASH, this.tmp.b + nightL * 1.3 + flash * DECK_FLASH * 1.2);
       dm.opacity = dOpS * fade;
       const em = this.edgeLead.material as THREE.MeshBasicMaterial;
       em.color.copy(dm.color); em.opacity = dm.opacity;
@@ -354,7 +377,17 @@ export class Clouds {
     }
     this.edgeLead.visible = dk.visible && this.deckE < DECK_REST - 1;
     this.edgeTrail.visible = dk.visible && this.deckE - DECK_L > -DECK_REST;
-    if (dk.visible) {
+    // The flash under the deck: a bright region around the strike that falls off across the sky (opacity follows the flash).
+    cam.getWorldDirection(this.fwd);
+    const gYaw = Math.atan2(this.fwd.x, this.fwd.z) + (E.boltU ?? 0) * Math.atan(Math.tan((cam.fov * Math.PI) / 360) * cam.aspect) * 0.8;
+    const gw = this.glow, gm = gw.material as THREE.MeshBasicMaterial, gO = Math.min(1, E.flash * 1.5) * dOpS * dCov * fade;
+    gw.visible = dk.visible && gO > 0.02;
+    S.glow = gw.visible ? gO : 0;
+    if (gw.visible) {
+      gw.position.set(cam.position.x + Math.sin(gYaw) * GLOW_D * HD, cam.position.y + HD * 0.992, cam.position.z + Math.cos(gYaw) * GLOW_D * HD);
+      gw.rotation.set(0, gYaw, 0);
+      gw.scale.set(2 * GLOW_R * HD, 1, 2 * GLOW_R * HD);
+      gm.color.setRGB(1.5, 1.55, 1.7); gm.opacity = gO;
     }
 
     // ---- storm tower: comes up over the upwind horizon at a fixed size and advances; the deck closes over it ----

@@ -91,7 +91,7 @@ function paintAtlas() {
       const fine2 = fbm(x * 84 + 3, y * 42 + cell);
       den += (0.75 * (fine - 0.5) + 0.5 * (fine2 - 0.5)) * (1 - smooth(0.7, 1.8, den));
       let a = smooth(0.26, 0.82, den);
-      a = a * (0.35 + 0.65 * a) * (0.86 + 0.14 * smooth(0.8, 1.6, den));
+      a = a * (0.55 + 0.45 * a) * (0.9 + 0.1 * smooth(0.8, 1.6, den));
       // Scud: torn by the fine noise, alpha rises slowly (no outline), thin all over.
       if (scud) a = smooth(0.2, 1.5, den + 1.1 * (fine - 0.5) + 0.5 * (nx - 0.5)) * 0.9 * smooth(0, 0.12, y) * smooth(0, 0.1, x) * smooth(1, 0.9, x) * smooth(1, 0.88, y);
       // Flat base (cumulus) / ragged foot (tower); nothing touches the cell border (mips of neighbours stay clean).
@@ -110,7 +110,7 @@ function paintAtlas() {
         lit = 0.7 * edge * edge * smooth(0.2, 0.6, up);
       } else {
         const side = (0.5 - x) * 0.5 + (up - 0.5) * 0.7;
-        b = 0.8 + 0.2 * smooth(-0.3, 0.2, side + 0.5 * (nx - 0.5)) + 0.06 * edge - 0.34 * (1 - smooth(0.0, 0.45, up)) + 0.3 * (bil - 0.5) + 0.08 * (fine - 0.5);
+        b = 0.8 + 0.2 * smooth(-0.3, 0.2, side + 0.5 * (nx - 0.5)) + 0.06 * edge - 0.5 * (1 - smooth(0.0, 0.62, up)) + 0.34 * (bil - 0.5) + 0.08 * (fine - 0.5);
         // Facing the light: the upper left flank and the billow tops, never the base.
         lit = smooth(-0.22, 0.3, side + 0.5 * (nx - 0.5) + 0.35 * (bil - 0.5)) * smooth(0.02, 0.4, up);
         // A thin bright margin along the upper outline (the rim of a cloud against the light), and the underside on
@@ -119,7 +119,7 @@ function paintAtlas() {
         under = 0.8 * (1 - smooth(0.04, 0.42, up)) * smooth(-0.35, 0.25, (0.5 - x) * 0.9 + 0.5 * (bil - 0.5)) * (0.6 + 0.4 * smooth(0.3, 0.7, fine));
         lit = Math.max(lit, rim);
       }
-      b = Math.min(1, Math.max(tower ? 0.08 : 0.42, b));
+      b = Math.min(1, Math.max(tower ? 0.08 : 0.3, b));
       const o = ((oy + j) * W + ox + i) * 4;
       // sRGB bytes: white tops, grey-blue shade.
       d[o] = 255 * b * (0.84 + 0.16 * b);
