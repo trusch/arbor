@@ -158,6 +158,8 @@ const YEAR_WHIP = 18;
  * so fewer outer twigs share the shell's attractors and each grows longer: the winter crown shows its limbs.
  */
 const YEAR_TWIG = 0.4;
+/** Twig hierarchy (years 2-3): wood of order >= YEAR_TWIG_HI_O branches at x YEAR_TWIG_HI instead, so the outer crown is fewer, longer twigs on visible branches. */
+const YEAR_TWIG_HI_O = 3, YEAR_TWIG_HI = 0.2;
 /**
  * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
@@ -875,7 +877,7 @@ export class TreeSim {
         continue;
       }
       const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1) * (ch.sup && this.growYear >= 1 ? YEAR_SUP : 1)
-        * (this.years > 0 && this.growYear >= 1 && ch.order >= 2 ? YEAR_TWIG : 1);
+        * (this.years > 0 && this.growYear >= 1 && ch.order >= 2 ? (ch.order >= YEAR_TWIG_HI_O ? YEAR_TWIG_HI : YEAR_TWIG) : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
