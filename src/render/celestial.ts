@@ -98,6 +98,9 @@ function moonAlbedo() {
   return a;
 }
 
+/** Glow colour around the setting sun. */
+const SET_GLOW = new THREE.Color(1.0, 0.3, 0.07);
+
 export class Celestial {
   group = new THREE.Group();
   sunGlow: THREE.Mesh;
@@ -223,7 +226,7 @@ export class Celestial {
    * each frame and multiplied by (1 − cloud): nothing accumulates.
    * A: the atmosphere (sunDir, moonDir, sunH, night, sunColor, moonPhase). fogDensity: the live `FogExp2` density.
    */
-  frame(cam: THREE.PerspectiveCamera, A: { sunDir: THREE.Vector3; moonDir: THREE.Vector3; sunH: number; night: number; sunColor: THREE.Color; moonPhase: number }, cloud: number, fogDensity: number, dt: number, lowQ: boolean) {
+  frame(cam: THREE.PerspectiveCamera, A: { sunDir: THREE.Vector3; moonDir: THREE.Vector3; sunH: number; night: number; sunColor: THREE.Color; moonPhase: number; sunset?: number }, cloud: number, fogDensity: number, dt: number, lowQ: boolean) {
     const t0 = performance.now();
     this.t += dt;
     const clear = 1 - cloud;
@@ -232,13 +235,14 @@ export class Celestial {
 
     // ---- sun glow: small and white at noon, wide and warm toward the horizon, lingers as afterglow ----
     const h = A.sunH, low = 1 - smooth(0.0, 0.4, h), sunVis = smooth(-0.13, 0.0, h) * clear;
-    const sg = this.sunGlow, sm = sg.material as THREE.MeshBasicMaterial;
+    const sg = this.sunGlow, sm = sg.material as THREE.MeshBasicMaterial, ss = A.sunset ?? 0;
     sg.visible = sunVis > 0.004;
     if (sg.visible) {
       this.place(sg, cam, A.sunDir, dist, (7 + 17 * low) * DEG);
       sg.lookAt(cam.position);
       const gain = (0.12 + 1.1 * low) * sunVis * (h < 0 ? 0.55 + 0.45 * smooth(-0.13, 0, h) : 1);
-      sm.color.copy(A.sunColor).multiplyScalar(gain);
+      // Setting sun: the glow is the grade around the disc (orange-red, weaker so the disc under it keeps its colour).
+      sm.color.copy(A.sunColor).lerp(SET_GLOW, 0.9 * ss).multiplyScalar(gain * (1 - 0.7 * ss));
     }
     // Veiling glare (Low only; High has bloom): a small glow that ignores depth, so a low sun behind the crown bleeds
     // through and over the gaps. Off once the terrain hides the sun.
@@ -255,7 +259,7 @@ export class Celestial {
     if (gl.visible) {
       this.place(gl, cam, A.sunDir, dist, 8 * DEG);
       gl.lookAt(cam.position);
-      (gl.material as THREE.MeshBasicMaterial).color.copy(A.sunColor).multiplyScalar(gv);
+      (gl.material as THREE.MeshBasicMaterial).color.copy(A.sunColor).lerp(SET_GLOW, 0.9 * ss).multiplyScalar(gv * (1 - 0.6 * ss));
     }
 
     // ---- moon ----

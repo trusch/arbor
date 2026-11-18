@@ -86,6 +86,12 @@ export class Atmosphere {
   private envKeep = new THREE.Color();
   private envKeepT = new THREE.Color();
   private lowWarm = new THREE.Color(1.0, 0.66, 0.4);
+  /** 0..1: the sun is at the horizon (see `update`). Read by `Celestial` for the glow colour. */
+  sunset = 0;
+  private setFog = new THREE.Color(0.86, 0.46, 0.24);
+  private setSky = new THREE.Color(0.62, 0.25, 0.09);
+  private setCore = new THREE.Color(0.42, 0.085, 0.012);
+  private setDisc = new THREE.Color();
   private lowQ = false;
   private lastEnvDir = new THREE.Vector3(9, 9, 9);
   private envAge = 1e9;
@@ -198,6 +204,11 @@ export class Atmosphere {
     if (h > 0.02) this.fogColor.copy(lerpC(duskFog, dayFog, smooth(0.02, 0.35, h)));
     else this.fogColor.copy(h > -0.1 ? lerpC(blueHour, duskFog, smooth(-0.1, 0.02, h)) : lerpC(nightFog, blueHour, smooth(-0.22, -0.1, h)));
 
+    // Setting (and rising) sun: 1 with the sun at the hills' horizon (they hide it below about 9 degrees), 0 from elevation sine 0.36 up and 0.1 down. The horizon
+    // haze goes from pale peach to orange, so the distant land and the ambient light are warm.
+    const ss = (this.sunset = (1 - smooth(0.1, 0.36, h)) * smooth(-0.1, -0.01, h));
+    this.fogColor.lerp(this.setFog, 0.55 * ss);
+
     const tint = new THREE.Color().setHSL(k.skyHue, 0.6, 0.5);
     if (k.skyTint > 0) {
       const L = this.fogColor.r * 0.3 + this.fogColor.g * 0.59 + this.fogColor.b * 0.11;
@@ -216,7 +227,10 @@ export class Atmosphere {
     this.skyUniforms.disc1Col.value.copy(sunCol).multiplyScalar(sunVis * (0.4 + 3.6 * ext));
     this.skyUniforms.disc1Col.value.g *= 0.55 + 0.45 * ext;
     this.skyUniforms.disc1Col.value.b *= 0.3 + 0.7 * ext;
-    this.skyUniforms.discSize.value = k.sunSize * 0.42;
+    // At the horizon the core is a deep orange-red disc, larger, and dim enough to keep its colour under the tone
+    // mapper (the core is x6 in the shader and is added to the sky, which `ss` darkens below).
+    this.skyUniforms.disc1Col.value.lerp(this.setDisc.copy(this.setCore).multiplyScalar(sunVis), ss);
+    this.skyUniforms.discSize.value = k.sunSize * 0.42 * (1 + 1.5 * ss);
     sunDirection(k.timeOfDay - 1.2, k.latitude + 8, k.sunYaw + k.sun2Yaw, this.sun2Dir);
     const h2 = this.sun2Dir.y;
     this.sun2Color.setHSL(k.sun2Hue, 0.8, 0.62);
@@ -246,6 +260,19 @@ export class Atmosphere {
       if (k.skyTint <= 0) { this.skyUniforms.skyTintCol.value.setRGB(0.42, 0.58, 0.95); this.skyUniforms.skyTint.value = 0.45 * set; }
     }
 
+    // Sunset sky, both paths, uniforms only (after the calm values went to `envU`: the env map keeps them): the horizon
+    // colour the sky blends into is a deep orange, far less Mie (its forward lobe is what pins the sky at the sun to
+    // the 1.8 clamp, i.e. white), lower gain. The glow plane (`Celestial`) grades outward from the disc.
+    // The stock sky's own sun disc sits at the 1.8 clamp (white); it gives way to the orange `disc1` core as the sun sets.
+    u.showSunDisc.value = 1 - ss;
+    if (ss > 0) {
+      const U = this.skyUniforms;
+      U.fogCol.value.lerp(this.setSky, 0.85 * ss);
+      u.mieCoefficient.value += (0.0005 - u.mieCoefficient.value) * ss;
+      U.skyGain.value *= 1 - (this.lowQ ? 0.25 : 0.55) * ss;
+      U.horizonK.value += (Math.min(U.horizonK.value, 5) - U.horizonK.value) * ss;
+    }
+
     // Environment map: regenerate on significant sun change or every few seconds.
     this.envAge += dt;
     // Low quality (phones): at most one PMREM bake every 3 s, so a fast day cycle doesn't churn GPU memory.
@@ -264,7 +291,7 @@ export class Atmosphere {
     // The patched uniforms are shared with the drawn sky: bake with the calm, quality-independent values, then restore.
     const kH = U.horizonK.value, kT = U.skyTint.value, kG = U.skyGain.value;
     this.envKeep.copy(U.fogCol.value); this.envKeepT.copy(U.skyTintCol.value);
-    if (this.lowQ) { U.skyGain.value = E.skyGain; U.horizonK.value = E.horizonK; U.skyTint.value = E.skyTint; U.fogCol.value.copy(E.fogCol); U.skyTintCol.value.copy(E.tintCol); }
+    if (this.lowQ || this.sunset > 0) { U.skyGain.value = E.skyGain; U.horizonK.value = E.horizonK; U.skyTint.value = E.skyTint; U.fogCol.value.copy(E.fogCol); U.skyTintCol.value.copy(E.tintCol); }
     s.sunPosition.value.copy(this.sunDir);
     // Night: the Preetham sky goes black; give the env a faint blue floor so moonlit scenes still read.
     const n = this.night;

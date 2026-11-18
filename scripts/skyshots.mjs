@@ -14,6 +14,8 @@ const CASES = {
   crown: ['sun', 17.5, 0.5, false, 0],
   sunset: ['sun', { el: 0.11, from: 17, to: 23 }, 0.5, false, 0.2],
   dusk: ['sun', { el: -0.06, from: 17, to: 23 }, 0.5, false, 0.2],
+  set16: ['sun', { el: 0.16, from: 17, to: 23 }, 0.5, false, 0.35],
+  set06: ['sun', { el: 0.06, from: 17, to: 23 }, 0.5, false, 0.35],
   full: ['moon', 23.2, 0.5, false, 0.2],
   half: ['moon', 21.8, 0.25, false, 0.2],
   new: ['moon', 23.5, 0.02, false, 0.2],

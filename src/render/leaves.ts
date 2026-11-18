@@ -973,6 +973,13 @@ export class Leaves {
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
       if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.95 * (1 - NIGHT_FLOOR_DARK * this.nightFloor) : 1, this.nightFloor);
+      // Blue hour (safe path): between sunset and night there is no key light, and the hemisphere-normalised bake left
+      // the crown a saturated green brighter than the meadow. A window on the night grade (0 by day and at full night).
+      const duskK = bakeAll ? duskOf(this.nightGrade) : 0;
+      if (duskK > 0) {
+        const c = this.col, r = c.r * mm.r, g = c.g * mm.g, bl = c.b * mm.b, L = 0.3 * r + 0.59 * g + 0.11 * bl, sd = DUSK_DESAT * duskK, kd = 1 - DUSK_DIM * duskK;
+        c.r = ((r + (L * DUSK_GREY[0] - r) * sd) * kd) / mm.r; c.g = ((g + (L * DUSK_GREY[1] - g) * sd) * kd) / mm.g; c.b = ((bl + (L * DUSK_GREY[2] - bl) * sd) * kd) / mm.b;
+      }
       carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
       n++;
       }
@@ -1054,6 +1061,10 @@ const NIGHT_FULL_LIFT = 4;
 /** Moonless night: the safe-path crown is darkened by this share of the floor (it was the brightest thing on the ground) and loses this much more chroma. */
 const NIGHT_FLOOR_DARK = 0.55;
 const NIGHT_FLOOR_DESAT = 0.3;
+/** Blue hour on the safe path: share of chroma that goes to a cool grey, the dim, and the grey (unit luminance). */
+const DUSK_DESAT = 0.6, DUSK_DIM = 0.55, DUSK_GREY = [0.8, 1.0, 1.25];
+/** 0..1 window between sunset and night from the night grade (night 0.41 = sun 3.4 degrees down, the middle of it). */
+const duskOf = (night: number) => smooth(0.04, 0.3, night) * (1 - smooth(0.72, 1, night));
 
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
   const hemi = gr + (sky - gr) * hw;
