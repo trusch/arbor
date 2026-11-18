@@ -1,7 +1,7 @@
 // P3 gate: branch mesh chain ranges equal a full rebuild. Grows the tree step by step with an incremental
 // `branches.update` after every step (and wind offsets applied every 5th), then (1) `rebuildCheck` = every chain
 // rewritten in place, buffers compared bit by bit, (2) the drawn triangle soup compared with a fresh BranchMesh.
-// Usage: PROF_DIST=dir PORT=5722 CASES='oak:0:60,y3:600:60' node scripts/p3check.mjs   (name:fastForward s:grow s)
+// Usage: PROF_DIST=dir PORT=5722 CASES='oak:0:60,y3:600:60' node scripts/p3check.mjs   (name:fastForward s:grow s; y* = years=3, *b = a limb break half way)
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 const E = process.env, PORT = Number(E.PORT ?? 5722), DIST = E.PROF_DIST ?? '/tmp/arbor-bg-dist';
@@ -17,15 +17,16 @@ try {
     const q = c.n.startsWith('y') ? '&years=3' : '';
     await page.goto(`http://localhost:${PORT}/?start=0&nogui=1&speed=0&cinema=false&weather=calm&timeOfDay=13&cycle=false&season.on=false${q}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
-    const r = await page.evaluate(async ({ ff, g }) => {
+    const r = await page.evaluate(async ({ ff, g, brk }) => {
       const a = window.__arbor, s = a.sim, b = a.branches, fl = a.params.thickness.rootFlare;
       a.params.time.paused = true;
       if (ff) a.fastForward(ff);
       b.update(s, fl);
       const D = new Float32Array(s.nodes.length * 3 + 3 * 200000);
-      let layouts = 0, written = 0, chains = 0, ms = 0, n = 0;
+      let broke = -1, layouts = 0, written = 0, chains = 0, ms = 0, n = 0;
       for (let i = 0; i < g * 60; i++) {
         s.step(1 / 60);
+        if (brk && i === g * 30) { const ch = s.chains.filter((c) => !c.pruned && c.order === 1 && c.nodes.length >= 12).sort((x, y) => y.nodes.length - x.nodes.length)[0]; if (ch) { const n0 = s.breaks.length; s.breakAt(ch.nodes[2]); broke = s.breaks.length - n0 ? s.breaks[s.breaks.length - 1].nodeIds.length : 0; } }
         if (i % 7 === 0) s.flushStructure();
         const t = performance.now(); b.update(s, fl); ms += performance.now() - t; n++;
         layouts += b.stats.layout ? 1 : 0; written += b.stats.written; chains += b.stats.chains;
@@ -38,8 +39,8 @@ try {
       const A = b.triangleSoup(), B = fresh.triangleSoup();
       let soupDiff = A.length === B.length ? 0 : -1;
       if (soupDiff === 0) for (let i = 0; i < A.length; i++) if (!Object.is(A[i], B[i])) soupDiff++;
-      return { t: +s.time.toFixed(1), nodes: s.nodes.length, chk, soupFloats: A.length, soupDiff, layouts, meanWrittenChains: +(written / n).toFixed(1), meanChains: +(chains / n).toFixed(1), msPerUpdate: +(ms / n).toFixed(3) };
-    }, c);
+      return { broke, t: +s.time.toFixed(1), nodes: s.nodes.length, chk, soupFloats: A.length, soupDiff, layouts, meanWrittenChains: +(written / n).toFixed(1), meanChains: +(chains / n).toFixed(1), msPerUpdate: +(ms / n).toFixed(3) };
+    }, { ...c, brk: c.n.endsWith('b') });
     const ok = r.chk.pos === 0 && r.chk.nrm === 0 && r.chk.uv === 0 && r.chk.idx === 0 && r.chk.rest === 0 && r.soupDiff === 0;
     if (!ok) bad++;
     console.log(JSON.stringify({ case: c.n, ok, ...r }));

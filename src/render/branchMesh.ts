@@ -6,6 +6,8 @@ import { tel } from '../tel';
 const BARK_V_SCALE = 0.35; // metres of length per texture repeat (scaled by radius)
 /** Upload runs closer than this many vertices are merged into one `bufferSubData`. */
 const GAP = 2048;
+const COLLAR_FLARE = 1.55; // collar ring radius / child radius (capped by the parent's radius)
+const COLLAR_BLEND = 0.9; // weight of the parent's surface normal in the collar ring's normals
 
 /**
  * Tapered generalized-cylinder mesh for all chains. Each chain is one tube
@@ -85,6 +87,8 @@ export class BranchMesh {
   /** Debug: rewrite every chain in place on the next update (the reference for `rebuildCheck`). */
   private forceAll = false;
 
+  /** Rings of chain `c` with `m` nodes: one per node, the tip cap, and the collar ring on every child chain. */
+  private static rings(c: number, m: number) { return m + 1 + (c > 0 ? 1 : 0); }
   private static slack(rings: number) { return rings + Math.max(3, Math.ceil(rings * 0.5)); }
 
   /** `off`: optional per-node offsets (3 floats per node id, `Sway.D`) added to the rest positions. */
@@ -119,7 +123,7 @@ export class BranchMesh {
       const R = m < 2 || ch.pruned ? 0 : BranchMesh.radial(ch.order, nodes[ch.nodes[1]].radius);
       radials[c] = R;
       if (!R) continue;
-      const rings = m + 1;
+      const rings = BranchMesh.rings(c, m);
       vLive += rings * (R + 1); iLive += (rings - 1) * R * 6;
       const rc = BranchMesh.slack(rings);
       vNeed += rc * (R + 1); iNeed += (rc - 1) * R * 6;
@@ -130,7 +134,7 @@ export class BranchMesh {
       for (let c = 0; c < C; c++) {
         const R = radials[c];
         if (!R) continue;
-        const m = chains[c].nodes.length, rings = m + 1;
+        const m = chains[c].nodes.length, rings = BranchMesh.rings(c, m);
         if (c >= this.nC || this.cR[c] !== R || rings * (R + 1) > this.cVc[c] || (rings - 1) * R * 6 > this.cIc[c]) {
           const rc = BranchMesh.slack(rings); vApp += rc * (R + 1); iApp += (rc - 1) * R * 6;
         }
@@ -161,7 +165,7 @@ export class BranchMesh {
         const R = radials[c];
         this.cR[c] = R;
         if (!R) { this.cV[c] = v; this.cVc[c] = 0; this.cI[c] = ii; this.cIc[c] = 0; this.cM[c] = 0; continue; }
-        const rc = BranchMesh.slack(chains[c].nodes.length + 1);
+        const rc = BranchMesh.slack(BranchMesh.rings(c, chains[c].nodes.length));
         this.cV[c] = v; this.cVc[c] = rc * (R + 1); this.cI[c] = ii; this.cIc[c] = (rc - 1) * R * 6;
         v += this.cVc[c]; ii += this.cIc[c];
         this.cM[c] = -1; // force write
@@ -184,7 +188,7 @@ export class BranchMesh {
         continue;
       }
       drawn++;
-      const rings = m + 1;
+      const rings = BranchMesh.rings(c, m);
       let moved = false;
       if (c >= this.nC || this.cR[c] !== R || rings * (R + 1) > this.cVc[c] || (rings - 1) * R * 6 > this.cIc[c]) {
         // Relocate to the end with fresh slack; the old index range becomes degenerate.
@@ -213,6 +217,8 @@ export class BranchMesh {
         const nd = nodes[ids[kk]];
         let cx = nd.wx, cy = nd.wy, cz = nd.wz;
         let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
+        // Child chains start on the parent's axis: keep that ring inside the parent (nothing shows on its far side).
+        if (k === 0 && c > 0) r = Math.min(r * COLLAR_FLARE, 0.85 * Math.max(nd.radius, r));
         // Tangent: central difference, one-sided at ends.
         const ia = ids[Math.max(0, kk - 1)], ib = ids[Math.min(m - 1, kk + 1)];
         const a = nodes[ia], b = nodes[ib];
@@ -224,6 +230,7 @@ export class BranchMesh {
         }
         let tl = Math.hypot(tx, ty, tz);
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
+        const tl0 = tl;
         tx /= tl; ty /= tl; tz /= tl;
         // Root flare: trunk widens toward the ground with buttress lobes.
         let lobe = 0;
@@ -266,6 +273,38 @@ export class BranchMesh {
           VN[v] = ids[kk];
           v++;
         }
+        if (k === 0 && c > 0) {
+          // Collar ring: where the child's axis leaves the parent's surface, wider than the child (tapers to the
+          // child's radius at its first node), normals blended toward the parent's surface normal, and tied to the
+          // PARENT node for `applyOffsets` (moves rigidly with the parent: no gap under sway).
+          const pr = Math.max(nd.radius, 1e-4), r1 = nodes[ids[1]].radius;
+          const ux = nd.wdx, uy = nd.wdy, uz = nd.wdz;
+          const dt = tx * ux + ty * uy + tz * uz;
+          const exit = pr / Math.max(0.4, Math.sqrt(Math.max(0, 1 - dt * dt)));
+          const e = Math.min(exit, 0.7 * tl0);
+          const rc = Math.min(r1 * COLLAR_FLARE, Math.max(r1, 0.95 * pr));
+          const ex = cx + tx * e, ey = cy + ty * e, ez = cz + tz * e;
+          along += e; px = ex; py = ey; pz = ez;
+          const vc = along * vScale;
+          for (let j = 0; j <= R; j++) {
+            const ox = cs[j] * nx + sn[j] * bx, oy = cs[j] * ny + sn[j] * by, oz = cs[j] * nz + sn[j] * bz;
+            const o3 = v * 3;
+            const qx = ex + ox * rc, qy = ey + oy * rc, qz = ez + oz * rc;
+            P[o3] = qx; P[o3 + 1] = qy; P[o3 + 2] = qz;
+            if (keepRest) { REST[o3] = qx; REST[o3 + 1] = qy; REST[o3 + 2] = qz; }
+            // Parent surface normal at this vertex: away from the parent's axis.
+            let wx = qx - cx, wy = qy - cy, wz = qz - cz;
+            const wd = wx * ux + wy * uy + wz * uz;
+            wx -= ux * wd; wy -= uy * wd; wz -= uz * wd;
+            const wl = Math.sqrt(wx * wx + wy * wy + wz * wz) || 1;
+            const mx = ox + COLLAR_BLEND * wx / wl, my = oy + COLLAR_BLEND * wy / wl, mz = oz + COLLAR_BLEND * wz / wl;
+            const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
+            Nn[o3] = mx / ml; Nn[o3 + 1] = my / ml; Nn[o3 + 2] = mz / ml;
+            UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vc;
+            VN[v] = ids[0];
+            v++;
+          }
+        }
       }
       wverts += v - vStart;
       let iCnt = 0;
@@ -274,8 +313,10 @@ export class BranchMesh {
         for (let k = 0; k < rings - 1; k++) {
           const r0 = vStart + k * (R + 1), r1 = r0 + R + 1;
           for (let j = 0; j < R; j++) {
-            I[ii++] = r0 + j; I[ii++] = r1 + j; I[ii++] = r0 + j + 1;
-            I[ii++] = r0 + j + 1; I[ii++] = r1 + j; I[ii++] = r1 + j + 1;
+            // Counter-clockwise seen from OUTSIDE (b = t x n, so ring order n -> b turns left about t): the outer
+            // wall is the front face. The reverse order drew every tube inside out (only far inner walls).
+            I[ii++] = r0 + j; I[ii++] = r0 + j + 1; I[ii++] = r1 + j;
+            I[ii++] = r0 + j + 1; I[ii++] = r1 + j + 1; I[ii++] = r1 + j;
           }
         }
         I.fill(0, ii, this.cI[c] + this.cIc[c]);
@@ -368,14 +409,15 @@ export class BranchMesh {
     if (n === 0) return false;
     const P = this.pos, R = this.rest, VN = this.vNode, cV = this.cV, cR = this.cR, cM = this.cM;
     let lo = n, hi = 0;
-    // Only the vertices drawn: each live chain's used rings ((nodes + 1) x (radial + 1) from its range start). Slack,
+    // Only the vertices drawn: each live chain's used rings (`rings(c, nodes)` x (radial + 1) from its range start; a
+    // child chain's collar ring is tagged with the parent node, a whole ring like any other). Slack,
     // abandoned ranges and pruned chains are never indexed, so their positions do not matter (about a third to half
     // of the buffer on a big tree).
     for (let c = 0; c < this.nC; c++) {
       const rc = cR[c];
       if (!rc || cM[c] < 1) continue;
       // Ring by ring: the rc + 1 vertices of a ring belong to one node, so its offset is read once per ring.
-      const v0 = cV[c], v1 = v0 + (cM[c] + 1) * (rc + 1), w = (rc + 1) * 3;
+      const v0 = cV[c], v1 = v0 + BranchMesh.rings(c, cM[c]) * (rc + 1), w = (rc + 1) * 3;
       if (v0 < lo) lo = v0;
       if (v1 > hi) hi = v1;
       for (let v = v0, o = v0 * 3; v < v1; v += rc + 1) {
