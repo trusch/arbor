@@ -49,7 +49,7 @@ try {
   const query = [`crown.height=${f1(6.5)}`, `crown.radius=${f1(3.6)}`, `crown.base=${f1(2.4)}`, `crown.bole=${f1(1.7)}`,
     E.ATTR ? `crown.attractors=${E.ATTR}` : '', E.MAXNODES ? `maxNodes=${E.MAXNODES}` : '', phone ? '' : 'quality=High', E.EXTRA ?? ''].filter(Boolean).join('&');
   out.query = query;
-  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=13&season.date=0.3&season.hold=true&${query}`);
+  await page.goto(`http://localhost:${PORT}/?nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm&timeOfDay=13&season.date=${E.DATE ?? 0.3}&season.hold=true&${query}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   const census = () => page.evaluate(() => {
     const a = window.__arbor, s = a.sim, r = a.stage.renderer; let live = 0, pruned = 0, alive = 0;

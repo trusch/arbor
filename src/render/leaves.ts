@@ -195,7 +195,7 @@ export function leafOpen(age: number, grow = GROW_TIME): typeof leafOpenState {
   return o;
 }
 /** Cluster cards: blend distances (x crown height), leaves per card, card size vs a leaf (P8). */
-export const CL_NEAR = 0.35, CL_FAR = 0.9, CL_K = 6, CL_SIZE = 2.4;
+export const CL_NEAR = 0.35, CL_FAR = 0.9, CL_K_MIN = 1.5, CL_K_MAX = 10, CL_SIZE = 2.4, CL_TONE = 1;
 const LEAF_D = 11; // floats per instance placement record (see `Leaves.place`); 9 = bud-break date, 10 = fall date (seasons)
 const FOLLOW_EPS = 0.0015; // node travel (world units; leaf ≈ 0.1) below which its leaves are not re-placed
 const FOLLOW_EPS_R = 0.0002; // same for the node radius (drives the fade on thickening wood)
@@ -252,6 +252,9 @@ export class Leaves {
   clusterSwitch = false;
   private passN2 = 0;
   private passCandS = 0;
+  private passCandC = 0;
+  /** Sim leaves per cluster card: set at each swap so singles + clusters fill `maxInstances` (budget split). */
+  clK = 6;
   private m = new THREE.Matrix4();
   /** Resumable leaf pass (see `beginPass` / `stepPass`): cursor, instances written, candidates seen, input snapshot, back buffers. */
   passOpen = false;
@@ -496,9 +499,9 @@ export class Leaves {
     M.clearUpdateRanges(); M.addUpdateRange(0, (b - a) * 16); M.needsUpdate = true;
     if (colours) {
       const sc = this.mesh.instanceColor!.array as Float32Array, C = c.instanceColor!, dc = C.array as Float32Array;
-      // Leaf colours divide by the leaf map's mean; a cluster's map has its own mean (twig, shade inside the spray).
-      const mm = this.mapMean, cm = this.clusterMean;
-      const fr = mm.r / Math.max(0.02, cm.r), fg = mm.g / Math.max(0.02, cm.g), fb = mm.b / Math.max(0.02, cm.b);
+      // Same albedo as the leaves: the cluster map is painted from the leaf map, its darker mean is the shade inside the
+      // spray and is kept (dividing it out washed the clusters out pale).
+      const fr = CL_TONE, fg = CL_TONE, fb = CL_TONE;
       for (let i = a, j = 0; i < b; i++, j += 3) { dc[j] = sc[i * 3] * fr; dc[j + 1] = sc[i * 3 + 1] * fg; dc[j + 2] = sc[i * 3 + 2] * fb; }
       C.clearUpdateRanges(); C.addUpdateRange(0, (b - a) * 3); C.needsUpdate = true;
     }
@@ -606,7 +609,7 @@ export class Leaves {
       replaced = this.mesh;
     }
     this.passT = this.variant ? this.sunTransmittance(sim) : null;
-    this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0; this.passN2 = 0; this.passCandS = 0;
+    this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0; this.passN2 = 0; this.passCandS = 0; this.passCandC = 0;
     this.passTime = sim.time; this.passRs = this.rankScale;
     this.passPhase = season.phase; this.passSpring = season.springTime; this.passSeasonOn = season.active; this.passFs = leafSeason(this.formId);
     this.passAcc = 0;
@@ -886,7 +889,8 @@ export class Leaves {
     const rs = this.passRs, now = this.passTime;
     const sOn = this.passSeasonOn, sPh = this.passPhase, fs = this.passFs, sH = Math.max(2, sim.bboxMax[1]);
     let n = this.passN, n2 = this.passN2;
-    let cand = this.passCand, candS = this.passCandS;
+    let cand = this.passCand, candS = this.passCandS, candC = this.passCandC;
+    const K = this.clK, clSize = CL_SIZE * Math.sqrt(K / 6);
     // Cluster cards (P8 distance blend): a clump further than CL_NEAR x crown height becomes a cluster with rising
     // probability (per-node hash, so a clump switches whole), all clumps beyond CL_FAR; one card per CL_K leaves.
     const clOn = this.clusterActive && !!this.clusterMesh, cN = CL_NEAR * sH, cF = CL_FAR * sH;
@@ -914,12 +918,12 @@ export class Leaves {
       const shell = smooth(0.06, 0.4, nd.light); // light is mostly 0..0.4 in a grown crown
       const copies0 = hr() < 0.85 * shell ? 2 : 1;
       candS += copies0;
-      if (isCl && h01(li * 13 + 5) * CL_K >= copies0) continue; // about one card per CL_K / copies sim leaves
+      if (isCl) { candC += copies0; if (h01(li * 13 + 5) * K >= copies0) continue; } // one card per K leaves (shell copies count)
       const copies = isCl ? 1 : copies0;
       for (let cp = 0; cp < copies; cp++) {
       const rank = cp === 0 ? lf.rank : (lf.rank + hr()) % 1;
       cand++;
-      if (rank * 4 >= lp.density * rs || n + n2 >= cap) continue;
+      if (rank * 4 >= lp.density * (isCl ? 1 : rs) || n + n2 >= cap) continue;
       const w = isCl ? cap - 1 - n2 : n; // clusters fill the back buffers from the top, moved behind the singles at the swap
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
       const size = lp.size * lf.size * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
@@ -951,7 +955,7 @@ export class Leaves {
       const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
       const k = w * LEAF_D;
       D[k] = t; D[k + 1] = Math.cos(around); D[k + 2] = Math.sin(around); D[k + 3] = Math.cos(tilt); D[k + 4] = Math.sin(tilt);
-      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = isCl ? -size * CL_SIZE : size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
+      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = isCl ? -size * clSize : size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
       ND[w] = lf.node;
       // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
       this.place(D, ND, w, w + 1, sim, p, camX, camY, camZ, e, 0);
@@ -1055,7 +1059,7 @@ export class Leaves {
       if (isCl) n2++; else n++;
       }
     }
-    this.passLi = li; this.passN = n; this.passCand = cand; this.passN2 = n2; this.passCandS = candS;
+    this.passLi = li; this.passN = n; this.passCand = cand; this.passN2 = n2; this.passCandS = candS; this.passCandC = candC;
     this.passAcc += performance.now() - t0;
     if (li < end) return false;
     // The swap (which may re-place the whole set) gets a frame of its own instead of riding on a full slice.
@@ -1102,6 +1106,17 @@ export class Leaves {
     this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
     // Clusters only where single leaves do not fit the budget (hysteresis 10 %): a tree under the cap is unchanged.
     const want = this.clusters && !!this.clusterMesh && this.maxInstances > 0 && candS > this.maxInstances * (this.clusterActive ? 0.9 : 1.1);
+    // Budget split: the singles near the camera keep their share, the clusters get the rest of the cap (K adapts,
+    // card size x sqrt(K / 6) so the covered area per sim leaf stays the same).
+    // Leaf equivalents: singles candidates = candS - candC, cluster leaves = candC (shell copies counted in both).
+    if (want && candC > 0) {
+      const room = Math.max(this.maxInstances * 0.15, this.maxInstances * 0.95 - (candS - candC));
+      const k = Math.min(CL_K_MAX, Math.max(CL_K_MIN, candC / room));
+      if (Math.abs(k - this.clK) > 0.2 * this.clK) this.clusterSwitch = true; // one more pass with the new split
+      this.clK = k;
+      // The singles are thinned by rank to their own share; clusters by K.
+      this.rankScale = candS - candC > this.maxInstances * 0.85 ? (this.maxInstances * 0.85) / (candS - candC) : 1;
+    }
     if (want !== this.clusterActive) { this.clusterActive = want; this.rankScale = want ? Math.min(1, this.rankScale * 4) : this.rankScale / 4; this.clusterSwitch = true; }
     this.follow(sim, p, cam, Infinity, same);
     this.syncClusters(true);
