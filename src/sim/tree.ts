@@ -1,7 +1,7 @@
 import type { ArborParams } from '../params';
 import { Rng } from './rng';
 import { PointGrid } from './grid';
-import { sampleAttractors, envelopeDims, envelopeDimsYear, sampleShell, YEAR_DATE0 } from './envelope';
+import { sampleAttractors, envelopeDims, envelopeDimsYear, sampleShell, scafLobe, YEAR_DATE0 } from './envelope';
 import { tel } from '../tel';
 
 /**
@@ -175,6 +175,8 @@ const SHELL_OPEN = 0.28;
 const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
+/** Years 2-3 bays: side wood with its tip at scafLobe < YEAR_BAY_CUT beyond YEAR_BAY_R x the crown reach is pruned. */
+const YEAR_BAY_CUT = 0.15, YEAR_BAY_R = 0.45, YEAR_BAY_SIGMA = 0.25;
 /** Years 2-3: steepest wanted direction (sine of the elevation) of scaffold wood; order 2 is 0.1 lower. */
 const YEAR_UP_MAX = 0.7;
 /**
@@ -907,6 +909,11 @@ export class TreeSim {
       nodes[i].light = L;
     }
     const thr = this.params.growth.selfPrune;
+    // Years 2-3, bays (docs 6.9): side wood (order >= 2 or sup) whose tip sits in a bay between the scaffold domes
+    // (scafLobe < YEAR_BAY_CUT) and in the outer part of the crown counts as shaded, so the bays open to the sky.
+    const bayOn = this.years > 0 && this.growYear >= 1 && this.scafPicked && this.scafAz.length > 0;
+    let bayR = 0;
+    if (bayOn) { for (let i = 0; i < N; i++) { const nd = nodes[i]; if (!this.chains[nd.chain].pruned) bayR = Math.max(bayR, Math.hypot(nd.rx, nd.rz)); } bayR *= YEAR_BAY_R; }
     for (const ch of this.chains) {
       if (ch.pruned) continue;
       const parentChain = this.chains[nodes[ch.nodes[0]].chain];
@@ -917,7 +924,12 @@ export class TreeSim {
       for (let j = 1; j < ch.nodes.length; j++) L = Math.max(L, nodes[ch.nodes[j]].light);
       // Years 2-3: the interior clears (harder threshold), suppressed limbs go at a still higher light level.
       const t = yr ? thr * (ch.sup ? YEAR_SUP_PRUNE : YEAR_PRUNE) : thr;
-      if (L < t) ch.shade++; else ch.shade = 0;
+      let bay = false;
+      if (bayOn && (ch.order >= 2 || ch.sup)) {
+        const tp = nodes[ch.nodes[ch.nodes.length - 1]], rr = Math.hypot(tp.rx, tp.rz);
+        bay = rr > bayR && scafLobe(this.scafAz, Math.atan2(tp.rz, tp.rx), 0.5, YEAR_BAY_SIGMA) < YEAR_BAY_CUT;
+      }
+      if (L < t || bay) ch.shade++; else ch.shade = 0;
       if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); }
     }
   }

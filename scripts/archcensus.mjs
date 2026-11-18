@@ -48,6 +48,11 @@ const big = limbs.filter((l) => l.r >= 10);
 const lc = C[N[globalThis.lowId]?.chain]; if (lc) console.log("lowLeaf chain", JSON.stringify({ order: lc.order, sup: lc.sup ?? 0, nodes: lc.nodes.length, ry: +N[globalThis.lowId].ry.toFixed(2) }));
 console.log(JSON.stringify({ t: T, h: +h.toFixed(2), w: +w.toFixed(2), wOverH: +(w / h).toFixed(2), r13cm: +(r13 * 100).toFixed(1), lowLeaf: +lowLeaf.toFixed(2), nodes: N.length, leaves: sim.leaves.length, limbs10: big.length, limbs5: limbs.filter((l) => l.r >= 5).length,
   ...(process.env.CHECK ? { diff: sim.structureCheck().differing } : {}), breaks: sim.breaks?.length }));
+{ // bays: share of outer leafy nodes (beyond half the leaf reach) whose azimuth lies in a bay (scaffold sigma 0.25, lobe < 0.15 / 0.3)
+  const az = sim.scafAz ?? [], R = d[d.length - 1] * 0.5; let o = 0, b12 = 0, b30 = 0;
+  const lobe = (a) => { let m = 0; for (const x of az) { const dd = Math.atan2(Math.sin(a - x), Math.cos(a - x)); m = Math.max(m, Math.exp(-(dd * dd) / (2 * 0.25 * 0.25))); } return m; };
+  for (const id of leafy) { const n = N[id]; if (C[n.chain].pruned) continue; const r = Math.hypot(n.wx, n.wz); if (r < R) continue; o++; const l = lobe(Math.atan2(n.wz, n.wx)); if (l < 0.15) b12++; if (l < 0.3) b30++; }
+  console.log(`bays: scaffold az ${az.map((x) => x.toFixed(2)).join(' ')}; outer leafy nodes ${o}, in bay lobe<0.15 ${(100 * b12 / o).toFixed(1)}%, lobe<0.3 ${(100 * b30 / o).toFixed(1)}%`); }
 console.log('taper', taper.join(' '));
 console.log('silhouette r by band (0=ground..9=top):', bands.map((x) => x.toFixed(1)).join(' '));
 console.log(ostat.join('\n'));

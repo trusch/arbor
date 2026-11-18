@@ -86,12 +86,12 @@ export function yearLobe(seed: number, a: number, h: number): number {
  * dome per limb, gaussian SCAF_SIGMA rad wide, a slight twist with height) and the bays between them are thinned to
  * 1 - SCAF_BAY and pulled in by SCAF_LOBE. The attractor count stays the same (it is redistributed, not removed).
  */
-export const SCAF_SIGMA = 0.38, SCAF_LOBE = 0.3, SCAF_BAY = 0.85;
-export function scafLobe(az: number[], a: number, h: number): number {
+export const SCAF_SIGMA = 0.3, SCAF_LOBE = 0.3, SCAF_BAY = 0.95;
+export function scafLobe(az: number[], a: number, h: number, sigma = SCAF_SIGMA): number {
   let m = 0;
   for (const b of az) {
     const d = Math.atan2(Math.sin(a - b - 0.25 * (h - 0.5)), Math.cos(a - b - 0.25 * (h - 0.5)));
-    const v = Math.exp(-(d * d) / (2 * SCAF_SIGMA * SCAF_SIGMA));
+    const v = Math.exp(-(d * d) / (2 * sigma * sigma));
     if (v > m) m = v;
   }
   return m;
