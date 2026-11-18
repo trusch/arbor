@@ -124,13 +124,13 @@ const LEADER_VIGOR = [1, 0.8, 0.6];
 /** Spring flush: a tip sees new shell attractors within perception x this; buds on the last nodes of each chain. */
 const YEAR_REACH = 1.5, YEAR_BUDS = 2;
 /** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
-/** G2 girth by age: twig radius of the pipe model +13 % per growing year after the first (trunk x1.25 by year 3). */
-const YEAR_GIRTH = 0.2;
+/** G2 girth by age: twig radius of the pipe model x (1 + YEAR_GIRTH x growing years done): x1.8 by year 3 (6.13: 0.4, was 0.2; with YEAR_EXP 0.05 the bole is 69 cm, not 43). */
+const YEAR_GIRTH = 0.4;
 /**
  * Old wood thickens more than new (majestic-oak pass): the pipe exponent drops by this share per growing year, so a
  * node carrying many tips (trunk, scaffold limbs) gains more girth than a twig, and girth falls off quickly outward.
  */
-const YEAR_EXP = 0.03;
+const YEAR_EXP = 0.05;
 /** G4 lower-limb shedding: phase of the growing year at which the year's one low limb is let go. */
 const YEAR_SHED_PH = 0.3;
 /** G4: the thickest order-1 limbs are scaffold and never shed. */
@@ -194,8 +194,8 @@ const SHELL_OPEN = 0.28;
 const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
-/** Years 2-3 bays: side wood with its tip at scafLobe < YEAR_BAY_CUT beyond YEAR_BAY_R x the crown reach is pruned. */
-const YEAR_BAY_CUT = 0.15, YEAR_BAY_R = 0.45, YEAR_BAY_SIGMA = 0.25;
+/** Years 2-3 bays: side wood with its tip at scafLobe < YEAR_BAY_CUT beyond YEAR_BAY_R x the crown reach is pruned (6.13: 0.85, was 0.45: the bay is a dent in the outer rim, not a cleft to the trunk). */
+const YEAR_BAY_CUT = 0.15, YEAR_BAY_R = 0.85, YEAR_BAY_SIGMA = 0.25;
 /** Years 2-3: steepest wanted direction (sine of the elevation) of scaffold wood; order 2 is 0.1 lower. */
 const YEAR_UP_MAX = 0.7;
 /**

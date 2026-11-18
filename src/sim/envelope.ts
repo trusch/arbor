@@ -89,7 +89,7 @@ export function yearLobe(seed: number, a: number, h: number): number {
  * 1 - SCAF_BAY and pulled in by SCAF_LOBE. 6.13: shallow bays (0.95 / 0.3 cut four clefts 0.6 crown radii deep from
  * the rim to the top: a heart-shaped crown). The attractor count stays the same (it is redistributed, not removed).
  */
-export const SCAF_SIGMA = 0.3, SCAF_LOBE = 0.1, SCAF_BAY = 0.45, SCAF_REACH = 1.15;
+export const SCAF_SIGMA = 0.3, SCAF_LOBE = 0.1, SCAF_BAY = 0.45, SCAF_REACH = 1.3;
 /** The bays close with height (6.13): from SCAF_TOP0 to SCAF_TOP1 of the crown height the lobe value rises to 1, so no bay reaches the top. */
 export const SCAF_TOP0 = 0.4, SCAF_TOP1 = 0.75;
 export function scafLobe(az: number[], a: number, h: number, sigma = SCAF_SIGMA): number {
