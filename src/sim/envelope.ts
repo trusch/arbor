@@ -49,24 +49,36 @@ export function sampleAttractors(p: ArborParams, seed: number): Float32Array {
  * year 2 starts at t = 264 with yearLength 300). Scrubbing the season date does not move it (wood cannot be ungrown).
  */
 export const YEAR_DATE0 = 0.12;
-/** Final envelope scale after the last growing year: crown height x1.85 over the same base = tree height x1.6 (15 m), width x1.9 (oak habit). */
-export const YEAR_H = 1.85, YEAR_R = 1.9;
+/**
+ * Final envelope scale after the last growing year (majestic-oak pass): crown height x1.7 over a crown base lifted x1.6
+ * (the low limbs are shed, G4), radius x2.3: a crown broader than tall on a short, clean bole.
+ */
+export const YEAR_H = 1.7, YEAR_R = 2.3, YEAR_B = 1.6;
+/** Lobes of the year shells: radial reach and attractor density vary with azimuth (domes and bays, a few long limbs). */
+export const YEAR_LOBE = 0.22, YEAR_BAY = 0.6;
 /** Share of the total extra size gained in year 2 (section 5 table: 54 %); the rest comes in year 3. */
 const YEAR2_SHARE = 0.54;
 /** Attractor density of the new shells relative to the year-1 crown (coarser twig structure, bounded node count). */
-export const YEAR_DENSITY = 0.25;
+export const YEAR_DENSITY = 0.17;
 
 /** Envelope scale (height, radius) of growth year `yi` (0 = first year = today's crown). */
-export function yearScale(yi: number, years: number): { h: number; r: number } {
-  if (yi <= 0 || years <= 1) return { h: 1, r: 1 };
+export function yearScale(yi: number, years: number): { h: number; r: number; b: number } {
+  if (yi <= 0 || years <= 1) return { h: 1, r: 1, b: 1 };
   const f = yi >= years - 1 ? 1 : years === 3 ? YEAR2_SHARE : yi / (years - 1);
-  return { h: 1 + (YEAR_H - 1) * f, r: 1 + (YEAR_R - 1) * f };
+  return { h: 1 + (YEAR_H - 1) * f, r: 1 + (YEAR_R - 1) * f, b: 1 + (YEAR_B - 1) * f };
 }
 
-/** Effective envelope of growth year `yi` (crown base stays; height and radius scale). */
+/** Effective envelope of growth year `yi` (crown base lifts, height and radius scale). */
 export function envelopeDimsYear(p: ArborParams, yi: number, years: number) {
   const e = envelopeDims(p), s = yearScale(yi, years);
-  return { radius: e.radius * s.r, height: e.height * s.h, base: e.base };
+  return { radius: e.radius * s.r, height: e.height * s.h, base: e.base * s.b };
+}
+
+/** Lobe function of the year shells, 0..1 over azimuth `a` and normalized height `h` (two harmonics, phases per seed). */
+export function yearLobe(seed: number, a: number, h: number): number {
+  const p1 = ((seed * 0.6180339887) % 1) * 6.2832, p2 = ((seed * 0.4142135623) % 1) * 6.2832;
+  const v = 0.6 * Math.cos(3 * a + p1 + 1.2 * h) + 0.4 * Math.cos(5 * a + p2 - 2 * h);
+  return 0.5 + 0.5 * v;
 }
 
 /**
@@ -81,10 +93,12 @@ export function sampleShell(p: ArborParams, seed: number, yi: number, years: num
   const out = new Float32Array(n * 3);
   const sh = p.crown.shape;
   let i = 0, guard = 0;
-  while (i < n && guard++ < n * 80) {
-    const x = rng.range(-1, 1), z = rng.range(-1, 1), h = rng.next();
+  while (i < n && guard++ < n * 120) {
+    const x = rng.range(-1.25, 1.25), z = rng.range(-1.25, 1.25), h = rng.next();
     const rr = Math.sqrt(x * x + z * z);
-    if (rr > envelopeProfile(sh, h)) continue;
+    // Lobed crown: reach x (1 - YEAR_LOBE .. 1 + YEAR_LOBE) by azimuth, and bays thinned (density down to 1 - YEAR_BAY).
+    const lb = yearLobe(seed, Math.atan2(z, x), h);
+    if (rr > envelopeProfile(sh, h) * (1 + YEAR_LOBE * (2 * lb - 1)) || rng.next() > 1 - YEAR_BAY * (1 - lb)) continue;
     const px = x * b.radius, py = b.base + h * b.height, pz = z * b.radius;
     // Inside last year's envelope: already colonised.
     const ha = (py - a.base) / a.height;

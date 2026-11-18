@@ -111,12 +111,21 @@ const UP: [number, number, number] = [0, 1, 0];
 /** Growth over years: the first year is exempt from the seasonal gates until this sim time (today's tree, t = 150). */
 const YEAR_EXEMPT = 150;
 /** G3: leader elongation rate per growth year; laterals keep theirs, so the crown widens faster than it rises. */
-const LEADER_VIGOR = [1, 0.6, 0.35];
+const LEADER_VIGOR = [1, 0.45, 0.2];
 /** Spring flush: a tip sees new shell attractors within perception x this; buds on the last nodes of each chain. */
 const YEAR_REACH = 1.5, YEAR_BUDS = 2;
 /** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
 /** G2 girth by age: twig radius of the pipe model +13 % per growing year after the first (trunk x1.25 by year 3). */
 const YEAR_GIRTH = 0.13;
+/**
+ * Old wood thickens more than new (majestic-oak pass): the pipe exponent drops by this share per growing year, so a
+ * node carrying many tips (trunk, scaffold limbs) gains more girth than a twig, and girth falls off quickly outward.
+ */
+const YEAR_EXP = 0.03;
+/** G4 lower-limb shedding: phase of the growing year at which the year's one low limb is let go. */
+const YEAR_SHED_PH = 0.3;
+/** G4: the thickest order-1 limbs are scaffold and never shed. */
+const YEAR_KEEP = 4;
 const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
@@ -216,6 +225,10 @@ export class TreeSim {
    * steps of 1/40 of a year (each step is a parameter change for the structure pass: one full pass, bit-exact).
    */
   girth = 1;
+  /** Growing years done, quantised (0 in year 1, ramps to `years - 1`); drives `girth` and the pipe exponent. */
+  ageQ = 0;
+  /** Last growth year whose low limb was shed (G4). */
+  shedYear = 0;
   private sAcc = 0;
   /** Nodes that elongated or were created since the last forward pass of any kind, parents before children. */
   private sTips: number[] = [];
@@ -246,7 +259,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
-    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.attrT = new Float64Array(0); this.attrNext = 0;
+    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -401,8 +414,10 @@ export class TreeSim {
         ext = smoothstep(0, 0.02, ph) * (1 - smoothstep(0.33, 0.4, ph));
         this.thickMul = 1 - smoothstep(0.5, 0.6, ph);
         const prog = yi < 1 ? 0 : Math.min(this.years - 1, yi - 1 + smoothstep(0.02, 0.5, ph));
-        this.girth = 1 + YEAR_GIRTH * Math.round(prog * 40) / 40;
+        this.ageQ = Math.round(prog * 40) / 40;
+        this.girth = 1 + YEAR_GIRTH * this.ageQ;
       }
+      if (yi >= 1 && yi < this.years && ph >= YEAR_SHED_PH && this.shedYear < yi) { this.shedYear = yi; this.shedLowLimb(yi); }
       lead = LEADER_VIGOR[Math.min(LEADER_VIGOR.length - 1, this.growYear)];
     }
     const full = this.nodes.length >= g.maxNodes || ext <= 0;
@@ -572,6 +587,29 @@ export class TreeSim {
    * of unpruned chains that can see them grow on (new wood on the old scaffold), and the last nodes of every unpruned
    * chain get a fresh lateral bud.
    */
+  /**
+   * G4 lower-limb shedding (one per growing year, `years` > 0): of the order-1 limbs that start below this year's
+   * (lifted) crown base, the one whose wood hangs lowest goes, through the break path with `shed` set. The
+   * YEAR_KEEP thickest order-1 limbs are scaffold and stay.
+   */
+  private shedLowLimb(yi: number) {
+    const nodes = this.nodes, chains = this.chains;
+    const base = envelopeDimsYear(this.params, yi, this.years).base;
+    const o1: number[] = [];
+    for (let ci = 1; ci < chains.length; ci++) { const c = chains[ci]; if (c.order === 1 && !c.pruned && !c.juv && c.nodes.length >= 2) o1.push(ci); }
+    o1.sort((a, b) => nodes[chains[b].nodes[1]].radius - nodes[chains[a].nodes[1]].radius || a - b);
+    let pick = -1, low = Infinity;
+    for (let j = YEAR_KEEP; j < o1.length; j++) {
+      const c = chains[o1[j]];
+      if (nodes[c.nodes[0]].ry >= base) continue;
+      let m = Infinity; for (let k = 1; k < c.nodes.length; k++) m = Math.min(m, nodes[c.nodes[k]].wy);
+      if (m < low) { low = m; pick = o1[j]; }
+    }
+    if (pick < 0) return;
+    const ev = this.breakAt(chains[pick].nodes[1]);
+    if (ev) ev.shed = true;
+  }
+
   private springFlush(yi: number, wave: number, t0: number) {
     const p = this.params, g = p.growth;
     if (wave === 0) {
@@ -912,7 +950,7 @@ export class TreeSim {
     const p = this.params;
     const nodes = this.nodes;
     const N = nodes.length;
-    const n = Math.max(1.2, p.thickness.exponent);
+    const n = Math.max(1.2, p.thickness.exponent) * (this.years > 0 ? 1 - YEAR_EXP * this.ageQ : 1);
     const r0 = this.years > 0 ? p.thickness.twigRadius * this.girth : p.thickness.twigRadius;
     const k = 1 - Math.exp(-(this.years > 0 ? dt * this.thickMul : dt) * p.thickness.thickeningRate * 4);
     const gk = p.growth.gravity * p.growth.sag * 4e-6;
