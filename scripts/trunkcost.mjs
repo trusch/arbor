@@ -14,7 +14,7 @@ try {
   const page = await ctx.newPage();
   page.setDefaultTimeout(240000);
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
-  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm`);
+  await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&weather=calm${process.env.QUERY ? '&' + process.env.QUERY : ''}`);
   await page.waitForFunction(() => window.__arbor !== undefined);
   await page.evaluate((t) => window.__arbor.fastForward(t), t);
   await page.waitForTimeout(6000);
@@ -27,14 +27,16 @@ try {
     const mat = A.branches.mesh.material;
     const ms = { before: new before(mat), after: new after(mat) };
     const D = new Float32Array(A.sim.nodes.length * 3);
-    const out = { before: { upd: [], off: [] }, after: { upd: [], off: [] } };
+    const out = { before: { upd: [], off: [], full: [] }, after: { upd: [], off: [], full: [] } };
     const med = (a) => a.sort((x, y) => x - y)[a.length >> 1];
     for (let i = 0; i < 24; i++) for (const k of i % 2 ? ['before', 'after'] : ['after', 'before']) {
       let t0 = performance.now(); ms[k].update(A.sim, 1); out[k].upd.push(performance.now() - t0);
+      // Chain-range meshes rewrite nothing on an unchanged tree: `full` = every chain rewritten in place (forceAll).
+      if ('forceAll' in ms[k]) { ms[k].forceAll = true; t0 = performance.now(); ms[k].update(A.sim, 1); out[k].full.push(performance.now() - t0); }
       t0 = performance.now(); for (let q = 0; q < 10; q++) ms[k].applyOffsets(D); out[k].off.push((performance.now() - t0) / 10);
     }
     const r = {};
-    for (const k of ['before', 'after']) r[k] = { updateMs: +med(out[k].upd).toFixed(2), applyOffsetsMs: +med(out[k].off).toFixed(3), tris: ms[k].mesh.geometry.drawRange.count / 3, verts: ms[k].vUsed };
+    for (const k of ['before', 'after']) r[k] = { updateMs: +med(out[k].upd).toFixed(2), applyOffsetsMs: +med(out[k].off).toFixed(3), fullRewriteMs: out[k].full.length ? +med(out[k].full).toFixed(2) : null, tris: ms[k].rebuildCheck ? ms[k].rebuildCheck(A.sim, 1).tris : ms[k].mesh.geometry.drawRange.count / 3, indexSlots: ms[k].mesh.geometry.drawRange.count / 3, verts: ms[k].vUsed, liveVerts: ms[k].vLive };
     // Zero offsets = exactly the rest pose.
     const m = ms.after; let diff = 0; for (let i = 0; i < m.vUsed * 3; i++) diff = Math.max(diff, Math.abs(m.pos[i] - m.rest[i]));
     r.restDiff = diff;

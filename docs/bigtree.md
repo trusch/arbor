@@ -872,6 +872,31 @@ Gates. Year 1: `TIMES=150 YEARS=0 CHECK=1` and `YEARS=3` of `yearscensus.mjs` bo
 
 Not done: nothing here ran on the real phone. `setYears` back to one year in year 2 or 3 was not run in the app; `yearShift` assumes `season.yearLength` does not change during a tree's life (the growth clock of 6.2 assumes the same). The overlay of a one-year tree switched to three years in mid-summer says "growing" while it waits for the next spring. Breakage is not calibrated at size (6.6), and the three broken habits are only kept away by their default: `?years=3` or the control still grows them.
 
+### 6.17 Chain ranges with outside-out winding and branch collars (branch `bigtree-perf`)
+
+The chain-range mesh of 6.3 draws the wood of `main` (CLAUDE.md "Wood winding and branch collars"): tubes are wound counter-clockwise seen from outside, and every child chain (c > 0) has a collar ring after ring 0. How the two designs meet in `BranchMesh`:
+
+| Where | Rule |
+|---|---|
+| Ring count | `BranchMesh.rings(c, m)` = m + 1, + 1 on child chains (ring 0, collar, nodes 1..m-1, tip cap). The only place the count is written; range sizing, slack, both "does the chain still fit" tests, the dense layout, the index count and `applyOffsets` call it. A new ring kind changes this function and the vertex loop, nothing else. |
+| Degenerate fill | Unchanged: the index writer fills from its last triangle to the end of the chain's index range. |
+| Change detection | The collar reads the parent node `ids[0]` (position, radius, `wd*`) and `ids[1]` (radius, position through the ring-0 tangent); ring 0 of a child also reads `ids[0].radius` (0.85 x cap). `ids[0]` is in the chain's own node list and the per-node copy holds all seven values, so the dirty loop over `ids[0..m-1]` covers it; no new cache field. |
+| Root flare | The collar uses the parent's node radius, not the flared ring radius (the flare is applied to chain 0 only); `flare` and the year blend `fq` force a layout as before. A junction inside the flare zone therefore cannot go stale; its collar sits on the unflared surface. |
+| Rest copy | The collar ring writes `rest` like every ring. |
+| `applyOffsets` | One offset per ring, read from the ring's first vertex: the collar is a whole ring tagged with the parent node, so it rides the parent; used vertices per chain = `rings(c, cM)` x (radial + 1). |
+| Winding | One index writer (`reIndex || layout`); forced rewrite, `rebuildCheck` and debris wood (second `BranchMesh`, fake sim) go through it. `forceAll` rewrites vertices only, so the index buffer is checked by `p3check.mjs` part 2 (triangle soup against a fresh mesh), not by `rebuildCheck`. |
+
+Gates (build of this state, real GPU). `CASES='oak:0:60,oakb:60:20,y3:600:60,y3b:700:20' node scripts/p3check.mjs` (`*b` = a limb break half way, new): all buffers bit-equal and triangle soup equal to a fresh mesh in every case: growing oak t = 0 to 60 (63 556 triangles), oak with a 355-node limb broken at t = 70, year-3 tree growing t = 600 to 660 (30 630 nodes, 283 632 triangles), year-3 tree with a 9 307-node limb broken at t = 710. Sheets (`scripts/trunkshots.mjs`, `QUERY` env = extra query): default oak t = 90 in phone emulation `shots/trunkfix-merge-phone-t90-h13-{orbit,junc}-{none,storm}.jpg`, `?years=3` at t = 750 on desktop High `shots/trunkfix-merge-y3-desk-t750-h13-{orbit,junc}-{none,storm}.jpg`: trunk solid from all 12 azimuths, no windows into branches, collars at the junctions, no gap or torn ring in the storm frames. Longest drawn triangle edge on the oak in a held storm (60 frames, offsets up to 1.0 m): 0.2617 m against 0.2614 m at rest, and no indexed vertex outside the used rings of its chain. Zero offsets = rest pose: `restDiff` 0 (oak and year 3); `swayshots.mjs` rest check 30 044 leaves, 0 off rest, 0 non-zero offsets. `swaycheck.mjs`: 8 of 8 cases ok (81 to 199 frames each). With key poses forced on the small tree (`Q='&swaykey=0' AGES=90 WX=storm SPEEDS=1`) the one-curve check fails on 1 to 2 frames of 83 to 101 (0.061 to 0.091 rad against the 0.05 limit) in this build and in the build before the merge alike (two alternating runs each): a property of the key poses in `sway.ts`, which the mesh does not enter. Phone programs: 9 = 9 with identical cache-key sets against a build of `main` (22a8080) at t = 90, calm and storm (`wxprograms.mjs`).
+
+Cost against this branch before the merge (4a34bb5), `REF=4a34bb5 node scripts/trunkcost.mjs` (both meshes alternating in one page, phone emulation, 4x CPU throttle; `fullRewriteMs` = every chain rewritten in place):
+
+| Tree | Triangles | Live vertices | Update, unchanged tree after a sway frame | Full rewrite | `applyOffsets` |
+|---|---|---|---|---|---|
+| oak t = 90 | 64 686 → 68 570 (+6.0 %) | 39 317 → 41 564 | 1.5 → 1.5 ms | 6.8 → 7.0 ms | 0.78 → 0.85 ms |
+| `?years=3&maxNodes=40000` t = 750 | 282 246 → 296 696 (+5.1 %) | 166 210 → 174 363 | 11.2 → 11.2 ms | 41.9 → 43.8 ms | 3.46 → 3.69 ms |
+
+Seen on the year-3 sheets: where a stem nearly as thick as its parent leaves it, the collar (capped at 0.95 x the parent radius) reads as a shoulder ring around the parent, and thick limbs start with a bulge. The collar constants were tuned on the one-year oak.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
