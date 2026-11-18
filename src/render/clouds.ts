@@ -457,14 +457,15 @@ export class Clouds {
     // The `lit` map again: the sun's side at low sun, and in a lightning flash the billow tops and flanks of every cloud
     // (the structure shows for the frames of the flash; the body colour above takes a smaller share).
     const lm = this.heapsLit.material as THREE.MeshBasicMaterial, fo = Math.min(1, E.flash * 1.3);
-    // Moonlight: the same layer, faint and pale, on the moon's side.
+    // Moonlight: the same layer, faint and pale, on the moon's side. The colour is shifted to blue because the lit map's
+    // undersides are painted orange for the sun: under the moon they would read as an orange glow from below.
     const moonK = E.moonLight * (1 - day) * (h < -0.04 ? 1 : 0), lo = Math.max(low * (1 - scud) * (1 - 0.8 * c), 0.55 * moonK * (1 - scud));
     this.litOn = lo > 0.01 || fo > 0.01;
     // In a flash the layer holds only the clouds near the strike (up to three times over), so its opacity is the flash's.
     const flashing = fo > 0.01;
     lm.opacity = fade * (flashing ? Math.min(0.75, 0.25 + 0.6 * fo) : Math.min(1, lo * 1.1));
     if (flashing) lm.color.setRGB(0.8 + 0.5 * fo, 0.85 + 0.5 * fo, 1 + 0.5 * fo);
-    else if (moonK > 0) lm.color.setRGB(F.r, F.g, F.b).multiplyScalar(0.9).lerp(this.tmp.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark)), low);
+    else if (moonK > 0) lm.color.setRGB(F.r * 0.7, F.g, F.b * 1.45).multiplyScalar(0.9).lerp(this.tmp.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark)), low);
     else lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark));
     // Where the strike is: the bolt plane's azimuth (`rain.ts`: camera heading + u x 0.8 of the half field of view).
     cam.getWorldDirection(this.fwd);
@@ -503,7 +504,7 @@ export class Clouds {
       // Flatter toward the horizon (seen more from the side, through more air).
       const flat = 0.62 + 0.38 * smooth(R_HOR, 2.5, r);
       const hh = w * (CH / CW) * 1.25 * flat * bh;
-      const x = xr * H, z = zr * H, y = H * dome(r) * (bank ? BANK_LO + BANK_SPAN * h2 : 1 - 0.04 * h4);
+      const x = xr * H, z = zr * H, y = H * dome(r) * (this.bk[i] ? BANK_LO + BANK_SPAN * h2 : 1 - 0.04 * h4);
       // Facing the camera: level across, and leaning back with elevation so a high cloud is not seen edge-on.
       const rx = -zr / r, rz = xr / r, dd = Math.hypot(x, y, z), el = Math.max(0, y) / dd, cu = Math.sqrt(1 - el * el);
       const ux = -(xr / r) * el, uz = -(zr / r) * el, uy = cu;
