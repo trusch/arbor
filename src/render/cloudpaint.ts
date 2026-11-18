@@ -121,8 +121,8 @@ function paintAtlas() {
         lit = Math.max(lit, rim);
         // Rim variant (second half of the `lit` map; drawn on clouds toward a low sun or the moon): the thin margin all
         // round the upper outline glows, the underside is lit from below on both sides, the dense core stays dark.
-        const thin = edge * edge * (0.35 + 0.65 * smooth(0.05, 0.4, up)), below = (1 - smooth(0.04, 0.42, up)) * (0.55 + 0.45 * smooth(0.3, 0.7, bil));
-        rimA = Math.min(1, 1.5 * thin + 0.8 * below); rimW = below / Math.max(1e-3, below + 1.5 * thin);
+        const thin = edge * (0.35 + 0.65 * smooth(0.05, 0.4, up)), below = (1 - smooth(0.04, 0.42, up)) * (0.55 + 0.45 * smooth(0.3, 0.7, bil));
+        rimA = Math.min(1, 1.1 * thin + 0.8 * below); rimW = below / Math.max(1e-3, below + 1.1 * thin);
       }
       b = Math.min(1, Math.max(tower ? 0.08 : 0.36, b));
       const o = ((oy + j) * W + ox + i) * 4;
@@ -134,10 +134,11 @@ function paintAtlas() {
       const warm = under / Math.max(1e-3, under + lit);
       l[o] = 255; l[o + 1] = 255 * (1 - 0.24 * warm); l[o + 2] = 255 * (1 - 0.42 * warm);
       l[o + 3] = 255 * a * Math.min(1, Math.max(lit, under));
-      // Rows H.. of the lit map: the rim variant (pale warm rim, pink-orange underside); alpha lifted where the cloud is thin.
+      // Rows H.. of the lit map: the rim variant (pale warm rim, pink-orange underside); no alpha outside the body.
       const o2 = o + W * H * 4;
       l[o2] = 255; l[o2 + 1] = 255 * (0.93 - 0.3 * rimW); l[o2 + 2] = 255 * (0.82 - 0.4 * rimW);
-      l[o2 + 3] = 255 * Math.min(1, a * (1 + 1.2 * (1 - a))) * rimA;
+      // x the cloud's own alpha squared-ish: the glow sits in the thin part of the body, not as an outline in the haze outside it.
+      l[o2 + 3] = 255 * a * smooth(0.05, 0.6, a) * rimA;
     }
   }
   return { d, l, W, H };

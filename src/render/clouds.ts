@@ -41,7 +41,8 @@ function dataTex(W: number, H: number, cs: string, repeat: boolean) {
 }
 
 /** Layer height above the camera x fog density (see the header): fog fraction 1 - exp(-(LAYER / sin(elevation))^2). */
-const LAYER = 0.05, HEAP_LAYER = 0.032;
+// LAYER 0.085 (was 0.05): at 5 degrees the deck is 2/3 fog colour (was 1/4), so it pales into the horizon instead of ending as a dark edge on the fogged far ridge line.
+const LAYER = 0.085, HEAP_LAYER = 0.032;
 /** Half side of the square of slots around the camera, and of the deck plane, in layer heights. */
 const BOX = 8, DECK = 30;
 const GRID = 16, SLOTS = GRID * GRID, PARTS = 3;
