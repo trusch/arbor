@@ -28,16 +28,24 @@ function fbm(x: number, y: number, wrap = 0) {
 
 export const BASE = 0.2; // flat base line, as a fraction of the cell height from the bottom
 /**
- * Atlas: 2 x 3 cells of CW x CH. Cells 0..2 = cumulus heaps (light from the upper left), cell 3 = storm tower,
- * cells 4, 5 = scud (ragged, soft-edged shreds without a base or a lit side). The `lit` map has the same layout:
- * white, alpha = cloud alpha x how much the pixel faces the painted light (drawn over the heaps in the low sun's colour).
+ * Atlas: 4 x 4 cells of CW x CH (1024 x 512). Cells 0..9 = ten different cumulus heaps, from small puffs (0..2) over
+ * medium heaps to broad banks with several turrets (7..9), light from the upper left; cells 12, 13 = scud (ragged,
+ * soft-edged shreds without a base or a lit side); the 2 x 2 block at columns 2..3, rows 2..3 = the storm tower with
+ * its anvil at twice the resolution. The `lit` map has the same layout: white, alpha = cloud alpha x how much the
+ * pixel faces the painted light (drawn over the heaps in the low sun's colour, and in a lightning flash).
  */
-export const CW = 256, CH = 128, ROWS = 3;
+export const CW = 256, CH = 128, COLS = 4, ROWS = 4, HEAPS = 10, SCUD0 = 12;
+const HEAP_WIDE = [0.12, 0.16, 0.2, 0.25, 0.3, 0.27, 0.33, 0.4, 0.36, 0.41];
 
 function paintAtlas() {
-  const W = CW * 2, H = CH * ROWS, d = new Uint8Array(W * H * 4), l = new Uint8Array(W * H * 4);
-  for (let cell = 0; cell < 2 * ROWS; cell++) {
-    const ox = (cell & 1) * CW, oy = (cell >> 1) * CH, tower = cell === 3, scud = cell >= 4;
+  const W = CW * COLS, H = CH * ROWS, d = new Uint8Array(W * H * 4), l = new Uint8Array(W * H * 4);
+  // RGB under alpha 0 is cloud colour everywhere (no dark fringe in the mips).
+  for (let o = 0; o < d.length; o += 4) { d[o] = 226; d[o + 1] = 232; d[o + 2] = 240; l[o] = l[o + 1] = l[o + 2] = 255; }
+  const regions: [number, number, number, number, number][] = [];
+  for (let c = 0; c < HEAPS; c++) regions.push([c, (c % COLS) * CW, Math.floor(c / COLS) * CH, CW, CH]);
+  regions.push([SCUD0, 0, 3 * CH, CW, CH], [SCUD0 + 1, CW, 3 * CH, CW, CH], [99, 2 * CW, 2 * CH, 2 * CW, 2 * CH]);
+  for (const [cell, ox, oy, RW, RH] of regions) {
+    const tower = cell === 99, scud = cell === SCUD0 || cell === SCUD0 + 1;
     // Blobs: x, y (0..1 in the cell, y up), radius (in cell heights).
     const blobs: [number, number, number][] = [];
     let s = 11 + cell * 7.3;
@@ -52,18 +60,25 @@ function paintAtlas() {
       for (let i = 0; i < 9; i++) blobs.push([0.5 + 0.12 * (rnd() - 0.5) - 0.05 * (i / 8), 0.3 + 0.42 * (i / 8), 0.2 - 0.05 * (i / 8) + 0.05 * rnd()]);
       for (let i = 0; i < 11; i++) blobs.push([0.2 + 0.62 * (i / 10), 0.76 + 0.04 * rnd(), 0.1 + 0.05 * rnd()]);
     } else {
-      const n = 9 + cell * 2, wide = 0.26 + 0.05 * cell;
+      // Every cell its own heap: width, number of billows, where the top sits, how tall, one or two turrets.
+      const wide = HEAP_WIDE[cell], n = 3 + Math.round(wide * 26), peak = 0.3 + 0.4 * rnd(), tall = 0.7 + 0.5 * rnd() - 0.5 * (wide - 0.25), peak2 = rnd() > 0.5 ? rnd() : -1;
       for (let i = 0; i < n; i++) {
         const u = (i + 0.5) / n, x = 0.5 + (u - 0.5) * 2 * wide + 0.05 * (rnd() - 0.5);
-        // Tallest in the middle, low shoulders: a heap.
-        const hgt = (1 - Math.pow(Math.abs(u - 0.5) * 2, 1.7)) * (0.3 + 0.2 * rnd()) + 0.06;
-        blobs.push([x, BASE + 0.1 + hgt * 0.5, 0.15 + hgt * 0.42]);
-        if (rnd() > 0.4) blobs.push([x + 0.06 * (rnd() - 0.5), BASE + 0.14 + hgt, 0.09 + 0.1 * rnd()]);
+        // Tallest at the peak, low shoulders: a heap; a second turret on some.
+        let env = 1 - Math.pow(Math.min(1, Math.abs(u - peak) / Math.max(peak, 1 - peak)), 1.7);
+        if (peak2 >= 0) env = Math.max(env, 0.75 * (1 - Math.pow(Math.min(1, Math.abs(u - peak2) * 3), 2)));
+        const hgt = Math.min(0.56, env * (0.3 + 0.2 * rnd()) * tall + 0.06);
+        blobs.push([x, BASE + 0.1 + hgt * 0.5, Math.min(0.3, 0.13 + hgt * 0.42)]);
+        if (rnd() > 0.4) blobs.push([x + 0.06 * (rnd() - 0.5), Math.min(0.8, BASE + 0.14 + hgt), 0.08 + 0.09 * rnd()]);
       }
     }
     const asp = CW / CH;
-    for (let j = 0; j < CH; j++) for (let i = 0; i < CW; i++) {
-      const x = (i + 0.5) / CW, y = 1 - (j + 0.5) / CH;
+    for (let j = 0; j < RH; j++) for (let i = 0; i < RW; i++) {
+      const x = (i + 0.5) / RW, y = 1 - (j + 0.5) / RH;
+      // Far from every blob: stays transparent (skips the noise for about half the pixels).
+      let near = false;
+      for (const [bx, by, br] of blobs) { const dx = (x - bx) * asp, dy = y - by, rr = br + (scud ? 0.25 : 0.1); if (dx * dx + dy * dy < rr * rr) { near = true; break; } }
+      if (!near) continue;
       // Billowy edge: the sample point is displaced by noise before the blob test.
       const nx = fbm(x * 9 + cell * 5, y * 5), ny = fbm(x * 9 + 31, y * 5 + cell * 3), fine = fbm(x * 30, y * 15 + cell);
       const px = x + (scud ? 0.1 : 0.035) * (nx - 0.5), py = y + (scud ? 0.2 : 0.07) * (ny - 0.5);
@@ -72,8 +87,11 @@ function paintAtlas() {
         const dx = (px - bx) * asp, dy = py - by, q = 1 - Math.sqrt(dx * dx + dy * dy) / br;
         if (q > 0) den += q * q * (3 - 2 * q) * 1.4;
       }
-      den += 0.6 * (fine - 0.5) * (1 - smooth(0.8, 2, den));
-      let a = smooth(0.33, 0.63, den);
+      // Margin: torn by two scales of noise, thin and wispy outside, a dense core inside (no outline, no blur).
+      const fine2 = fbm(x * 84 + 3, y * 42 + cell);
+      den += (0.75 * (fine - 0.5) + 0.5 * (fine2 - 0.5)) * (1 - smooth(0.7, 1.8, den));
+      let a = smooth(0.26, 0.82, den);
+      a = a * (0.35 + 0.65 * a) * (0.86 + 0.14 * smooth(0.8, 1.6, den));
       // Scud: torn by the fine noise, alpha rises slowly (no outline), thin all over.
       if (scud) a = smooth(0.2, 1.5, den + 1.1 * (fine - 0.5) + 0.5 * (nx - 0.5)) * 0.9 * smooth(0, 0.12, y) * smooth(0, 0.1, x) * smooth(1, 0.9, x) * smooth(1, 0.88, y);
       // Flat base (cumulus) / ragged foot (tower); nothing touches the cell border (mips of neighbours stay clean).
@@ -131,7 +149,7 @@ function flip(p: CloudMap): CloudMap {
   for (let j = 0; j < p.H; j++) f.set(p.d.subarray(j * row, (j + 1) * row), (p.H - 1 - j) * row);
   return { d: f, W: p.W, H: p.H };
 }
-export const ATLAS_W = CW * 2, ATLAS_H = CH * ROWS, DECK_S = 256;
+export const ATLAS_W = CW * COLS, ATLAS_H = CH * ROWS, DECK_S = 256;
 export function paintClouds(): { atlas: CloudMap; deck: CloudMap; lit: CloudMap } {
   const a = paintAtlas();
   return { atlas: flip({ d: a.d, W: a.W, H: a.H }), deck: flip(paintDeck()), lit: flip({ d: a.l, W: a.W, H: a.H }) };

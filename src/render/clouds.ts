@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ATLAS_W, ATLAS_H, BASE, CH, CW, DECK_S, ROWS, paintClouds, type CloudMap } from './cloudpaint';
+import { ATLAS_W, ATLAS_H, BASE, CH, COLS, CW, DECK_S, HEAPS, ROWS, SCUD0, paintClouds, type CloudMap } from './cloudpaint';
 
 /**
  * Clouds by type, phone-safe (PowerVR rule): every material is a clone of the canopy-shadow decal `MeshBasicMaterial`
@@ -44,7 +44,18 @@ function dataTex(W: number, H: number, cs: string, repeat: boolean) {
 const LAYER = 0.05, HEAP_LAYER = 0.032;
 /** Half side of the square of slots around the camera, and of the deck plane, in layer heights. */
 const BOX = 10, DECK = 30;
-const GRID = 12, SLOTS = GRID * GRID;
+const GRID = 12, SLOTS = GRID * GRID, PARTS = 3;
+/**
+ * The sky as a dome: a cloud at ground distance r (layer heights) is drawn `dome(r)` layer heights above the camera.
+ * It falls to the horizon at `R_HOR` and well under it by `R_OUT`, where slots are dropped, so a cloud enters and
+ * leaves the picture over the horizon at its full size and is never scaled in or out.
+ */
+const R_HOR = 7.6, R_OUT = 9.6;
+const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
+/** Drift in layer heights per m/s of cloud speed, and the speed of the layer (heights / s) while a change of weather is on its way in. */
+const DRIFT = 0.008, TRANSIT = 0.9;
+/** Deck: seconds to close once the bank has arrived, seconds to open; share of slots that must already carry the new weather. */
+const DECK_IN = 8, DECK_OUT = 6, DECK_GATE = 0.55, BANK = 0.85;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
@@ -85,13 +96,22 @@ export class Clouds {
   /** Opacity ramp after the maps arrive (`FADE_S`), so clouds never pop in; `amount = -1` (scripts) snaps it to 1. */
   private fade = 0;
   private amount = -1;
-  private size = 1;
   private dark = 0;
+  /** Per slot, set when the slot enters at the upwind edge (the documented state besides the drift): generation, shown, kind (0 heap, 1 scud), size factor, last along-wind position. */
+  private gen = new Uint16Array(SLOTS);
+  private show = new Uint8Array(SLOTS);
+  private kindOf = new Uint8Array(SLOTS);
+  private sz = new Float32Array(SLOTS);
+  private pu = new Float32Array(SLOTS);
+  private boost = 0;
+  /** Deck texture offset (the same drift, kept apart because it wraps at one tile). */
+  private du = 0;
+  private dv = 0;
+  private deckK = 0;
   private stormK = 0;
   private litOn = false;
   /** Drift of the layer in layer heights (wraps at 2 BOX), and the weather clock for the slow breathing. */
   private ox = 0;
-  private oz = 0;
   private t = 0;
   private lit = new THREE.Color();
   private shade = new THREE.Color();
@@ -128,13 +148,13 @@ export class Clouds {
     // After the sun glow (3), before fireflies (4), bolt (5) and rain (6+): clouds cover the sun, rain covers clouds.
     const tg = new THREE.PlaneGeometry(1, 1);
     const tuv = tg.getAttribute('uv') as THREE.BufferAttribute;
-    for (let i = 0; i < 4; i++) tuv.setXY(i, 0.5 + 0.5 * tuv.getX(i), (ROWS - 2 + tuv.getY(i)) / ROWS);
+    for (let i = 0; i < 4; i++) tuv.setXY(i, 0.5 + 0.5 * tuv.getX(i), 0.5 * tuv.getY(i));
     this.tower = mk(tg, atlas, 3.2);
     const dg = new THREE.PlaneGeometry(1, 1);
     dg.rotateX(Math.PI / 2);
     this.deck = mk(dg, this.deckTex, 3.4);
     // Batched quads: position / normal / uv / index, like a PlaneGeometry (same attributes, same program).
-    const N = SLOTS + 1, g = new THREE.BufferGeometry();
+    const N = SLOTS * PARTS, g = new THREE.BufferGeometry();
     this.pos = new THREE.BufferAttribute(new Float32Array(N * 12), 3);
     this.uv = new THREE.BufferAttribute(new Float32Array(N * 8), 2);
     this.pos.setUsage(THREE.DynamicDrawUsage); this.uv.setUsage(THREE.DynamicDrawUsage);
@@ -179,17 +199,24 @@ export class Clouds {
     performance.measure('clouds maps ready', { start: t0 });
   }
 
-  /** One upright quad: centre of its base (camera-relative x, z; world y), half width along (rx, rz), height, atlas cell, mirrored. */
-  private quad(q: number, cx: number, cy: number, cz: number, rx: number, rz: number, hw: number, hh: number, cell: number, flip: boolean) {
+  /** One quad: centre of its base line (world), half width along the level vector (rx, rz), height along the up vector (ux, uy, uz), atlas cell, mirrored. */
+  private quad(q: number, cx: number, cy: number, cz: number, rx: number, rz: number, ux: number, uy: number, uz: number, hw: number, hh: number, cell: number, flip: boolean) {
     const P = this.pos.array as Float32Array, U = this.uv.array as Float32Array, o = q * 12, u = q * 8;
-    // The painted base line sits BASE up the cell: sink the quad so the base is at cy.
-    const y0 = cy - hh * BASE, y1 = y0 + hh;
-    P[o] = cx - rx * hw; P[o + 1] = y1; P[o + 2] = cz - rz * hw;
-    P[o + 3] = cx + rx * hw; P[o + 4] = y1; P[o + 5] = cz + rz * hw;
-    P[o + 6] = cx - rx * hw; P[o + 7] = y0; P[o + 8] = cz - rz * hw;
-    P[o + 9] = cx + rx * hw; P[o + 10] = y0; P[o + 11] = cz + rz * hw;
-    const u0 = (cell & 1) * 0.5, v1 = 1 - (cell >> 1) / ROWS, v0 = v1 - 1 / ROWS, ua = flip ? u0 + 0.5 : u0, ub = flip ? u0 : u0 + 0.5;
+    // The painted base line sits BASE up the cell: sink the quad so the base is at the given point.
+    const bx = cx - ux * hh * BASE, by = cy - uy * hh * BASE, bz = cz - uz * hh * BASE, tx = bx + ux * hh, ty = by + uy * hh, tz = bz + uz * hh;
+    P[o] = tx - rx * hw; P[o + 1] = ty; P[o + 2] = tz - rz * hw;
+    P[o + 3] = tx + rx * hw; P[o + 4] = ty; P[o + 5] = tz + rz * hw;
+    P[o + 6] = bx - rx * hw; P[o + 7] = by; P[o + 8] = bz - rz * hw;
+    P[o + 9] = bx + rx * hw; P[o + 10] = by; P[o + 11] = bz + rz * hw;
+    const u0 = (cell % COLS) / COLS, v1 = 1 - Math.floor(cell / COLS) / ROWS, v0 = v1 - 1 / ROWS, ua = flip ? u0 + 1 / COLS : u0, ub = flip ? u0 : u0 + 1 / COLS;
     U[u] = ua; U[u + 1] = v1; U[u + 2] = ub; U[u + 3] = v1; U[u + 4] = ua; U[u + 5] = v0; U[u + 6] = ub; U[u + 7] = v0;
+  }
+
+  /** What slot `i` should carry in the weather of this frame: [shown, kind]. Under a deck the sky is a bank of heaps with the type's share of scud. */
+  private want(i: number, share: number, under: boolean): number {
+    const rank = hash2(i + 0.5, this.gen[i] * 1.37 + 3.7);
+    if (under) return rank < share ? 3 : rank < BANK ? 1 : 0;
+    return rank < share ? 1 : 0;
   }
 
   /** Once per frame, right before `render` and after `Stage.applyWeather` (it reads the live fog density). */
@@ -203,17 +230,31 @@ export class Clouds {
     const fade = this.fade * this.fade * (3 - 2 * this.fade);
     const c = E.cloud, h = E.sunH;
     const T = TYPES[E.type] ?? TYPES.none;
-    // Type targets ease (clouds grow and shrink over a few seconds); the first frame and a hidden-tab gap snap.
-    const k = this.amount < 0 || dt > 1 ? 1 : 1 - Math.exp(-dt * 0.45);
-    if (this.amount < 0) this.amount = 0;
-    this.amount += (T[0] - this.amount) * k;
-    this.size += (T[1] - this.size) * k;
+    // Snap (first frame, scripts, `weather.snap()` callers that set `amount = -1`, a hidden-tab gap): the sky is
+    // repopulated at once for the weather of this frame. Otherwise nothing here eases a cloud's size.
+    const snap = this.amount < 0 || dt > 1, k = snap ? 1 : 1 - Math.exp(-dt * 0.45);
+    this.amount = T[0];
     this.dark += (T[2] - this.dark) * k;
-    this.stormK += ((E.storm ? 1 : 0) - this.stormK) * (k === 1 ? 1 : 1 - Math.exp(-dt * 0.8));
+    this.stormK += ((E.storm ? 1 : 0) - this.stormK) * (snap ? 1 : 1 - Math.exp(-dt * 0.12));
     const HD = Math.min(160, LAYER / Math.max(1e-5, E.fogDensity)), H = Math.min(100, HEAP_LAYER / Math.max(1e-5, E.fogDensity));
     // Drift: metres per second over a layer taken to be about 1100 m up.
-    const sp = (E.speed / 1100) * dt, L = 2 * BOX;
-    this.ox = (this.ox + E.dirX * sp) % L; this.oz = (this.oz + E.dirZ * sp) % L;
+    const L = 2 * BOX, dOp = smooth(0.34, 0.47, c), under = dOp > 0.5;
+    // Slots still carrying the old weather: while there are any, the layer runs faster (the change is carried in on the wind).
+    let mis = 0;
+    for (let i = 0; i < SLOTS; i++) {
+      const w = this.want(i, T[0], under);
+      if (snap) { this.gen[i] = (this.gen[i] + 1) & 0xffff; const w2 = this.want(i, T[0], under); this.show[i] = w2 & 1; this.kindOf[i] = w2 >> 1; this.sz[i] = T[1]; }
+      else if ((w & 1) !== this.show[i] || (this.show[i] === 1 && (w >> 1) !== this.kindOf[i])) mis++;
+    }
+    const pending = mis / SLOTS;
+    this.boost = snap ? 0 : this.boost + ((pending > 0.03 ? 1 : 0) - this.boost) * (1 - Math.exp(-dt * 1.4));
+    const own = E.speed * DRIFT, adv = (own + (Math.max(own, TRANSIT) - own) * this.boost) * Math.min(dt, 1), tr = 9 / (2 * DECK);
+    this.ox = (this.ox + adv) % L;
+    this.du = (((this.du - adv * E.dirX * tr) % 1) + 1) % 1; this.dv = (((this.dv - adv * E.dirZ * tr) % 1) + 1) % 1;
+    // The deck closes over the bank once it has arrived, and opens before the bank moves on.
+    if (snap) this.deckK = dOp;
+    else if (dOp > this.deckK) { if (pending < 1 - DECK_GATE) this.deckK = Math.min(dOp, this.deckK + dt / DECK_IN); }
+    else this.deckK = Math.max(dOp, this.deckK - dt / DECK_OUT);
 
     // ---- light: lit colour (sun, warm when low), shade colour (sky light), both down to a moonlit grey at night ----
     const day = smooth(-0.1, 0.12, h), sunUp = smooth(-0.06, 0.1, h);
@@ -226,36 +267,43 @@ export class Clouds {
     const flash = E.flash * 1.6;
 
     // ---- deck ----
-    const dOp = smooth(0.34, 0.47, c);
+    const deckK = this.deckK, dOpS = deckK * deckK * (3 - 2 * deckK);
     const dk = this.deck, dm = dk.material as THREE.MeshBasicMaterial;
-    dk.visible = dOp > 0.01;
-    S.deck = dOp;
+    dk.visible = dOpS > 0.01;
+    S.deck = dOpS;
     if (dk.visible) {
       dk.position.set(cam.position.x, cam.position.y + HD, cam.position.z);
       dk.scale.set(2 * DECK * HD, 1, 2 * DECK * HD);
-      // Scroll with the same drift (texture v runs along world z after the rotation; 9 tiles over 2 DECK heights).
-      const r = 9 / (2 * DECK);
-      this.deckTex.offset.set((((-this.ox * r) % 1) + 1) % 1, (((-this.oz * r) % 1) + 1) % 1);
+      // Scrolled with the same drift (texture v runs along world z after the rotation; 9 tiles over 2 DECK heights).
+      this.deckTex.offset.set(this.du, this.dv);
       // Mid grey for stratus, dark grey-blue for rain cloud and the storm; warm cast from a low sun.
       const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
       dm.color.setRGB(this.tmp.r + nightL + flash * 0.5, this.tmp.g + nightL * 1.1 + flash * 0.52, this.tmp.b + nightL * 1.3 + flash * 0.6);
-      dm.opacity = dOp * fade;
+      dm.opacity = dOpS * fade;
     }
 
-    // ---- storm tower: rises on the upwind side, then the deck closes over it ----
+    // ---- storm tower: comes up over the upwind horizon at a fixed size and advances; the deck closes over it ----
     const tw = this.tower, tm = tw.material as THREE.MeshBasicMaterial;
     const rise = this.stormK * smooth(0.0, 0.3, c);
-    tw.visible = rise > 0.01;
+    tw.visible = rise > 0.004;
     S.tower = rise;
+    // Sheet lightning inside the tower between strikes: short double flickers from the weather clock (no state).
+    let sheet = 0;
+    if (tw.visible && E.storm) {
+      const kk = Math.floor(this.t / 2.7), ph = this.t - kk * 2.7 - 0.3 - 1.9 * hash2(kk, 5.3);
+      if (hash2(kk, 1.9) > 0.35) sheet = Math.exp(-(ph * ph) / 0.004) + 0.6 * Math.exp(-((ph - 0.19) * (ph - 0.19)) / 0.003);
+    }
     if (tw.visible) {
       tm.opacity = fade;
-      const R = 6 * HD, top = (4 + 38 * rise) * DEG, wdt = 1.7 * R, hgt = R * (Math.tan(top) + 0.4) / 0.86;
-      tw.position.set(cam.position.x - E.dirX * R, cam.position.y - 0.4 * R + hgt * 0.5 - hgt * 0.08, cam.position.z - E.dirZ * R);
+      const rr = 10 - 5.5 * rise, R = rr * HD, wdt = 8.4 * HD, hgt = 4.8 * HD;
+      const by = cam.position.y - 0.05 * R - hgt * 1.1 * smooth(6.5, 10, rr);
+      tw.position.set(cam.position.x - E.dirX * R, by + hgt * 0.5 - hgt * 0.08, cam.position.z - E.dirZ * R);
       tw.scale.set(wdt, hgt, 1);
       tw.rotation.set(0, Math.atan2(E.dirX, E.dirZ), 0);
       this.tmp.copy(this.shade).lerp(this.lit, 0.6);
-      tm.color.setRGB(this.tmp.r + nightL * 1.5 + flash, this.tmp.g + nightL * 1.6 + flash, this.tmp.b + nightL * 1.9 + flash * 1.1);
+      const fl = flash + 0.5 * sheet * (0.35 + 0.65 * (1 - day));
+      tm.color.setRGB(this.tmp.r + nightL * 1.5 + fl, this.tmp.g + nightL * 1.6 + fl, this.tmp.b + nightL * 1.9 + fl * 1.15);
     }
 
     // ---- heaps ----
@@ -273,61 +321,65 @@ export class Clouds {
     let r = this.tmp.r + nk * (F.r + 0.4 * (fl - F.r)), g = this.tmp.g + nk * (F.g + 0.4 * (fl - F.g)), b = this.tmp.b + nk * (F.b + 0.4 * (fl - F.b));
     // Under a deck the heaps are scud: the deck's own colour a little darker (never lighter than what is behind them,
     // day or night, by construction) and half transparent, so they are soft shapes in the layer, not cut-outs.
-    const scud = dk.visible ? dOp : 0, tone = SCUD_TONE + (SCUD_NIGHT - SCUD_TONE) * (1 - day);
+    const scud = dk.visible ? dOpS : 0, tone = SCUD_TONE + (SCUD_NIGHT - SCUD_TONE) * (1 - day);
     r += (dm.color.r * tone - r) * scud; g += (dm.color.g * tone - g) * scud; b += (dm.color.b * tone - b) * scud;
     hm.opacity = fade * (1 - (1 - SCUD_OPACITY) * scud);
     hm.color.setRGB(r + flash * 0.3 * (1 - scud), g + flash * 0.3 * (1 - scud), b + flash * 0.35 * (1 - scud));
-    const lm = this.heapsLit.material as THREE.MeshBasicMaterial, lo = low * (1 - scud) * (1 - 0.8 * c);
-    this.litOn = lo > 0.01;
-    lm.opacity = fade * Math.min(1, lo * 1.1);
-    lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark));
+    // The `lit` map again: the sun's side at low sun, and in a lightning flash the billow tops and flanks of every cloud
+    // (the structure shows for the frames of the flash; the body colour above takes a smaller share).
+    const lm = this.heapsLit.material as THREE.MeshBasicMaterial, lo = low * (1 - scud) * (1 - 0.8 * c), fo = Math.min(1, E.flash * 1.3 + 0.25 * sheet);
+    this.litOn = lo > 0.01 || fo > 0.01;
+    lm.opacity = fade * Math.min(1, Math.max(lo * 1.1, fo));
+    const fw = fo / Math.max(1e-4, fo + lo);
+    lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark) * (1 - fw));
+    lm.color.r += 0.82 * fw * (0.4 + fo); lm.color.g += 0.86 * fw * (0.4 + fo); lm.color.b += fw * (0.4 + fo);
     // The painted light side faces the sun, at night the moon.
     const Ld = h < -0.04 && E.moonLight > 0 ? E.moonDir : E.sunDir;
     const sx = Ld.x, sz = Ld.z;
     let n = 0;
-    const amount = this.amount, size = this.size;
-    // Heap shape → scud shape as the deck closes: the heaps shrink away, the shreds grow in (no shape pop).
-    const isScud = scud > 0.5, swap = smooth(0, 0.7, Math.abs(scud - 0.5) * 2);
+    const dl = Math.hypot(E.dirX, E.dirZ) || 1, wx = E.dirX / dl, wz = E.dirZ / dl, camY = cam.position.y;
     for (let i = 0; i < SLOTS; i++) {
-      const h1 = hash2(i, 3.7), h2 = hash2(i, 9.1), h3 = hash2(i, 17.3), h4 = hash2(i, 23.9);
-      // Jittered lattice, drifting and wrapping around the camera.
-      const gx = ((i % GRID) + 0.1 + 0.8 * h1) / GRID, gz = (Math.floor(i / GRID) + 0.1 + 0.8 * h2) / GRID;
-      let x = ((gx * L + this.ox) % L + L) % L - BOX, z = ((gz * L + this.oz) % L + L) % L - BOX;
-      // A slot is shown when its rank is under the amount; it grows over a band of 0.14, so cover changes cloud by cloud.
-      const rank = (i * 0.618034) % 1;
-      let s = smooth(rank - 0.07, rank + 0.07, amount * 1.07) * smooth(0, 0.04, amount) * swap;
-      // Shrinks to nothing at the wrap edge.
-      s *= smooth(BOX, BOX - 2.5, Math.max(Math.abs(x), Math.abs(z)));
-      if (s < 0.02) continue;
-      const r = Math.hypot(x, z);
-      // Nearly overhead an upright card would be seen from below: none there (the app camera never looks that high).
-      s *= smooth(1.2, 2.2, r);
-      if (s < 0.02) continue;
-      x *= H; z *= H;
-      // Slow change of shape: width and height breathe out of step.
-      const br = 1 + 0.1 * Math.sin(this.t * (0.11 + 0.1 * h3) + h4 * 6.28), bh = 1 + 0.12 * Math.sin(this.t * (0.09 + 0.08 * h4) + h3 * 6.28);
-      const w = H * (0.85 + 1.0 * h3) * size * s * br;
+      // Lattice in the wind's frame: u along the wind (drifting, wrapping far under the horizon), v across.
+      const gu = ((i % GRID) + 0.1 + 0.8 * hash2(i, 3.7)) / GRID;
+      const u = ((gu * L + this.ox) % L + L) % L - BOX;
+      // Entering at the upwind edge: the slot becomes a new cloud of the weather of this moment.
+      if (u < this.pu[i] - 1 && !snap) {
+        this.gen[i] = (this.gen[i] + 1) & 0xffff;
+        const w = this.want(i, T[0], under);
+        this.show[i] = w & 1; this.kindOf[i] = w >> 1; this.sz[i] = T[1];
+      }
+      this.pu[i] = u;
+      if (!this.show[i]) continue;
+      const gn = this.gen[i], h2 = hash2(i + 0.3, gn + 9.1), h3 = hash2(i + 0.7, gn * 1.7 + 17.3), h4 = hash2(i + 0.1, gn * 2.3 + 23.9);
+      let v = ((Math.floor(i / GRID) + 0.1 + 0.8 * h2) / GRID) * L - BOX;
+      // Nothing passes straight overhead (a card there would spin).
+      if (Math.abs(v) < 1) v = v < 0 ? -1 : 1;
+      const xr = u * wx - v * wz, zr = u * wz + v * wx, r = Math.hypot(xr, zr);
+      if (r > R_OUT) continue;
+      const isScud = this.kindOf[i] === 1;
+      // Size is the cloud's own (small puffs to broad banks), fixed for its life; it only breathes a little.
+      const br = 1 + 0.04 * Math.sin(this.t * (0.11 + 0.1 * h3) + h4 * 6.28), bh = 1 + 0.05 * Math.sin(this.t * (0.09 + 0.08 * h4) + h3 * 6.28);
+      const big = h3 * Math.sqrt(h3), w = H * (0.5 + 1.75 * big) * this.sz[i] * br;
       // Flatter toward the horizon (seen more from the side, through more air).
-      const flat = 0.62 + 0.38 * smooth(9, 2.5, r);
-      const hh = w * (CH / CW) * 1.25 * flat * bh * (0.75 + 0.25 * s);
-      const rx = -z / (r * H), rz = x / (r * H);
+      const flat = 0.62 + 0.38 * smooth(R_HOR, 2.5, r);
+      const hh = w * (CH / CW) * 1.25 * flat * bh;
+      const x = xr * H, z = zr * H, y = H * dome(r) * (1 - 0.04 * h4);
+      // Facing the camera: level across, and leaning back with elevation so a high cloud is not seen edge-on.
+      const rx = -zr / r, rz = xr / r, dd = Math.hypot(x, y, z), el = Math.max(0, y) / dd, cu = Math.sqrt(1 - el * el);
+      const ux = -(xr / r) * el, uz = -(zr / r) * el, uy = cu;
       // Painted light comes from the left of the sprite: mirror it when the sun is to the right of this cloud.
       const flip = rx * sx + rz * sz > 0;
-      this.quad(n++, cam.position.x + x, cam.position.y + H * (1 - 0.1 * h4), cam.position.z + z, rx, rz, w * (isScud ? 0.75 : 0.5), isScud ? hh * 0.8 : hh, isScud ? 4 + (i & 1) : i % 3, isScud ? h3 > 0.5 : flip);
+      const parts = isScud ? 1 + (h4 > 0.5 ? 1 : 0) : 1 + (big > 0.22 ? 1 : 0) + (big > 0.55 ? 1 : 0);
+      for (let j = 0; j < parts; j++) {
+        const a = hash2(i * 3 + j + 0.2, gn * 3.1 + 41.3), b = hash2(i * 3 + j + 0.6, gn * 1.3 + 57.9);
+        // A cloud is put together from one to three painted heaps side by side on one base line: no two are the same.
+        const off = j === 0 ? 0 : (j === 1 ? -1 : 1) * w * (0.24 + 0.2 * a), ws = j === 0 ? 1 : 0.55 + 0.35 * b;
+        const cell = isScud ? SCUD0 + (a > 0.5 ? 1 : 0) : big < 0.2 ? Math.floor(a * 5) : 2 + Math.floor(a * (HEAPS - 2));
+        this.quad(n++, cam.position.x + x + rx * off, camY + y, cam.position.z + z + rz * off, rx, rz, ux, uy, uz, w * ws * (isScud ? 0.75 : 0.5), (isScud ? hh * 0.8 : hh) * (j === 0 ? 1 : 0.6 + 0.4 * b), cell, isScud ? b > 0.5 : flip);
+      }
     }
-    // Sun blocker: one heap that forms in front of the sun as the model's passing-cloud dimming comes on, and drifts
-    // across it; only while the sun is up and the deck is open.
-    const blk = smooth(0.03, 0.22, c) * (1 - dOp) * smooth(0.02, 0.12, h) * smooth(0, 0.05, amount);
-    S.blocker = blk;
-    if (blk > 0.02) {
-      const bx = E.sunDir.x, bz = E.sunDir.z, hl = Math.hypot(bx, bz) || 1, ax = bx / hl, az = bz / hl, R = 5 * H;
-      const rx = -az, rz = ax, along = rx * E.dirX + rz * E.dirZ;
-      const w = R * 0.42 * (0.5 + 0.5 * blk) * Math.max(1, size * 0.85), hh = w * 0.62;
-      const slide = (0.5 - blk) * 0.35 * R * (along >= 0 ? -1 : 1);
-      const cy = cam.position.y + (R * E.sunDir.y) / hl - hh * 0.3;
-      this.quad(n++, cam.position.x + ax * R + rx * slide, cy, cam.position.z + az * R + rz * slide, rx, rz, w * 0.5, hh, 1, false);
-    }
-    S.quads = n; S.amount = amount; S.size = size; S.dark = dark;
+    S.blocker = 0;
+    S.quads = n; S.amount = this.amount; S.size = T[1]; S.dark = dark; S.deck = dOpS;
     this.heaps.visible = n > 0;
     this.heapsLit.visible = n > 0 && this.litOn;
     if (n > 0) {
