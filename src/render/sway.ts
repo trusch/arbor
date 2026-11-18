@@ -32,7 +32,9 @@ export class Sway {
   /** Rotation limit per node (rad) and scratch (flex-weighted path length below the node). */
   private CAP = new Float32Array(0);
   private W = new Float32Array(0);
-  private cTime = NaN; private cTopo = -1; private cN = -1;
+  private cGeom = NaN; private cTopo = -1; private cN = -1;
+  /** Ids of the live nodes (parent present, chain not pruned), ascending, and their count: the cascade runs over these only. */
+  private LV = new Int32Array(0); private nLive = 0;
   /**
    * Two rates (big tree P4 / T5). Thick wood (radius > `THICK_R` on a thick parent) is evaluated every update. Thin
    * wood is drawn as its thick anchor's CURRENT offset (`A` = nearest thick ancestor) plus an offset relative to that
@@ -77,13 +79,21 @@ export class Sway {
     const D = this.D, TH = this.TH, F = this.F, P = this.P;
     // Rest cache (segment vector, flex, chain per node): refilled only when the tree changed, so a grown or paused
     // tree runs on typed arrays alone.
-    if (sim.time !== this.cTime || sim.topology !== this.cTopo || N !== this.cN) {
+    if (sim.geomVersion !== this.cGeom || sim.topology !== this.cTopo || N !== this.cN) {
+      if (this.LV.length < N) this.LV = new Int32Array(D.length / 3);
       if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); this.CAP = new Float32Array(D.length / 3); this.W = new Float32Array(D.length / 3); }
-      const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W;
+      const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W, LV = this.LV, RNz = this.RN, TNz = this.TN;
+      let nLive = 0;
       for (let i = 0, o = 0; i < N; i++, o += 3) {
         const nd = nodes[i], pi = nd.parent, pn = pi >= 0 ? nodes[pi] : undefined;
         P[i] = pi;
-        if (!pn || chains[nd.chain].pruned) { C[i] = -1; continue; }
+        // Not live (root, pruned or detached wood): offset and rotations are 0, written here once; the cascade skips it.
+        if (!pn || chains[nd.chain].pruned) {
+          C[i] = -1;
+          D[o] = D[o + 1] = D[o + 2] = 0; TH[o] = TH[o + 1] = TH[o + 2] = 0; RNz[o] = RNz[o + 1] = RNz[o + 2] = 0; TNz[o] = TNz[o + 1] = TNz[o + 2] = 0;
+          continue;
+        }
+        LV[nLive++] = i;
         C[i] = nd.chain;
         S[o] = nd.wx - pn.wx; S[o + 1] = nd.wy - pn.wy; S[o + 2] = nd.wz - pn.wz;
         // Bend per metre at unit force: FLEX / r^1.5, capped (twigs streamline, they do not spin).
@@ -147,7 +157,8 @@ export class Sway {
         }
       }
       this.thin = thin;
-      this.cTime = sim.time; this.cTopo = sim.topology; this.cN = N;
+      this.nLive = nLive;
+      this.cGeom = sim.geomVersion; this.cTopo = sim.topology; this.cN = N;
     }
     const S = this.S, K = this.K, C = this.C, CAP = this.CAP;
     const wx = wind.dirX, wz = wind.dirZ, t = wind.t;
@@ -180,9 +191,9 @@ export class Sway {
     const lo = full ? 0 : Math.floor(cyN * this.slice / RATE), hi = full || this.slice === RATE - 1 ? N : Math.floor(cyN * (this.slice + 1) / RATE);
     const al = full ? 1 : (this.slice + 1) / RATE;
     let evaluated = 0;
-    for (let i = 0, o = 0; i < N; i++, o += 3) {
-      const c = C[i];
-      if (c < 0) { D[o] = D[o + 1] = D[o + 2] = 0; TH[o] = TH[o + 1] = TH[o + 2] = 0; RN[o] = RN[o + 1] = RN[o + 2] = 0; TN[o] = TN[o + 1] = TN[o + 2] = 0; continue; }
+    const LV = this.LV, nLive = this.nLive;
+    for (let j = 0; j < nLive; j++) {
+      const i = LV[j], o = i * 3, c = C[i];
       const an = A[i];
       if (an >= 0 && !(i >= lo && i < hi) && !full) {
         // Thin, not in this update's slice: anchor's current offset + interpolated relative offset.

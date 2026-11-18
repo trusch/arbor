@@ -2,7 +2,7 @@
 // browser) and compares every node's world position, direction, radius, sag and subtree length, the chains' pruned
 // flags, the leaf count and the bounding box bit by bit at the sample times. Also times `sim.step` per window.
 // Usage: node scripts/structeq.mjs [case,...]      REF=e15fa47 (git ref of the reference sim), TIMES=30,90,150, HZ=60
-//   cases: oak, oak2x, willow, break (forced limb break + parameter change while paused, jittered step length)
+//   cases: oak, oak2x, willow, y3 (`?years=3`), break (forced limb break + parameter change while paused, jittered step length)
 // Exit code 1 when any case differs.
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -24,12 +24,14 @@ const CASES = {
   oak2x: { query: K2 },
   willow: { preset: 'Weeping willow' },
   break: { query: '', jitter: true, events: true },
+  y3: { query: 'maxNodes=40000', years: 3 }, // `?years=3` (run with TIMES=264,500,650,780: the light tick at rest is in the last window)
 };
 function run(B, c) {
   const p = c.preset ? B.presetParams(c.preset) : B.defaultParams();
   if (c.query) B.applyQueryOverrides(p, c.query);
   p.seed.seed = 7;
   const sim = new B.TreeSim(p);
+  if (c.years) { sim.years = c.years; sim.reset(); }
   let seed = 12345; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   const snaps = [], cost = []; let ev = 0, t0 = performance.now(), steps = 0, info = {};
   for (const T of TIMES) {

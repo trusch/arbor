@@ -370,7 +370,9 @@ function regrow() {
 const LEAF_BUDGET_MS = 3;
 /** Leaf follow work per branch rebuild (ms): a whole sweep when it fits, else round-robin chunks. */
 const LEAF_FOLLOW_MS = 2.5;
-let branchAge = Infinity, branchTime = -1, branchTopo = -1, branchPV = -1;
+let branchAge = Infinity, branchGeom = -1, branchTopo = -1, branchPV = -1;
+/** Leaf follow at rest: consecutive budgeted follows that placed nothing under unchanged inputs (see `redraw`). */
+let followQuiet = 0, followT = NaN, followPh = NaN, followPass = -1, followPV = -1;
 let leavesDirty = true;
 let leafPhase = -1;
 let leafRestart = false;
@@ -386,7 +388,7 @@ const sway = new Sway();
 if (query.get('swayrate') === '1') sway.twoRate = false;
 /** Tree was reset: rebuild everything on the next frame, drop an open leaf pass, re-run the paused structure pass. */
 function invalidate() {
-  branchTime = -1; leavesDirty = true; structPV = -1;
+  branchGeom = -1; leavesDirty = true; structPV = -1;
   leaves?.abortPass();
 }
 /**
@@ -394,6 +396,7 @@ function invalidate() {
  * params moved (a paused tree does nothing). Leaves: their own slower cadence, only when an input changed (see below),
  * run as a pass of at most LEAF_BUDGET_MS per frame. `force` rebuilds both now and completes the leaf pass.
  */
+const FOLLOW_QUIET = 4;
 function redraw(time: number, dt: number, force = false) {
   branchAge += dt;
   let branchMoved = false;
@@ -407,7 +410,9 @@ function redraw(time: number, dt: number, force = false) {
   // The tree itself changed (rest pose): full rebuild. Wind pose on top, both qualities: the cheap per-ring translation
   // (`applyOffsets`: positions only, no frames/normals/uvs/index); a full rebuild per frame cost +8 ms JS on desktop High
   // and +13 ms at 4x throttle on the phone path.
-  const treeMoved = sim.time !== branchTime || sim.topology !== branchTopo || pv !== branchPV;
+  // `geomVersion`, not `sim.time`: a tree at rest with the clock running (autumn / winter of `?years=3`, a finished oak)
+  // has no node to compare, and comparing 32k nodes every second frame was 19 ms per frame at 4x throttle.
+  const treeMoved = sim.geomVersion !== branchGeom || sim.topology !== branchTopo || pv !== branchPV;
   if (!force && branchDue && swayMoved && !treeMoved && branches.applyOffsets(sway.D)) {
     branchMoved = true;
   } else if (force || (branchDue && (swayMoved || treeMoved))) {
@@ -415,7 +420,7 @@ function redraw(time: number, dt: number, force = false) {
     branches.update(sim, params.thickness.rootFlare);
     if (sway.live) branches.applyOffsets(sway.D);
     rebuilds++;
-    branchAge = 0; branchTime = sim.time; branchTopo = sim.topology; branchPV = pv;
+    branchAge = 0; branchGeom = sim.geomVersion; branchTopo = sim.topology; branchPV = pv;
     branchMoved = true;
   }
   if (!diag.leaves) return;
@@ -498,9 +503,17 @@ function redraw(time: number, dt: number, force = false) {
     if (leaves.clusterSwitch) { leaves.clusterSwitch = false; leavesDirty = true; }
   }
   // Leaves ride their branches: whenever the branch mesh was rebuilt, every drawn leaf is re-placed on its node.
-  if (branchMoved && !placed) {
+  // A paused, fully placed tree in the wind: the branch mesh "moves" every update (sway offsets), but follow reads the
+  // rest pose, the sim clock and the season, none of which change, so every sweep places nothing (6 ms per frame at
+  // year 3). After one whole sweep of consecutive empty calls under the same inputs (a call covers at least one
+  // chunk of 1024 instances; + FOLLOW_QUIET spare) follow is skipped until an input moves.
+  if (treeMoved || placed || formPlaced || sim.time !== followT || season.phase !== followPh || leaves.passes !== followPass || pv !== followPV) {
+    followQuiet = 0; followT = sim.time; followPh = season.phase; followPass = leaves.passes; followPV = pv;
+  }
+  if (branchMoved && !placed && followQuiet < (leaves.nAll >> 10) + FOLLOW_QUIET) {
     tel.phase('leaves follow', true);
     leaves.follow(sim, params, stage.camera.position, LEAF_FOLLOW_MS);
+    followQuiet = leaves.followPlaced === 0 ? followQuiet + 1 : 0;
   }
   // Sway rides on top: follow / the pass write rest translations, this adds the twig offsets (wood and leaves of one frame agree).
   if (swayMoved || (sway.live && (branchMoved || placed || formPlaced))) {

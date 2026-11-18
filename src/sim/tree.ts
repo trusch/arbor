@@ -203,6 +203,16 @@ export class TreeSim {
   lightGrid: { dens: Float32Array; ox: number; oy: number; oz: number; cell: number; nx: number; ny: number; nz: number } | null = null;
   /** Bumps whenever `lightGrid` is recomputed. */
   lightVersion = 0;
+  /**
+   * Bumps whenever a node's world position, direction, sag or radius may have changed, or a chain's `pruned` flag was
+   * set (structure passes, `sChainDirty`). Readers that only depend on the drawn wood (branch mesh, sway rest cache,
+   * the light grid) compare it instead of `time`: a tree at rest with the clock running keeps its version.
+   */
+  geomVersion = 0;
+  /** Inputs of the last light grid (`updateLight` skips the grid while they are unchanged; NaN = none). */
+  private lightSig = [NaN, NaN, NaN, NaN, NaN, NaN, NaN];
+  /** Chains the last light tick left with a running shade count (0 < shade < 4): while any, the chain loop must tick. */
+  private lightPending = 0;
   /** Bumps whenever topology (node/leaf count) changes. */
   topology = 0;
   /** Break events not yet consumed by the renderer (debris). */
@@ -395,6 +405,7 @@ export class TreeSim {
   /** A chain's pruned flag changed: its nodes drop out of (or enter) the pipe and subtree-length sums. */
   private sChainDirty(ch: Chain) {
     const up = this.sUp, nodes = this.nodes;
+    this.geomVersion++;
     if (this.sLen !== nodes.length) { this.sFull = true; return; }
     for (let j = 1; j < ch.nodes.length; j++) {
       const id = ch.nodes[j];
@@ -870,6 +881,24 @@ export class TreeSim {
     const nx = Math.ceil((mx[0] - ox) / cell) + 2, ny = Math.ceil((mx[1] - oy) / cell) + 2, nz = Math.ceil((mx[2] - oz) / cell) + 2;
     if (!isFinite(nx * ny * nz) || nx * ny * nz > 400000) return;
     const idx = (x: number, y: number, z: number) => (y * nz + z) * nx + x;
+    // Tree at rest (big tree perf): the grid and every node's light are functions of node positions, `leafy` (set at
+    // node creation) and the pruned flags only. While none of them changed since the last tick (`geomVersion`,
+    // `topology`, node count, cell) the grid, `nd.light` and `lightVersion` stay as they are; only the per-chain shade
+    // counters below still tick, on the same light values, so the sim state is bit-equal to recomputing.
+    const sig = this.lightSig;
+    const same = this.lightGrid !== null && sig[0] === this.geomVersion && sig[1] === this.topology && sig[2] === N && sig[3] === cell;
+    if (!same) this.lightGridCompute(N, cell, ox, oy, oz, nx, ny, nz);
+    // The chain loop is a function of the same inputs plus the prune threshold and the year state; with those unchanged
+    // and no shade count running, it would write the values every chain already has (shade 0, nothing pruned): skipped.
+    const thr = this.params.growth.selfPrune, bay = this.scafPicked ? this.scafAz.length : -1;
+    const sameCh = same && this.lightPending === 0 && sig[4] === thr && sig[5] === this.growYear && sig[6] === bay;
+    sig[0] = this.geomVersion; sig[1] = this.topology; sig[2] = N; sig[3] = cell; sig[4] = thr; sig[5] = this.growYear; sig[6] = bay;
+    if (!sameCh) this.lightChains();
+  }
+
+  private lightGridCompute(N: number, cell: number, ox: number, oy: number, oz: number, nx: number, ny: number, nz: number) {
+    const nodes = this.nodes;
+    const idx = (x: number, y: number, z: number) => (y * nz + z) * nx + x;
     const dens = new Float32Array(nx * ny * nz);
     const cellOf = new Int32Array(N);
     for (let i = 0; i < N; i++) {
@@ -908,11 +937,15 @@ export class TreeSim {
       if (L !== L) L = Lc[c] = (2 * Math.exp(-k * up[c]) + Math.exp(-k * sx0[c]) + Math.exp(-k * sx1[c]) + Math.exp(-k * sz0[c]) + Math.exp(-k * sz1[c])) / 6;
       nodes[i].light = L;
     }
+  }
+
+  private lightChains() {
+    const nodes = this.nodes, N = nodes.length;
     const thr = this.params.growth.selfPrune;
     // Years 2-3, bays (docs 6.9): side wood (order >= 2 or sup) whose tip sits in a bay between the scaffold domes
     // (scafLobe < YEAR_BAY_CUT) and in the outer part of the crown counts as shaded, so the bays open to the sky.
     const bayOn = this.years > 0 && this.growYear >= 1 && this.scafPicked && this.scafAz.length > 0;
-    let bayR = 0;
+    let bayR = 0, pending = 0;
     if (bayOn) { for (let i = 0; i < N; i++) { const nd = nodes[i]; if (!this.chains[nd.chain].pruned) bayR = Math.max(bayR, Math.hypot(nd.rx, nd.rz)); } bayR *= YEAR_BAY_R; }
     for (const ch of this.chains) {
       if (ch.pruned) continue;
@@ -931,7 +964,9 @@ export class TreeSim {
       }
       if (L < t || bay) ch.shade++; else ch.shade = 0;
       if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); }
+      else if (ch.shade > 0) pending++;
     }
+    this.lightPending = pending;
   }
 
   /**
@@ -1110,7 +1145,7 @@ export class TreeSim {
     const right = (1 - Math.min(1, Math.max(0, p.growth.weeping))) / SAG_RIGHT;
     const sp = this.sParams, st = this.structStats;
     if (sp[0] !== n || sp[1] !== r0 || sp[2] !== gk || sp[3] !== right) { sp[0] = n; sp[1] = r0; sp[2] = gk; sp[3] = right; full = true; }
-    if (full || this.sFull || this.sLen !== N) { this.structureFull(dt, n, r0, k, gk, right); this.sTips.length = 0; this.sAcc = 0; this.sBox = false; return; }
+    if (full || this.sFull || this.sLen !== N) { this.geomVersion++; this.structureFull(dt, n, r0, k, gk, right); this.sTips.length = 0; this.sAcc = 0; this.sBox = false; return; }
     st.full = 0;
     const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, R = this.sR, first = this.sFirst, next = this.sNext;
     let lo = this.sDownLo, nUp = 0, nThick = 0;
@@ -1160,6 +1195,8 @@ export class TreeSim {
     }
     st.up = nUp; st.thick = nThick;
     this.sDownLo = lo;
+    // A radius or subtree length changed (forward work pending) or a tip elongated: the drawn wood changes.
+    if (lo !== Infinity || this.sTips.length > 0 || this.sBox) this.geomVersion++;
     if (defer && this.structureInterval > 0 && (this.sAcc += dt) < this.structureInterval - 1e-9) this.structureTips(gk, right);
     else this.structureForward(gk, right);
   }
@@ -1207,6 +1244,7 @@ export class TreeSim {
     }
     this.sDownLo = Infinity; this.sTips.length = 0; this.sAcc = 0;
     st.down = nDown; st.moved = moved; st.forwardPasses++;
+    if (nDown > 0) this.geomVersion++;
     if (moved > 0 || this.sBox) {
       this.sBox = false;
       const mn = this.bboxMin, mx = this.bboxMax;

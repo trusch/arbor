@@ -356,10 +356,18 @@ export class BranchMesh {
   applyOffsets(off: Float32Array): boolean {
     const n = this.vUsed;
     if (n === 0) return false;
-    const P = this.pos, R = this.rest, VN = this.vNode;
-    for (let v = 0, o = 0; v < n; v++, o += 3) {
-      const q = VN[v] * 3;
-      P[o] = R[o] + off[q]; P[o + 1] = R[o + 1] + off[q + 1]; P[o + 2] = R[o + 2] + off[q + 2];
+    const P = this.pos, R = this.rest, VN = this.vNode, cV = this.cV, cR = this.cR, cM = this.cM;
+    // Only the vertices drawn: each live chain's used rings ((nodes + 1) x (radial + 1) from its range start). Slack,
+    // abandoned ranges and pruned chains are never indexed, so their positions do not matter (about a third to half
+    // of the buffer on a big tree).
+    for (let c = 0; c < this.nC; c++) {
+      const rc = cR[c];
+      if (!rc || cM[c] < 1) continue;
+      const v0 = cV[c], v1 = v0 + (cM[c] + 1) * (rc + 1);
+      for (let v = v0, o = v0 * 3; v < v1; v++, o += 3) {
+        const q = VN[v] * 3;
+        P[o] = R[o] + off[q]; P[o + 1] = R[o + 1] + off[q + 1]; P[o + 2] = R[o + 2] + off[q + 2];
+      }
     }
     const a = this.geo.attributes.position as THREE.BufferAttribute;
     a.clearUpdateRanges();
