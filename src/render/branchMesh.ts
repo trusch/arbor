@@ -177,8 +177,10 @@ export class BranchMesh {
         for (let k = 0; k < rings - 1; k++) {
           const r0 = vStart + k * (R + 1), r1 = r0 + R + 1;
           for (let j = 0; j < R; j++) {
-            I[ii++] = r0 + j; I[ii++] = r1 + j; I[ii++] = r0 + j + 1;
-            I[ii++] = r0 + j + 1; I[ii++] = r1 + j; I[ii++] = r1 + j + 1;
+            // Counter-clockwise seen from OUTSIDE (b = t x n, so ring order n -> b turns left about t): the outer
+            // wall is the front face. The reverse order drew every tube inside out (only far inner walls).
+            I[ii++] = r0 + j; I[ii++] = r0 + j + 1; I[ii++] = r1 + j;
+            I[ii++] = r0 + j + 1; I[ii++] = r1 + j + 1; I[ii++] = r1 + j;
           }
         }
       }
