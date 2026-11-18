@@ -897,6 +897,23 @@ Cost against this branch before the merge (4a34bb5), `REF=4a34bb5 node scripts/t
 
 Seen on the year-3 sheets: where a stem nearly as thick as its parent leaves it, the collar (capped at 0.95 x the parent radius) reads as a shoulder ring around the parent, and thick limbs start with a bulge. The collar constants were tuned on the one-year oak.
 
+### 6.18 Collars follow their reach (branch `bigtree-perf`)
+
+The shoulder ring of 6.17 is not a matter of the radius ratio: from ratio 0.61 on the 0.95 x parent limit already takes the widening to 1.0 at ratio 0.95. It is the collar's depth. The ring sits at `min(exit, 0.7 x first segment)` along the child's axis, `exit` = parent radius / max(0.4, sin angle). Headless census of the six thickest trunk junctions (default oak):
+
+| Tree | Parent radius | First segment | Collar distance / exit | Collar radius | Outermost collar point / parent radius |
+|---|---|---|---|---|---|
+| one year, t = 90 | 0.08 to 0.17 m | 0.19 to 0.25 m | 0.63 to 1.0 | 1.47 to 1.55 x child | 1.28 to 1.95 (stands on the surface) |
+| year 3, t = 750, five thick limbs | 0.21 to 0.73 m | 0.19 to 0.23 m | 0.12 to 0.29 (one fork of ratio 0.95: 0.59) | 1.0 to 1.55 x child | 1.03 to 1.16 |
+
+On the year-3 tree the parent is thicker than a segment is long, so ring 0 (0.85 x parent) and the collar (1.55 x child, e.g. 0.66 m on a 0.73 m trunk, 0.14 m from its axis) are wide discs deep inside the parent, tilted with the child. Their rims come out of the parent, most where the trunk above the junction is thinner, and the tube falls to the child's radius in the last 30 % of the segment (6 cm): the ledge; the 0.9 normal blend on a ring that is not on the parent's surface is the crease.
+
+Rule: `reach` = collar distance / `exit`; weight `w` = smoothstep of `reach` from `COLLAR_REACH0` 0.3 to `COLLAR_REACH1` 0.6. Ring 0 and the collar are widened by 1 + 0.55 `w` (same limits as before), the normal blend is 0.9 `w`. `w` = 1 is the arithmetic of 6.17 (the one-year tree: every listed junction has reach >= 0.63); `w` = 0 is a plain ring of the child's radius with its own normals, so a limb on a thick parent is a plain tube leaving it. The parent radius of a junction on a trunk node (`node.chain === 0`, `flare` > 0) is the flared ring radius (`flareF`, the trunk's own expression; the lobes are not included). Ring count, index writer and `applyOffsets` are untouched. New reads: `ids[0].wy` (in the per-node copy) and `ids[0].chain`, which is not: a trunk node leaves chain 0 only when it is detached together with every chain that starts on it.
+
+Gates: `tsc --noEmit` clean. `p3check.mjs` `oak:0:60,oakb:60:20,y3:600:60,y3b:700:20`: all buffers and the triangle soup bit-equal, triangles 63 556 / 62 898 / 283 632 / 201 558 (oak and y3 as in 6.17). `swaycheck.mjs` 8 of 8 ok (34 to 48 frames each). Programs and index slots at the sheet moments, before = after: desktop High year 3 33 calm / 32 storm (456 318), phone year 3 at the 14 000-node budget 9 / 9 (215 768), phone oak t = 90 9 / 9 (105 676). Sheets `shots/collar-{before,after}-{desk-t750,phone-t750,phone-t90}-h13-junc-{none,storm}.jpg`.
+
+Seen on the sheets. Gone: the band of differently lit bark around the stem and the diagonal crease across it (desktop row 1 tiles 1 to 3 and 5, phone tile 5), the bulge at the foot of the thick limbs (row 2). Unchanged: the one-year oak. Still there: the stem itself steps in at a thick junction. That is the trunk's own profile, not the collar: the pipe model takes the trunk from 0.73 to 0.54 to 0.35 m across two nodes 0.2 m apart where the two thickest limbs leave, and the limb is a plain tube from the axis, so the silhouette is a wide stem with a shoulder and two narrower stems on top. Removing it needs the parent's rings near a junction to follow the union of both stems (parent rings reading child nodes, a new entry in the dirty test) or a taper in the sim's radii. A limb on a thick parent has no collar at all now (the ring cannot reach the surface; a collar there needs the widening on the ordinary rings near `exit`, limited by the parent radius above the junction). On the phone the year-3 trunk is visibly faceted at these steps (16 radial segments on a 0.5 m radius).
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
