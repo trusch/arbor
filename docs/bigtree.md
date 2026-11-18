@@ -557,6 +557,60 @@ Pictures (`GPU=vulkan node scripts/majestic.mjs URL majF-after`, built app, real
 
 Breakage (`BASES=1,0.8,0.6 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, 30 308 nodes, 633 limbs evaluated): at `YEAR_SIGMA` 0, u p98 0.34, max 1.17; 1.0 → 1 limb (2.9 cm, 202 nodes), 0.8 → 0, 0.6 → 0. The change moved it below the target (1 to 3 limbs at 0.8). Within `YEAR_SIGMA` >= 0 it cannot be recalibrated (a positive gain only makes wood stronger): -0.1 gives p98 0.42, 1 / 1 / 0 and -0.2 gives p98 0.57, 1 / 1 / 0. `YEAR_SIGMA` is left at 0; the size term from 6.8 is still the fix.
 
+### 6.10 Trunk and limbs of one tree: flare, reaction wood, twig hierarchy (branch `bigtree-crown`, behind `?years=3`)
+
+Cause of the fat trunk, measured (`node scripts/forkcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7: trunk radius by height, every fork of orders 0 to 2 with its area ratio = sum of child cross-sections / parent cross-section): the sim follows the area rule. The trunk is a cylinder of 38.1 cm from the ground to the first fork at 2.12 m, and every trunk fork and main limb fork sits between 0.91 and 1.32 (effective pipe exponent 1.786; a radius that is still ahead of its target after a shed gives the few values over 1.2). `YEAR_GIRTH`, `YEAR_EXP` and shed limbs (35 pruned children on the trunk, summed area of one 12.8 cm limb) are not the cause. The mismatch is drawn: the root flare in `BranchMesh` is `r x (1 + 0.9 x flare x exp(-y / max(0.15, 3 r)))`, so its e-fold height grows with the trunk (0.5 m at year 1, 1.14 m at year 3) and with `rootFlare` 1.4 the drawn trunk is a cone over the whole bole, still 20 % over the sim radius where the 23 cm limbs leave.
+
+| Drawn trunk radius, cm (sim 38.1 / 38.3) | Ground | 0.2 m | 0.5 m | 1.3 m | First fork 2.12 m | Drawn area ratio at the first fork |
+|---|---|---|---|---|---|---|
+| Before (7f7cc4e) | 86 | 78 | 69 | 53 | 46 | 0.65 |
+| After | 62 | 47 | 40 | 38 | 38 | 0.92 |
+
+Rules (all only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 untouched):
+
+| Rule | Built as |
+|---|---|
+| Old trunk flare | `BranchMesh.update` blends by `fq = min(1, sim.ageQ)` (0 through year 1, 1 from the end of year 2) to an e-fold height of `FLARE_OLD_H` 0.2 m and a ground gain of `FLARE_OLD_AMP` 0.45 x `flare` (was 0.9); buttress lobes follow the same f. `fq` is part of the layout key next to `flare` (a step re-lays the mesh) |
+| Reaction wood | `TreeSim.straighten()`: scaffold chains (order 1-2, not `sup`, not juvenile) get a structure-pass direction `sx sy sz` = the grown `dx dy dz` blended by `YEAR_STRAIGHT` 0.85 x min(1, ageQ / 2) toward the chord over +-`YEAR_STRAIGHT_W` 8 nodes of the chain. Sag, world position and world direction are computed from `sx sy sz` (all three passes); growth, buds and the rest pose still read `dx dy dz` / `rx ry rz`, so year-1 growth is unchanged and the waves it grew with flatten as the limb ages |
+| Twig hierarchy | buds on wood of order >= `YEAR_TWIG_HI_O` 3 break at x `YEAR_TWIG_HI` 0.2 (order 2 keeps `YEAR_TWIG` 0.4): fewer, longer outer twigs on visible branches |
+
+Structure pass: `sx sy sz` are stored per node (= `dx dy dz` at `addNode`) and rewritten only inside `straighten`, which runs when `ageQ` steps; that step already forces a full pass (the pipe exponent is a `sParams` value), and between steps the stored values are plain inputs. `structureCheck` 0 at t = 150 and t = 750 (CHECK=1) and in every shot.
+
+Fork table (t = 750; forks whose second child is at least 3 cm):
+
+| | Before (7f7cc4e) | After |
+|---|---|---|
+| Trunk r at 0.2 / 0.5 / 1.3 / 2.0 m (sim) | 38.1 / 38.1 / 38.1 / 38.1 | 38.3 / 38.3 / 38.3 / 38.3 |
+| Trunk fork 2.12 m: below → above + limb (ratio) | 38.1 → 28.4 + 23.4 (0.93) | 38.3 → 27.7 + 24.2 (0.92) |
+| 2.33 m | 28.4 → 16.5 + 22.2 (0.95) | 27.7 → 18.5 + 19.6 (0.95) |
+| 2.71 m | 16.5 → 12.9 + 10.0 (0.98) | 18.5 → 14.1 + 10.8 (0.93) |
+| 4.48 m | 12.9 → 8.6 + 9.6 (1.00) | 14.1 → 9.1 + 10.2 (0.93) |
+| 5.58 m | 8.6 → 4.9 + 8.1 (1.21) | 9.1 → 4.9 + 9.0 (1.27) |
+| Order-1 forks: count, min / median / max | 30, 0.92 / 0.98 / 1.13 | 40, 0.93 / 0.99 / 1.13 |
+| Order-2 forks: count, min / median / max | 19, 0.91 / 1.01 / 1.32 | 13, 0.92 / 0.99 / 1.09 |
+| Nodes / sim leaves | 30 308 / 232.9k | 27 230 (-10.2 %) / 210.7k (-9.5 %) |
+| Height / width | 14.08 / 20.41 | 13.94 / 20.93 |
+
+Flare and reaction wood alone: 29 935 nodes (-1.2 %), 229.6k leaves, height 14.98; the twig rule costs the other 9 %. The one ratio over 1.25 (5.58 m, the top trunk fork) is a limb whose radius is ahead of the trunk's target after wood above it was shed (radii never shrink); its target ratio is 0.99.
+
+Year 1 and `years` = 0: `T=150 YEARS=0` and `T=150 YEARS=3` both give 4 910 nodes, 37 642 leaves, height 9.09 m, trunk 16.8 cm at 1.3 m, `structureCheck` 0, the numbers of 6.2. In year 1 `ageQ` is 0, so `fq` is 0 (the flare expression takes the old branch), `straighten` returns before writing and `sx sy sz` are copies of `dx dy dz`.
+
+Default tree drawn: `scripts/p3main.mjs` (drawn-triangle hash of the default oak at t = 10 to 60, real GPU) prints the same six hashes for the build of 7f7cc4e and this build (t = 60: 59 282 triangles, f0c7d638).
+
+Pictures (`GPU=vulkan node scripts/majestic.mjs URL majG-after`, built app, real GPU; before = `shots/majF-after-*`; in the app the tree has 25.7k nodes / 198.6k sim leaves (before 28.0k / 214.7k), `structureCheck` 0, programs phone 8 / desktop 33): `shots/majG-after-{phone,desktop}-{summer,winter}-{wide,framed,under}.png`, sheets `shots/majG-{desktop,phone}-sheet.jpg`. What they say: the trunk is a column that runs into the limbs without a step; the bottle is gone, and trunk and limbs read as one tree. At the wide distance the bole now looks short and slight under a 21 m crown (38 cm on a 14 m tree is what the sim grows; the old flare hid that). The scaffold limbs are smooth arcs from the fork to the crown edge, without the S-bends of 6.9; under the crown they still read as long hoops of even curvature that arch down to head height, not as heavy horizontal limbs with elbows. Winter: the outer crown is thinner and single branches can be followed to the edge, so it is less of a ball; a clear limb / branch / twig step is still missing, because every outer branch carries about the same few tips and so has about the same radius (1 to 1.5 cm medians for orders 3 to 6).
+
+Breakage (`BASES=1,0.8,0.6 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, 27 230 nodes, 640 limbs evaluated; limbs in 120 s at `wind.base` 1.0 / 0.8 / 0.6):
+
+| `YEAR_SIGMA` | u p50 / p98 / max | 1.0 | 0.8 | 0.6 |
+|---|---|---|---|---|
+| 0 (6.9) | 0.12 / 0.42 / 0.91 | 0 | 0 | 0 |
+| -0.15 | 0.16 / 0.60 / 1.31 | 1 (1.0 cm) | 0 | 0 |
+| -0.3 (set) | 0.29 / 1.06 / 2.29 | 7 + 2 twigs (largest 4.3 cm, 872 nodes) | 3 + 1 twig | 0 |
+
+The straighter limbs and thinner twig load moved it further down (0 limbs at every base). `YEAR_SIGMA` is now -0.3: u p98 1.06 is the t = 90 oak's 1.08, 0.8 is inside the 1 to 3 target and 0.6 stays at 0. It makes year-3 wood 0.4 x as strong per stress, which is not physical; it stands in for the size term of 6.8 and is one constant to turn back.
+
+Still not majestic: (1) the bole is short and thin for the crown: all five scaffold limbs leave between 2.1 and 5.6 m and the trunk above 2.7 m is under 15 cm, so there is no trunk inside the crown; an older tree needs a year-4-plus girth or a taller bole. (2) Limbs are even arcs: no elbows, no near-horizontal heavy stretches, and their ends hang to head height. (3) Outer branches have one radius; a hierarchy needs apical dominance inside each limb's subtree (one leader per branch that keeps its tips while its laterals are thinned), which is a growth rule in `updateLight` / bud break of years 2-3 and a census of tips per order-3 branch to tune it. (4) The crown interior is empty in summer: leaves sit in a shell at the limb ends.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
