@@ -171,8 +171,8 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 | **P1 (built, 6.1)** | T1 incremental `updateStructure` (per-node dirty sets) + probe baseline | **M**: 1x, 2x, willow and break + paused parameter change bit-equal to main at t = 30 / 90 / 150; phone `sim.step` on the finished 2x tree 2.4 ms (55.9 on main in the same session, 79 in 2.3) | **ship** |
 | P2 (built, 6.1; target missed) | T2 forward pass (sag, positions) at 10 Hz of sim time, tips every step | **M**: bit-equal after a flush at the sample times; growing `sim.step` on 2x 33.1 → 19.7 ms (x 0.59, not /4); seedling tip burst on both paths without visible stepping | ship or switch off (`structureInterval = 0`) |
 | P3 (built, 6.3; target missed) | T3 branch mesh chain ranges | Vertex buffers bit-equal to a full rebuild after 60 s of growth; rebuild under 3 ms on the finished 2x tree; phone programs 8 = 8 | ship |
-| P4 (not built) | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
-| P5 | T10 light cell scaling + T7 shell-first leaf pass | 1x unchanged (cell stays 0.88); light tick under 25 ms at 2.75x; pass latency reported | ship |
+| P4 (built, 6.4; frustum skip not built, target missed) | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
+| P5 (T10 + per-cell light built, 6.4; T7 not built; target missed) | T10 light cell scaling + T7 shell-first leaf pass | 1x unchanged (cell stays 0.88); light tick under 25 ms at 2.75x; pass latency reported | ship |
 | P6 | T8 leaf bookkeeping | `sim.leaves` at 2.75x under 250k; `breakcalib` rerun, `SIGMA_REF` updated | ship (new random draw: needs a look at all presets) |
 | P7 | T6a cluster map + second mesh, off by default (`?clusters=1`) | Phone programs equal with and without at noon, night, storm; cluster cards for all ten forms | ship dark |
 | P8 | T6b distance blend + budget split, on | Phone 2x and 2.75x framed crown as closed as 1x today (coverage of the crown silhouette measured from a mask shot); close view identical to P6; leaf fall, debris, seasons, emergence still pass smoke | ship |
@@ -295,6 +295,64 @@ Cost (**M**, `scripts/bigtree.mjs`, phone emulation 4x CPU throttle, ANGLE Vulka
 Target missed: 15 ms, not under 3. On the finished tree nothing is rewritten while the wind is calm, but with sway live every frame still runs `applyOffsets` over every vertex of the mesh (now including slack, about 1.5x the live count) inside the same phase, plus the per-node change scan. While the tree grows, the trunk thickens every step and moves nearly every node (P1 / P2 note), so the growing tree rewrites 80 to 100 % of its chains per update (`p3check`: oak 95.8 of 95.8, year 3 482 of 605). The next lever is P4: offsets per chain range only for chains whose offset changed (two rates, frustum skip), which also removes the full-mesh position upload.
 
 P4 (T5) is not built. Open: P4; uploads per frame are still the whole position buffer while sway is live; slack costs about 50 % more vertex memory on the GPU; never run on the device.
+
+### 6.4 P4 and P5 as built (branch `bigtree-years`)
+
+**P4, two-rate sway** (`src/render/sway.ts`). Wood over `THICK_R` 3 cm on a thick parent is evaluated every update. Thinner wood is drawn as the current offset of its nearest thick ancestor (anchor) plus an offset relative to that anchor, interpolated between the last two keys. The next key is computed in `RATE` 3 slices by node id, one slice per update, so no update pays the whole thin cascade. The slice bounds are fixed by the node count at the start of the cycle, and the last slice takes every node added since. Junctions cannot tear, because the relative offset is 0 at the anchor. Thin wood lags its limb's own bend by one key (3 updates).
+
+A node whose anchor changes (thickening past 3 cm, a break, growth) has its keys re-expressed from the offsets drawn in the last update. A new node copies its parent's keys. With zero wind or `amount` 0 the function still returns early with `D` all 0. `?swayrate=1` evaluates every node every update; `__arbor.swayStats().rate` reports the split. The frustum skip is not built.
+
+**P5, light tick** (`TreeSim.updateLight`):
+- **T10:** the cell is max(4 x `segmentLength`, tree height / 28). That is the old 0.88 m for every tree up to about 24.6 m, so the default oak, the year-3 tree (15 m) and oak2x (18 m) keep exactly the old grid.
+- **Per-cell light:** node light was 6 `exp` per node; it is now evaluated once per occupied cell with the same expression, so the values are bit-equal.
+- **T7** (shell-first leaf pass) is not built.
+
+Exactness (**M**):
+- `REF=f8375f3 node scripts/structeq.mjs oak,oak2x,willow,break`: bit-equal at t = 30 / 90 / 150 in every case. That covers positions, radii, pruned flags and leaf count; pruning reads the light.
+- The light grid itself is unchanged for every tree under 24.6 m, so the canopy shadow, meadow shade and leaf bake on the default tree get the same input by construction. No pictures were compared.
+- `swaycheck.mjs` in phone mode (sapling t = 20 and oak t = 90, storm and windy, growing and paused): all 8 cases pass the one-curve bend check. Lean lost with the rotation kept: 0 rad. Smallest tip / parent offset: 0.80 to 1.0.
+- Smoke: the rest check (zero wind = rest pose) and the program gates pass (see the smoke count in the ticket).
+- The limb-break smoke FAIL "programs 8/9/9" is the bark re-key timing. Main f7af65c and this branch both read 8 8 8 8 9 9 9 at 1 s steps after `fastForward(60)`, and the break adds 0 programs. The smoke now waits for a stable count.
+
+Cost (**M**). Phone emulation, 4x CPU throttle, ANGLE Vulkan, before = 513d67a, after = 93ada02.
+
+Year-3 storm burst (`/tmp` probe: the `?years=3` tree at t = 750, 34k nodes, 12 348 cells of 0.88 m, paused, held storm, 60 frames). The three pages ran in parallel on a shared host, so the absolute numbers are noisy:
+
+| | before | after (two rates) | after, `?swayrate=1` |
+|---|---|---|---|
+| `updateLight`, mean of 10 calls | 89 ms | 45 ms | 58 ms |
+| `sway.update` per frame | 15.0 ms | 14.8 ms | 18.9 ms |
+| Nodes evaluated per update | all live | 9.2k of 16k live | 16k |
+| Largest frame-to-frame second difference of `D` (p50 / max, m) | 0.93 / 1.75 | 0.56 / 0.95 | 1.06 / 1.71 |
+| Phone programs | 8 | 8 | 8 |
+
+The second-difference row is a stepping check: the interpolated thin wood moves more smoothly than the per-update reference, and nothing steps where the two rates meet.
+
+`scripts/bigtree.mjs` before → after (the year-3 pair and the default pair each ran as two pages in parallel):
+
+| | Year 3 before | Year 3 after | Default before | Default after |
+|---|---|---|---|---|
+| `ops.updateLight` (2 calls, cold JIT) | 52 ms | 50.8 ms | 28.1 ms | 4.6 ms |
+| Sway phase per frame, live / paused | 19.6 / 11.4 | 22.8 / 13.4 | 2.6 / 3.2 | 2.8 / 3.1 |
+| `geometry rebuild` live | 23.1 | 22.6 | 4.7 | 4.5 |
+| Live JS mean / p95, fps | 83.9 / 192, 10.8 | 84.0 / 195, 11.0 | 32.0 / 76, 17.4 | 32.7 / 79, 16.0 |
+| Paused JS mean, fps | 31.5, 23.1 | 36.0, 22.3 | 19.7, 22.3 | 18.3, 21.7 |
+
+`bigtree.mjs` times `updateLight` over 2 calls on a cold JIT, so read the burst row for the light tick.
+
+Targets missed:
+- **Light tick:** about halved at year 3, but still about 45 ms at 2 Hz, not under 25.
+- **Sway:** the sway phase per frame did not drop measurably at year 3 or on the default tree. Two causes:
+  - The phase is dominated by `BranchMesh.applyOffsets` and its upload over every vertex (slack included), not by `sway.update`.
+  - On the 15 m tree, 55 % of the live nodes are over 3 cm, so only 45 % run at the lower rate.
+- **Paused frame:** not under 16 ms JS.
+
+Next levers, in order:
+1. `applyOffsets` over each chain's used vertices only (skip slack and pruned ranges), then the frustum skip per chain range.
+2. `THICK_R` raised with tree size, for example 3 cm x height / 9 m.
+3. The light tick sliced over several sim steps for `years` trees only: slicing changes the timing of pruning, so it cannot be bit-equal.
+
+Estimate (**E**) for year 3 on the phone path at 4x after this: still about 11 fps live and 22 fps paused. P4 and P5 as built do not change the frame rate the user sees there.
 
 ## 7. Not measured
 
