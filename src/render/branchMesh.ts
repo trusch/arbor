@@ -8,6 +8,13 @@ const BARK_V_SCALE = 0.35; // metres of length per texture repeat (scaled by rad
 const GAP = 2048;
 const COLLAR_FLARE = 1.55; // collar ring radius / child radius (capped by the parent's radius)
 const COLLAR_BLEND = 0.9; // weight of the parent's surface normal in the collar ring's normals
+/**
+ * The collar only works where its ring reaches the parent's surface. `reach` = collar distance / distance to the
+ * surface along the child's axis (the distance is limited to 0.7 of the first segment, so on a parent thicker than a
+ * segment is long the ring stays deep inside). Widening (ring 0 and collar) and normal blend are full from
+ * `COLLAR_REACH1` on and gone at `COLLAR_REACH0`: a wide ring inside the parent pokes out of it as a ledge.
+ */
+const COLLAR_REACH0 = 0.3, COLLAR_REACH1 = 0.6;
 
 /**
  * Tapered generalized-cylinder mesh for all chains. Each chain is one tube
@@ -180,6 +187,15 @@ export class BranchMesh {
     const wr: number[] = [];
     let written = 0, wverts = 0, drawn = 0;
     let nx = 0, ny = 0, nz = 0; // transported normal
+    let jE = 0, jW = 0, jPr = 0; // junction of the chain being written: collar distance, collar weight 0..1, parent radius
+    // Root flare of chain 0 at ring radius r, height y (also the surface a trunk junction near the ground sits on).
+    const flareAmp = fq > 0 ? 0.9 + (FLARE_OLD_AMP - 0.9) * fq : 0.9;
+    const flareF = (r: number, y: number) => {
+      // Old trunk (`years`, from growth year 2): the flare stays in the last half metre and is shallower, so the
+      // bole is a column up to the first limb (e-fold r x 3 would reach 1.1 m up a 38 cm trunk: a cone).
+      const fl = Math.max(0.15, r * 3);
+      return flare * Math.exp(-Math.max(0, y) / (fq > 0 ? fl + (Math.min(fl, FLARE_OLD_H) - fl) * fq : fl));
+    };
     for (let c = 0; c < C; c++) {
       const R = radials[c], ids = chains[c].nodes, m = ids.length;
       if (!R) {
@@ -217,8 +233,6 @@ export class BranchMesh {
         const nd = nodes[ids[kk]];
         let cx = nd.wx, cy = nd.wy, cz = nd.wz;
         let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
-        // Child chains start on the parent's axis: keep that ring inside the parent (nothing shows on its far side).
-        if (k === 0 && c > 0) r = Math.min(r * COLLAR_FLARE, 0.85 * Math.max(nd.radius, r));
         // Tangent: central difference, one-sided at ends.
         const ia = ids[Math.max(0, kk - 1)], ib = ids[Math.min(m - 1, kk + 1)];
         const a = nodes[ia], b = nodes[ib];
@@ -232,14 +246,24 @@ export class BranchMesh {
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
         const tl0 = tl;
         tx /= tl; ty /= tl; tz /= tl;
+        if (k === 0 && c > 0) {
+          // Junction: the parent's surface radius (flared when the parent is a trunk node in the flare zone), where
+          // the child's axis leaves it, and how far the collar ring gets toward that point.
+          jPr = Math.max(nd.radius, 1e-4);
+          if (flare > 0 && nd.chain === 0) jPr *= 1 + flareAmp * flareF(nd.radius, nd.wy);
+          const dt = tx * nd.wdx + ty * nd.wdy + tz * nd.wdz;
+          const exit = jPr / Math.max(0.4, Math.sqrt(Math.max(0, 1 - dt * dt)));
+          jE = Math.min(exit, 0.7 * tl0);
+          const h = (jE / exit - COLLAR_REACH0) / (COLLAR_REACH1 - COLLAR_REACH0);
+          jW = h >= 1 ? 1 : h <= 0 ? 0 : h * h * (3 - 2 * h);
+          // Child chains start on the parent's axis: keep that ring inside the parent (nothing shows on its far side).
+          r = Math.min(r * (jW >= 1 ? COLLAR_FLARE : 1 + (COLLAR_FLARE - 1) * jW), 0.85 * Math.max(jPr, r));
+        }
         // Root flare: trunk widens toward the ground with buttress lobes.
         let lobe = 0;
         if (c === 0 && flare > 0) {
-          // Old trunk (`years`, from growth year 2): the flare stays in the last half metre and is shallower, so the
-          // bole is a column up to the first limb (e-fold r x 3 would reach 1.1 m up a 38 cm trunk: a cone).
-          const fl = Math.max(0.15, r * 3);
-          const f = flare * Math.exp(-Math.max(0, cy) / (fq > 0 ? fl + (Math.min(fl, FLARE_OLD_H) - fl) * fq : fl));
-          r *= 1 + (fq > 0 ? 0.9 + (FLARE_OLD_AMP - 0.9) * fq : 0.9) * f;
+          const f = flareF(r, cy);
+          r *= 1 + flareAmp * f;
           lobe = 0.22 * f;
         }
         if (k === m) {
@@ -277,12 +301,11 @@ export class BranchMesh {
           // Collar ring: where the child's axis leaves the parent's surface, wider than the child (tapers to the
           // child's radius at its first node), normals blended toward the parent's surface normal, and tied to the
           // PARENT node for `applyOffsets` (moves rigidly with the parent: no gap under sway).
-          const pr = Math.max(nd.radius, 1e-4), r1 = nodes[ids[1]].radius;
+          // Weight `jW`: 1 where the ring reaches the parent's surface (the one-year tree), 0 where it stays deep
+          // inside a thick parent: there it is a plain ring of the child's radius with its own normals.
+          const pr = jPr, r1 = nodes[ids[1]].radius, e = jE, blend = COLLAR_BLEND * jW;
           const ux = nd.wdx, uy = nd.wdy, uz = nd.wdz;
-          const dt = tx * ux + ty * uy + tz * uz;
-          const exit = pr / Math.max(0.4, Math.sqrt(Math.max(0, 1 - dt * dt)));
-          const e = Math.min(exit, 0.7 * tl0);
-          const rc = Math.min(r1 * COLLAR_FLARE, Math.max(r1, 0.95 * pr));
+          const rc = Math.min(r1 * (jW >= 1 ? COLLAR_FLARE : 1 + (COLLAR_FLARE - 1) * jW), Math.max(r1, 0.95 * pr));
           const ex = cx + tx * e, ey = cy + ty * e, ez = cz + tz * e;
           along += e; px = ex; py = ey; pz = ez;
           const vc = along * vScale;
@@ -297,7 +320,7 @@ export class BranchMesh {
             const wd = wx * ux + wy * uy + wz * uz;
             wx -= ux * wd; wy -= uy * wd; wz -= uz * wd;
             const wl = Math.sqrt(wx * wx + wy * wy + wz * wz) || 1;
-            const mx = ox + COLLAR_BLEND * wx / wl, my = oy + COLLAR_BLEND * wy / wl, mz = oz + COLLAR_BLEND * wz / wl;
+            const mx = ox + blend * wx / wl, my = oy + blend * wy / wl, mz = oz + blend * wz / wl;
             const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
             Nn[o3] = mx / ml; Nn[o3 + 1] = my / ml; Nn[o3 + 2] = mz / ml;
             UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vc;
