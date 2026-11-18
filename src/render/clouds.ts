@@ -77,6 +77,8 @@ const FADE_S = 1.5;
 const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.9, SCUD_NIGHT = 0.72, SCUD_OPACITY = 0.5;
 /** Bank pieces (heaps that entered under a deck): height of the base as a share of the layer height (lo + span x hash), so the bank's underside is lobes at different levels, not one line. */
 const BANK_LO = 0.55, BANK_SPAN = 0.75;
+/** Bank pieces and scud are drawn this many times farther along the same view ray at the same angular size: only the scene fog sees it, so they pale toward the horizon like the deck behind them (at HEAP_LAYER a piece at the horizon was 4 % fogged: a dark streak on a pale horizon). Fixed per cloud from entry. */
+const BANK_FAR = 3;
 /** Low sun: share of the sun's light taken out of the body mix, and the gain of the sunlit side drawn over it. */
 const LOW_SPLIT = 0.75, LOW_GAIN = 1.1, LOW_WARM = 0.2, BODY_CAP = 1.15;
 /** Target share of slots shown, size factor and darkness per cloud type. */
@@ -513,13 +515,14 @@ export class Clouds {
       const cb = (xr * bx + zr * bz) / r, copies = !flashing ? 1 : isScud ? 0 : cb > 0.9 ? 3 : cb > 0.6 ? 2 : cb > 0.1 && r < 6 ? 1 : 0;
       // Angle to the light in 3D: within about 55 degrees one rim copy, a cloud crossing the sun or moon two.
       const cl3 = (x * Ld.x + Math.max(0, y) * Ld.y + z * Ld.z) / (dd || 1), rimC = !rimOn || isScud ? 0 : cl3 > 0.93 ? 2 : cl3 > 0.58 ? 1 : 0;
+      const fs = this.bk[i] ? BANK_FAR : 1, X = x * fs, Y = y * fs, Z = z * fs, W = w * fs, HH = hh * fs;
       for (let j = 0; j < parts; j++) {
         this.cnt[n] = copies; this.cntR[n] = rimC;
         const a = hash2(i * 3 + j + 0.2, gn * 3.1 + 41.3), b = hash2(i * 3 + j + 0.6, gn * 1.3 + 57.9);
         // A cloud is put together from one to three painted heaps side by side on one base line: no two are the same.
-        const off = j === 0 ? 0 : (j === 1 ? -1 : 1) * w * (0.24 + 0.2 * a), ws = j === 0 ? 1 : 0.55 + 0.35 * b;
+        const off = j === 0 ? 0 : (j === 1 ? -1 : 1) * W * (0.24 + 0.2 * a), ws = j === 0 ? 1 : 0.55 + 0.35 * b;
         const cell = isScud || (bank && b > 0.55) ? SCUD0 + (a > 0.5 ? 1 : 0) : big < 0.2 ? Math.floor(a * 5) : 2 + Math.floor(a * (HEAPS - 2));
-        this.quad(n++, cam.position.x + x + rx * off, camY + y, cam.position.z + z + rz * off, rx, rz, ux, uy, uz, w * ws * (isScud ? 0.75 : 0.5), (isScud ? hh * 0.8 : hh) * (j === 0 ? 1 : 0.6 + 0.4 * b), cell, isScud ? b > 0.5 : flip);
+        this.quad(n++, cam.position.x + X + rx * off, camY + Y, cam.position.z + Z + rz * off, rx, rz, ux, uy, uz, W * ws * (isScud ? 0.75 : 0.5), (isScud ? HH * 0.8 : HH) * (j === 0 ? 1 : 0.6 + 0.4 * b), cell, isScud ? b > 0.5 : flip);
       }
     }
     // Torn shreds lying flat on the deck's edge while it crosses the sky.
