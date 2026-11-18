@@ -1,7 +1,7 @@
 // Breakage at size, headless (node, no browser): grows the default oak (YEARS, T), then runs the breakage rule exactly as
 // `__arbor.stormTest` does (windLoad at 4 Hz on a synthetic wind clock, fixed wind.base) for 120 s per base, each from a
 // fresh copy of the grown tree. Prints u percentiles at gust 1.0 and twigs / limbs per base.
-// Usage: node scripts/breaksize.mjs [query]   YEARS=3 T=750 BASES=1,0.8,0.6,0.35 SIGMA=1 SEED=7
+// Usage: node scripts/breaksize.mjs [query]   YEARS=3 T=750 BASES=1,0.8,0.6,0.35 SIGMA=1 SEED=7 TAPER=0
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -18,6 +18,7 @@ const grow = () => {
   p.seed.seed = Number(process.env.SEED ?? 7);
   const sim = new B.TreeSim(p); sim.years = Number(process.env.YEARS ?? 3); sim.reset();
   if (process.env.YSIG) sim.yearSigma = Number(process.env.YSIG);
+  if (process.env.TAPER === '0') sim.taperOn = false; // plain pipe radii (before docs 6.19)
   while (sim.time < T - 1e-9) sim.step(1 / 30);
   sim.flushStructure();
   return sim;

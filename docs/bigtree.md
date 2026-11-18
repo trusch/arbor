@@ -914,6 +914,41 @@ Gates: `tsc --noEmit` clean. `p3check.mjs` `oak:0:60,oakb:60:20,y3:600:60,y3b:70
 
 Seen on the sheets. Gone: the band of differently lit bark around the stem and the diagonal crease across it (desktop row 1 tiles 1 to 3 and 5, phone tile 5), the bulge at the foot of the thick limbs (row 2). Unchanged: the one-year oak. Still there: the stem itself steps in at a thick junction. That is the trunk's own profile, not the collar: the pipe model takes the trunk from 0.73 to 0.54 to 0.35 m across two nodes 0.2 m apart where the two thickest limbs leave, and the limb is a plain tube from the axis, so the silhouette is a wide stem with a shoulder and two narrower stems on top. Removing it needs the parent's rings near a junction to follow the union of both stems (parent rings reading child nodes, a new entry in the dirty test) or a taper in the sim's radii. A limb on a thick parent has no collar at all now (the ring cannot reach the surface; a collar there needs the widening on the ordinary rings near `exit`, limited by the parent radius above the junction). On the phone the year-3 trunk is visibly faceted at these steps (16 radial segments on a 0.5 m radius).
 
+### 6.19 Trunk flows into its limbs: taper limit and butt swell (branch `bigtree-perf`)
+
+Measured cause (`node scripts/tapercensus.mjs [query]`, headless, seed 7, t = 750; `REF=<git ref>` measures that commit's sim, `PROFILE=1` prints the trunk node by node). The year-3 trunk is a cylinder up to the first scaffold limb at 3.2 m and then loses the sum of its limbs in five nodes: desktop budget (40 000 nodes) 70.1 cm up to 3.2 m, then 64.6 / 57.5 / 46.9 / 30.6 cm at 3.41 / 3.61 / 4.05 / 4.49 m where limbs of 21.4 / 23.7 / 28.1 / 31.9 / 30.5 cm leave; the leader above the last fork is a 6 cm twig. Trunk / thickest limb 2.2 (phone budget, 14 000 nodes: 52 cm and 24.7 cm, 2.11). The pipe model gives this ratio by construction: four to five near-equal limbs under exponent 1.9 x (1 - `YEAR_EXP` x 2) = 1.71 sum to 2.1 to 2.3 x one limb, and all of it arrives at the fork nodes.
+
+Route: sim radii (`updateStructure` / `structureFull` in `src/sim/tree.ts`), on years trees from the second growing year on (`sim.years` > 0 and `ageQ` > 0; before that the code is not reached). A render-only profile (parent rings reading child nodes) cannot change the proportion between trunk and limb and needs child nodes in the per-node dirty copy; the radii route needs neither, and the rings read nothing new.
+
+| Rule | Built as |
+|---|---|
+| Taper limit | A node's radius target is at most its thickest child's target x (1 + `TAPER_M` 0.14 x own segment length) (`taperLim`), until it reaches its pipe radius. Below a fork the stem widens by 14 % per metre toward the butt instead of taking the whole sum in one node. Wood whose thickest child is under `TAPER_R0` 7 cm is free (limit x 4), from `TAPER_R1` 15 cm on the limit holds in full (smoothstep) |
+| Pipe contribution unchanged | What a node passes down (`sC`) is its plain pipe radius ^ n as before. The limit shapes the node's own radius only, so the mass is still there further down and the butt keeps its girth |
+| Butt swell | The first four nodes of a chain other than the trunk are thicker than their target by `SWELL` 0.32 x (1, 0.7, 0.4, 0.15) x smoothstep(`SWELL_R0` 5 cm, `SWELL_R1` 14 cm, radius) (`swellR`, `baseIdx`). Not part of the contribution |
+| Floors | A node is never thinner than any child's target, and at least `SWELL_OVER` 1.06 x a swollen limb base that stands on it |
+
+Exactness: the limit reads one new value per child, the child's target before its own swell (`sQ`); a node whose `sQ` came out different marks its parent like a changed contribution does. The full pass takes the same maxima through two per-node accumulators (`sM`, `sW`; a maximum has no summation order). Every input is a value the pass already tracks (child targets, own `len`, chain membership, `ageQ`): `structureCheck` = 0 differing values at t = 150 / 300 / 450 / 600 / 750 (`CHECK=1 yearscensus.mjs maxNodes=40000`) and on both budgets at t = 750 (`CHECK=1 tapercensus.mjs`). Radii never shrink, so the limit switching on at the year-2 bud break moves nothing: wood above its new target keeps its radius. `?taper=0` (`sim.taperOn = false`, set before the tree grows) = plain pipe radii, the tree before this section; `TAPER=0 breaksize.mjs` likewise.
+
+Year 3, t = 750, radii in cm (**M**, `tapercensus.mjs`, before = `REF=998ce56`):
+
+| | Desktop budget before | after | Phone budget (14 000) before | after |
+|---|---|---|---|---|
+| Trunk radius at 0.5 m | 70.1 | 57.5 | 52.0 | 53.1 |
+| at 1.3 m | 70.1 | 52.6 | 52.0 | 50.0 |
+| at 2 m | 70.1 | 47.5 | 52.0 | 45.1 |
+| at 3 m | 70.1 | 41.2 | 52.0 | 39.2 |
+| at 5 m (leader twig) | 6.2 | 6.2 | 6.2 | 6.2 |
+| Five thickest limb bases | 31.9 / 30.5 / 28.1 / 23.7 / 21.4 | 36.3 / 35.1 / 34.0 / 30.3 / 29.8 | 24.7 / 22.6 / 21.2 / 19.2 / 11.8 | 33.5 / 26.9 / 24.7 / 24.6 / 16.0 |
+| Trunk at 1.3 m / thickest limb | 2.20 | 1.45 | 2.11 | 1.49 |
+| Largest drop along the thickest stem within 0.4 m | 15.0 | 5.5 | 10.6 | 5.1 |
+| within 1 m | 32.7 | 11.7 | 23.4 | 10.9 |
+| Height m | 18.71 | 18.35 | 14.47 | 14.38 |
+| Nodes / sim leaves | 31 777 / 248 570 | 32 128 / 251 282 | 14 001 / 108 290 | 14 003 / 108 362 |
+
+The thickest stem is followed from the root into the thickest child down to 8 cm, so the leader twig left on top of the last fork is not counted as a step. Trunk through the forks after, desktop budget: 39.8 / 38.5 / 37.2 / 33.6 / 32.5 / 31.6 cm at 3.2 / 3.41 / 3.61 / 3.86 / 4.05 / 4.24 m. The desktop trunk at breast height is 25 % slimmer than before (the limit does not reach the pipe radius before the ground: 60 cm at the root against 70); the phone-budget trunk is 4 % slimmer there and its butt 2 % wider. Heights move by 0.1 to 0.4 m and node counts by under 1.2 % because sag reads the radii.
+
+Gates: `tsc --noEmit` clean. `REF=998ce56 node scripts/structeq.mjs oak,willow,break`: exit 0, 9 of 9 rows bit-equal. `yearscensus.mjs` t = 150: `YEARS=0` and `YEARS=3` both 4910 nodes / 37 642 leaves / 9.09 m / 16.8 cm.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
