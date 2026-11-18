@@ -59,7 +59,7 @@ export const YEAR_LOBE = 0.22, YEAR_BAY = 0.6;
 /** Share of the total extra size gained in year 2 (section 5 table: 54 %); the rest comes in year 3. */
 const YEAR2_SHARE = 0.54;
 /** Attractor density of the new shells relative to the year-1 crown (coarser twig structure, bounded node count). */
-export const YEAR_DENSITY = 0.23;
+export const YEAR_DENSITY = 0.25;
 
 /** Envelope scale (height, radius) of growth year `yi` (0 = first year = today's crown). */
 export function yearScale(yi: number, years: number): { h: number; r: number; b: number } {

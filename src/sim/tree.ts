@@ -144,12 +144,12 @@ export const YEAR_SIGMA = 0.65;
 const YEAR_SCAF_VIGOR = 1.25;
 const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6, YEAR_SHED_N = 3;
 /** Interior opening (years 2-3): light pruning threshold x this for all order >= 2 wood. */
-const YEAR_PRUNE = 1.5;
+const YEAR_PRUNE = 1.9;
 /**
  * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
  */
-const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = -0.12, YEAR_CALM = 0.35;
+const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = 0.02, YEAR_CALM = 0.35;
 const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
@@ -585,12 +585,14 @@ export class TreeSim {
     if (this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && ch.juv === undefined) {
       const rr = Math.hypot(n.rx, n.rz);
       if (rr > 0.3) {
-        const f = Math.min(1, rr / Math.max(1, env.radius)), e = YEAR_LEVEL_E0 + (YEAR_LEVEL_E1 - YEAR_LEVEL_E0) * f - (ch.order - 1) * 0.12;
+        const f = Math.min(1, rr / Math.max(1, env.radius)), e = YEAR_LEVEL_E0 + (YEAR_LEVEL_E1 - YEAR_LEVEL_E0) * f - (ch.order - 1) * 0.08;
         const w = YEAR_LEVEL * smoothstep(0.5, 2.5, rr);
         lx = (n.rx / rr) * Math.cos(e) * w; ly = Math.sin(e) * w; lz = (n.rz / rr) * Math.cos(e) * w;
-        wan *= YEAR_CALM; gr *= 0.3;
+        gr *= 0.3;
       }
     }
+    // Years 2-3: calmer wood on every order (the wander term reads as tangle at 15 m).
+    if (this.years > 0 && this.growYear >= 1 && ch.order >= 1 && ch.juv === undefined) wan *= YEAR_CALM;
     // Trunk below the crown: strong upward drive.
     const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
     // Weeping: twigs of order >= 2 bend down (positive gravitropism) ∝ gravity.
