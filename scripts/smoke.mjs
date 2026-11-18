@@ -754,7 +754,7 @@ try {
     const probe = () => {
       const A = window.__arbor, m = A.leaves.mesh.material, others = [];
       let shared = 0;
-      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o.parent === A.blossom?.group) return; if (o.material === m) shared++; else if (o.material.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
+      A.stage.scene.traverse((o) => { if (!o.isInstancedMesh || o === A.leaves.mesh || o.parent === A.blossom?.group) return; if (o.material === m) shared++; else if (o.material.map && o.material.map !== m.map) others.push(o.material.map.uuid + ':' + o.material.map.version); });
       return { programs: A.stage.renderer.info.programs.length, mat: m.uuid, map: m.map.uuid, ver: m.map.version, form: A.leaves.formId, shared, others: others.join(','), gb: !!A.leaves.mesh.userData.gbufferMaterial, fe: A.frameErrors(), leaves: A.leaves.mesh.count, textures: A.stage.renderer.info.memory.textures };
     };
     const run = async (pg, errs) => {
