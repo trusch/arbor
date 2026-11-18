@@ -152,7 +152,13 @@ export const YEAR_SIGMA = -0.3;
  */
 /** Scaffold wood (order >= 1, not `sup`) elongates x YEAR_SCAF_VIGOR in years 2-3: it takes the freed shell. */
 const YEAR_SCAF_VIGOR = 1.25;
-const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6, YEAR_SHED_N = 3;
+const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6, YEAR_SHED_N = 4;
+/**
+ * Crown raising (6.12): the scaffold is picked among the order-1 limbs that leave the trunk at YEAR_BOLE m or higher
+ * (when at least YEAR_BOLE_MIN such limbs exist); the limbs below it are suppressed like every non-scaffold limb and
+ * are shed first (thickest first), so the old tree stands on a clear bole.
+ */
+const YEAR_BOLE = 3, YEAR_BOLE_MIN = 4;
 /** Interior opening (years 2-3): light pruning threshold x this for all order >= 2 wood. */
 const YEAR_PRUNE = 1.5;
 /** Years 2-3: order >= 3 shoots stop after this many segments (long thin whips sagged metres, to below the ground). */
@@ -716,7 +722,8 @@ export class TreeSim {
         // Suppressed limbs only; the low ones first, then the thinnest (score: lowest wood in m + 100 x base radius in m).
         if (!c.sup) continue;
         let m = Infinity; for (let k = 1; k < c.nodes.length; k++) m = Math.min(m, nodes[c.nodes[k]].wy);
-        const sc = Math.min(m, nodes[c.nodes[0]].ry) + 100 * nodes[c.nodes[1]].radius - (m < 0.6 ? 1000 : 0); // wood near the ground goes first
+        const lowB = nodes[c.nodes[0]].ry < YEAR_BOLE; // crown raising: limbs below the bole height go first, thickest first
+        const sc = lowB ? -2000 - 100 * nodes[c.nodes[1]].radius : Math.min(m, nodes[c.nodes[0]].ry) + 100 * nodes[c.nodes[1]].radius - (m < 0.6 ? 1000 : 0); // wood near the ground goes first
         if (sc < low) { low = sc; pick = o1[j]; }
         continue;
       }
@@ -778,7 +785,8 @@ export class TreeSim {
     for (let ci = 1; ci < chains.length; ci++) { const c = chains[ci]; if (c.order === 1 && !c.pruned && !c.juv && c.nodes.length >= 2) o1.push(ci); }
     o1.sort((a, b) => nodes[chains[b].nodes[1]].radius - nodes[chains[a].nodes[1]].radius || a - b);
     const az: number[] = [], keep = new Set<number>();
-    for (const ci of o1) {
+    const high = o1.filter((ci) => nodes[chains[ci].nodes[0]].ry >= YEAR_BOLE);
+    for (const ci of high.length >= YEAR_BOLE_MIN ? high : o1) {
       if (keep.size >= YEAR_SCAF) break;
       const c = chains[ci], t = nodes[c.nodes[c.nodes.length - 1]], a = Math.atan2(t.rz, t.rx);
       if (az.some((b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < YEAR_SCAF_SEP)) continue;

@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, '..'), tmp = `/tmp/arbor-arch-${proces
 mkdirSync(tmp, { recursive: true });
 writeFileSync(`${tmp}/e.ts`, `export { TreeSim } from '${root}/src/sim/tree';\nexport { defaultParams, applyQueryOverrides } from '${root}/src/params';\n`);
 execSync(`${root}/node_modules/.bin/rolldown ${tmp}/e.ts --file ${tmp}/b.mjs --format esm`, { stdio: ['ignore', 'ignore', 'inherit'] });
+if (process.env.G) Object.assign(globalThis, JSON.parse(process.env.G)); // sweep hooks (dev)
 const B = await import(`${tmp}/b.mjs`);
 const T = Number(process.env.T ?? 750), HZ = Number(process.env.HZ ?? 30);
 const p = B.defaultParams();
