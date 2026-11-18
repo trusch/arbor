@@ -22,7 +22,7 @@ let h = 0; for (const n of N) if (!C[n.chain].pruned && n.wy > h) h = n.wy;
 const leafy = new Set(sim.leaves.map((l) => l.node));
 const d = []; let lowLeaf = 1e9;
 const bands = new Array(10).fill(0);
-for (const id of leafy) { const n = N[id]; if (C[n.chain].pruned) continue; const r = Math.hypot(n.wx, n.wz); d.push(r); if (n.wy < lowLeaf) lowLeaf = n.wy;
+for (const id of leafy) { const n = N[id]; if (C[n.chain].pruned) continue; const r = Math.hypot(n.wx, n.wz); d.push(r); if (n.wy < lowLeaf) { lowLeaf = n.wy; globalThis.lowId = id; }
   const b = Math.min(9, Math.max(0, Math.floor(n.wy / h * 10))); bands[b] = Math.max(bands[b], r); }
 d.sort((a, b) => a - b);
 const w = 2 * d[Math.floor(d.length * 0.95)];
@@ -40,6 +40,7 @@ const ostat = Object.entries(byOrd).map(([o, a]) => { a.sort((x, y) => y - x); r
 limbs.sort((a, b) => b.r - a.r);
 let r13 = 0; for (const id of trunk) if (N[id].ry <= 1.3) r13 = N[id].radius;
 const big = limbs.filter((l) => l.r >= 10);
+const lc = C[N[globalThis.lowId]?.chain]; if (lc) console.log("lowLeaf chain", JSON.stringify({ order: lc.order, sup: lc.sup ?? 0, nodes: lc.nodes.length, ry: +N[globalThis.lowId].ry.toFixed(2) }));
 console.log(JSON.stringify({ t: T, h: +h.toFixed(2), w: +w.toFixed(2), wOverH: +(w / h).toFixed(2), r13cm: +(r13 * 100).toFixed(1), lowLeaf: +lowLeaf.toFixed(2), nodes: N.length, leaves: sim.leaves.length, limbs10: big.length, limbs5: limbs.filter((l) => l.r >= 5).length,
   ...(process.env.CHECK ? { diff: sim.structureCheck().differing } : {}), breaks: sim.breaks?.length }));
 console.log('taper', taper.join(' '));

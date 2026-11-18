@@ -144,7 +144,9 @@ export const YEAR_SIGMA = 0.65;
 const YEAR_SCAF_VIGOR = 1.25;
 const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6, YEAR_SHED_N = 3;
 /** Interior opening (years 2-3): light pruning threshold x this for all order >= 2 wood. */
-const YEAR_PRUNE = 1.9;
+const YEAR_PRUNE = 1.5;
+/** Years 2-3: order >= 3 shoots stop after this many segments (long thin whips sagged metres, to below the ground). */
+const YEAR_WHIP = 18;
 /**
  * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
@@ -563,6 +565,7 @@ export class TreeSim {
     const pull = this.tmp;
     // A juvenile side shoot is determinate: it ignores the crown volume and stops after its `juv` segments.
     if (ch.juv !== undefined && ch.nodes.length - 1 >= ch.juv) { ch.alive = false; return; }
+    if (this.years > 0 && this.growYear >= 1 && ch.order >= 3 && ch.nodes.length > YEAR_WHIP) { ch.alive = false; return; }
     const cnt = ch.juv !== undefined ? 0 : this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception(), pull);
     const inCrownZone = n.ry > env.base * 0.95 || ch.order > 0;
     if (ch.juv !== undefined) ch.starve = 0;
@@ -653,7 +656,7 @@ export class TreeSim {
         // Suppressed limbs only; the low ones first, then the thinnest (score: lowest wood in m + 100 x base radius in m).
         if (!c.sup) continue;
         let m = Infinity; for (let k = 1; k < c.nodes.length; k++) m = Math.min(m, nodes[c.nodes[k]].wy);
-        const sc = Math.min(m, nodes[c.nodes[0]].ry) + 100 * nodes[c.nodes[1]].radius;
+        const sc = Math.min(m, nodes[c.nodes[0]].ry) + 100 * nodes[c.nodes[1]].radius - (m < 0.6 ? 1000 : 0); // wood near the ground goes first
         if (sc < low) { low = sc; pick = o1[j]; }
         continue;
       }
