@@ -1,6 +1,6 @@
 // Bend profiles of the wind sway in a held wind: sapling and grown oak, growth running and paused.
 // Usage: node scripts/swaycheck.mjs http://localhost:5477/   env: GPU=vulkan, AGES=20,90, WX=storm,windy, SPEEDS=1,0,
-//        MS=4000, PROFILES=3 (print leader + N longest chains), TOL=0.05 (rad), KINK=0.15, TIP=0.75
+//        MS=4000, Q='&years=3' (extra query), PROFILES=3 (print leader + N longest chains), TOL=0.05 (rad), KINK=0.15, TIP=0.75
 // Exit 1 when wood that kept its rotation is drawn more than TOL straighter than wood nearer the chain base, the lean
 // falls more than KINK from one segment to the next, or a tip's offset is < TIP x its parent's (see swayprobe.mjs).
 import { chromium } from 'playwright-core';
@@ -15,7 +15,7 @@ try {
     const ctx = await browser.newContext(E.MODE === 'phone' ? { viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true } : { viewport: { width: 800, height: 600 } }); // MODE=phone: Low quality path
     const page = await ctx.newPage(); const errs = [];
     page.on('pageerror', (e) => errs.push(e.message));
-    await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&cinema=false&lightning=0&weather=${wx}`);
+    await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&cinema=false&lightning=0&weather=${wx}${E.Q ?? ''}`); // Q='&years=3' with AGES=750 = the year-3 tree
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(([age, speed]) => { const A = window.__arbor; A.fastForward(age); A.params.time.speed = Number(speed); A.params.time.paused = false; }, [age, speed]);
     await page.waitForTimeout(2500);
