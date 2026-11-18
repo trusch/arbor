@@ -611,6 +611,57 @@ The straighter limbs and thinner twig load moved it further down (0 limbs at eve
 
 Still not majestic: (1) the bole is short and thin for the crown: all five scaffold limbs leave between 2.1 and 5.6 m and the trunk above 2.7 m is under 15 cm, so there is no trunk inside the crown; an older tree needs a year-4-plus girth or a taller bole. (2) Limbs are even arcs: no elbows, no near-horizontal heavy stretches, and their ends hang to head height. (3) Outer branches have one radius; a hierarchy needs apical dominance inside each limb's subtree (one leader per branch that keeps its tips while its laterals are thinned), which is a growth rule in `updateLight` / bud break of years 2-3 and a census of tips per order-3 branch to tune it. (4) The crown interior is empty in summer: leaves sit in a shell at the limb ends.
 
+### 6.11 Tree at rest: geometry version, light tick, sway over live nodes (branch `bigtree-perf`)
+
+Profile first (**M**, `scripts/bigtree.mjs`, phone emulation 411 x 777 at DPR 2.625, 4x CPU throttle, ANGLE Vulkan, calm wind 0.35, `?years=3` at t = 750 = autumn of year 3, 12 s live then 6 s paused; shared host lock, three to eight other jobs running, so compare columns of one run pair and read single numbers as +-35 %). Base 7f7cc4e, ms per frame:
+
+| Phase | Year 3 live | Year 3 paused | Default tree live | Default paused |
+|---|---|---|---|---|
+| sway (`Sway.update` + `applyOffsets` + upload) | 20.5 | 16.4 | 3.7 | 4.0 |
+| geometry rebuild | 19.2 | 0 | 4.05 | 0 |
+| render | 11.0 | 9.35 | 6.4 | 6.55 |
+| light grid (59 ms per tick, 2 Hz) | 9.6 | 0 | 0.46 | 0 |
+| leaves follow | 5.8 | 6.1 | 2.0 | 3.3 |
+| leaves sway | 3.4 | 3.0 | 1.8 | 2.8 |
+| meadow | 3.3 | 1.3 | 1.7 | 0.4 |
+| canopy shadow (bake up to 153 ms) | 2.6 | 0 | 0.86 | 0 |
+| leaf pass | 2.35 | 2.8 | 2.5 | 1.0 |
+| sim step | 2.05 | 0.2 | 0.7 | 0 |
+| JS mean / p95, fps | 82.7 / 184, 10.8 | 42.9 / 104, 18.1 | 27.5 / 71, 23.9 | 21.4 / 71, 28.4 |
+
+What the profile showed: at t = 750 no wood moves (elongation is off outside year phase 0.02 to 0.4, thickening from 0.6), yet `redraw` keyed the branch mesh on `sim.time`, so `BranchMesh.update` compared all 32k nodes every second frame to rewrite nothing, and the light tick rebuilt an identical grid twice a second and bumped `lightVersion`, which re-baked the canopy decal and restarted leaf bakes. On a paused tree `Leaves.follow` swept 26k instances every update to place none.
+
+Built:
+- **`TreeSim.geomVersion`**: bumps when a node's position, direction, sag or radius may have changed or a chain was pruned (`updateStructure`: full pass, pending forward work or tips; `structureForward` with work; `sChainDirty`). `redraw` and the sway rest cache compare it instead of `sim.time`.
+- **Light tick at rest** (`updateLight`, sim state bit-equal): grid, `nd.light` and `lightVersion` are kept while `geomVersion`, `topology`, node count and cell are unchanged; the chain loop is skipped too when the prune threshold and year state are unchanged and no chain has a running shade count. `ops.updateLight` on the year-3 tree at rest: 24.7 ms → 0.05 ms in the same run pair.
+- **Sway over live nodes**: the cascade loops over a cached list of live ids (pruned and detached wood is zeroed once per cache refill); `D` is bit-equal to before. `applyOffsets` writes only the used rings of drawn chains.
+- **Follow on a paused tree**: skipped once a whole sweep placed nothing under unchanged inputs.
+
+Exactness (**M**): `REF=7f7cc4e node scripts/structeq.mjs oak,oak2x,willow,break` bit-equal at t = 30 / 90 / 150; new case `y3` (`TIMES=264,500,650,780`, `?years=3`): bit-equal at all four times, including the at-rest window after 750 (positions, radii, sag, subtree lengths, pruned flags, leaf count).
+
+After, against `bigtree-crown` bf8c8ec (merged; its year-3 tree is 28.7k nodes), run pair in one job on the loaded host, ms per frame:
+
+| | Year 3 live, before → after | Year 3 paused | Default live | Default paused |
+|---|---|---|---|---|
+| geometry rebuild | 11.6 → 0 | 0 | 3.7 → 0 | 0 |
+| light grid | 4.3 → 0 | 0 | 0.37 → 0 | 0 |
+| canopy shadow | 1.3 → 0 | 0 | 0.62 → 0 | 0 |
+| leaves follow | 3.7 → 4.1 | 3.6 → 0.7 | 1.9 → 1.6 | 1.7 → 0.7 |
+| sway | 11.4 → 12.8 | 11.6 → 15.7 | 3.0 → 1.7 | 3.9 → 2.6 |
+| render | 8.4 → 21.4 (one 585 ms frame) | 7.7 → 10.9 | 6.6 → 3.8 | 4.8 → 5.0 |
+| JS mean / median | 52.7 / 50.0 → 58.4 / 35.7 | 33.1 / 27.3 → 41.2 / 32.8 | 24.7 / 22.4 → 12.6 / 12.8 | 14.9 / 15.1 → 13.1 / 11.6 |
+
+Reading: the phases removed are gone in every run (also in a first pair on 7f7cc4e: year 3 live JS mean 82.7 → 59.0 while the default-tree control of the same job ran 1.4x slower). The default tree at rest halves its live frame. The year-3 "after" column of this pair is not a clean number: the live window had a 585 ms render frame and interval p95 350 ms, and its paused sway and render read 35 to 40 % above the "before" run although the sway does strictly less work; that is host load (a headless sim job ran beside it), unless the rerun (`prof/bigtree-perf-rerun-*`) shows otherwise. The live JS median (50.0 → 35.7 ms) is the better reading.
+
+Against the bar (default tree: 27.5 ms live, 21.4 paused on the first baseline): **not met.** Year 3 at rest is about 36 to 59 ms live and 33 to 41 paused. What is left is the sway (11 to 16 ms per frame, live and paused), render (8 to 11), follow while time runs (4), leaf sway (3), leaf pass (3).
+
+Not done:
+- **Sway cost itself.** The per-update cost is unchanged apart from skipping pruned ids. The next step is one whole-tree key pose computed for a fixed lead time in id slices (all slices at the same wind time, so the key is one consistent curve), every node drawn as the interpolation between the last two keys: no anchor split, so no phase offset between thin wood and its limb, which is what failed the one-curve check in 6.4. Not built, not measured.
+- **`applyOffsets` upload** is still the whole position range; a wind-pose rebuild still restores and uploads every position (`swayed && keepRest`).
+- **Growing in year 3** (year phase 0.02 to 0.6): every node moves every step, so the geometry and light costs of the first table apply unchanged; the light tick is still one 25 to 59 ms frame twice a second there. Not profiled separately.
+- **Twig culling (T4 / P9)**, leaf follow and pass budgets: untouched.
+- Exclusive timing runs: the exclusive host lock did not come free in the session.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.

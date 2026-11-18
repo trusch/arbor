@@ -14,7 +14,7 @@ try {
       ? { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36' }
       : { viewport: { width: 1000, height: 800 } });
     const page = await ctx.newPage();
-    await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&lightning=0&weather=${E.WX ?? 'storm'}${mode === 'desktop' ? '&quality=High' : ''}`);
+    await page.goto(`${url}?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false&lightning=0&weather=${E.WX ?? 'storm'}${mode === 'desktop' ? '&quality=High' : ''}${E.Q ?? ''}`); // Q='&years=3' AGES=750 = the year-3 tree
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate((age) => {
       const A = window.__arbor, S = A.sim, W = A.wind;
