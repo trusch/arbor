@@ -439,6 +439,39 @@ What the pictures say (`node scripts/majestic.mjs URL prefix`: wide 2.6 H out, t
 
 Open (next levers, in order): scaffold dominance (few order-1 limbs carry most of the crown: today 32 limbs of similar size; suppress or shed weak order-1 laterals in years 2-3 and give the 4 to 6 strongest the shell's attractors); limbs that level out (an outward gravitropic set-point for order 1 in years 2-3 instead of attractor pull alone: limbs are 40 to 60 degrees and climb); the crown must open (the leaf density of the year-2/3 shell, and the interior prune, decide whether sky shows; lobes in attractor density do not make gaps when every tip still fills its neighbourhood); wavy wood (the wander term reads as tangle at 15 m); root flare is the renderer's `rootFlare` scaled by trunk radius (proportional; not changed).
 
+### 6.7 Majestic architecture: scaffold dominance, levelling, open interior (branch `bigtree-crown`, behind `?years=3`)
+
+Cause of the year-3 tangle: every spring `springFlush` revived every unpruned order-1 chain and budded its last 2 nodes alike (no dominance), `completeSegment` steered orders 1 and 2 by attractor pull, gravitropism up and the correlated wander only (no outward set-point: limbs climbed at 40 to 60 degrees and their path was about 2x their reach, top limb 18.8 m of wood for 8.5 m of reach), light pruning never touched order 1, and long unbranched order >= 3 shoots grew into whips that sag metres.
+
+Rules (all only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 untouched):
+
+| Rule | Built as |
+|---|---|
+| Scaffold pick | `pickScaffold` at the year-2 bud break: the `YEAR_SCAF` 6 thickest order-1 limbs, greedily at least `YEAR_SCAF_SEP` 0.75 rad apart in tip azimuth, are scaffold; every other order-1 limb and all wood on it gets `Chain.sup` = 1 (`newChain` inherits it; an order-1 limb born after the pick is `sup`). Flags only, no structure input |
+| Suppressed limbs | elongation x `YEAR_SUP` 0.4, bud break x 0.4, no spring revival or flush buds, light pruning at `YEAR_SUP_PRUNE` 1.6 x `selfPrune` (order 1 included), and `shedLowLimb` sheds up to `YEAR_SHED_N` 3 of them per growth year (phases 0.3, 0.325, 0.35; score = lowest wood + 100 x base radius, wood under 0.6 m first) through `breakAt` with `shed: true` |
+| Scaffold vigor | scaffold wood (order >= 1, not `sup`) elongates x `YEAR_SCAF_VIGOR` 1.25 and takes the freed shell |
+| Levelling | orders 1 and 2 aim at an outward set-point: elevation `YEAR_LEVEL_E0` 0.35 rad near the trunk to `YEAR_LEVEL_E1` 0.02 at the crown radius (order 2: 0.08 lower), weight `YEAR_LEVEL` 1.4 x smoothstep(0.5, 2.5 m from the axis), gravitropism x 0.3 there |
+| Calm wood | wander x `YEAR_CALM` 0.35 on every order >= 1 |
+| Open interior | order >= 2 light pruning at `YEAR_PRUNE` 1.5 x `selfPrune`; order >= 3 shoots stop after `YEAR_WHIP` 18 segments (a 61-node order-4 whip had sagged to 3.5 m below the ground) |
+| Balance | `YEAR_DENSITY` 0.17 -> 0.25 (node count), `YEAR_GIRTH` 0.13 -> 0.2 (trunk: fewer tips carry it now) |
+
+Census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; the script now also names the chain of the lowest leaf):
+
+| Year 3, t = 750 | Before (cd0b486) | After (9361ea8) |
+|---|---|---|
+| Height / width / w:h | 14.56 / 17.95 m / 1.23 | 14.74 / 17.74 m / 1.20 |
+| Trunk r at 1.3 m; at 3 m | 40.6; 20.2 cm | 37.1; 17.7 cm (design 36) |
+| Order-1 limbs: count, median girth, thickest | 32, 3.5 cm, 24.5 / 13.5 / 12.1 / 8.9 / 8.8 / 7.7 cm | 5, 13.2 cm, 21.1 / 19.3 / 13.2 / 11.3 / 11.2 cm |
+| 6 thickest order-1 vs median order-1 / thickest order 2 | 12.9 cm mean vs 3.5 / 10.5 | all 5 = 15.2 cm mean vs 13.2 / 10.1 |
+| Order 2 / 3 count | 92 / 158 | 45 / 114 |
+| Leafy radius by band | 6.2 8.6 10.1 10.8 10.7 10.9 10.8 10.1 8.9 6.2 | 0.2 4.4 8.1 9.1 10.2 10.5 10.0 9.6 8.4 6.3 |
+| Lowest leaf | 0.04 m | 0.04 m |
+| Nodes / sim leaves | 35 501 / 276k | 33 000 (-7 %) / 251k (-9 %) |
+
+The limbs that already exist at the end of year 1 keep their year-1 angles (37 to 59 degrees at the base: wood is not regrown); levelling acts on the new wood of years 2 and 3. Phone cost: nodes and sim leaves -7 / -9 %, drawn leaves are capped (32k) either way, so branch rebuild, sway and the light tick move with the node count (slightly down); not timed.
+
+Pictures (`node scripts/majestic.mjs URL prefix`, real GPU): before = `shots/maj-after-*` of 6.6 (sheet `/home/trusch/projects/arbor/shots/maj-phone-sheet.jpg`), after = `shots/majD-after-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`; intermediate `majB-*` (scaffold only) and `majC-*` (harder prune, before the whip cap: curling bare whips). `structureCheck` 0 in every shot.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.
