@@ -56,6 +56,8 @@ export interface Chain {
   juv?: number;
   /** Growth over years: 1 = wood of a suppressed (non-scaffold) order-1 limb, set at the year-2 flush (`pickScaffold`). */
   sup?: number;
+  /** Growth over years: 1 = wood of an ascending scaffold limb (the YEAR_ASC highest-based scaffold limbs, `pickScaffold`): it keeps leader status, climbs and carries the dome. */
+  asc?: number;
 }
 
 export interface Bud {
@@ -118,7 +120,7 @@ const UP: [number, number, number] = [0, 1, 0];
 /** Growth over years: the first year is exempt from the seasonal gates until this sim time (today's tree, t = 150). */
 const YEAR_EXEMPT = 150;
 /** G3: leader elongation rate per growth year; laterals keep theirs, so the crown widens faster than it rises. */
-const LEADER_VIGOR = [1, 0.45, 0.2];
+const LEADER_VIGOR = [1, 0.8, 0.6];
 /** Spring flush: a tip sees new shell attractors within perception x this; buds on the last nodes of each chain. */
 const YEAR_REACH = 1.5, YEAR_BUDS = 2;
 /** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
@@ -190,6 +192,12 @@ const DOWN_MAX = 0.3;
 const YEAR_BAY_CUT = 0.15, YEAR_BAY_R = 0.45, YEAR_BAY_SIGMA = 0.25;
 /** Years 2-3: steepest wanted direction (sine of the elevation) of scaffold wood; order 2 is 0.1 lower. */
 const YEAR_UP_MAX = 0.7;
+/**
+ * Ascending leaders (6.12): the YEAR_ASC scaffold limbs with the highest bases keep leader status in years 2-3: no
+ * levelling set-point (an upward one of weight YEAR_ASC_UP instead), no settling, wanted direction up to YEAR_ASC_MAX
+ * (sine). The other scaffold limbs spread; their set-point lifts again by YEAR_LIFT rad over the outer part of the reach.
+ */
+const YEAR_ASC = 2, YEAR_ASC_UP = 0.5, YEAR_ASC_MAX = 0.94, YEAR_LIFT = 0.4, YEAR_LIFT_F = 0.6;
 /**
  * Seedling / sapling phase (only when `crown.bole` > 0). Wood that grows below JUV_H metres is juvenile: its scale
  * `juv` runs from JUV_MIN at the soil to 1 at JUV_H and multiplies internode length; speed, radius floor and leaf size
@@ -350,6 +358,7 @@ export class TreeSim {
     const ch: Chain = { nodes: [node], order, alive: true, starve: 0, pruned: false, shade: 0, wx: w[0], wy: w[1], wz: w[2] };
     // Scaffold dominance (years 2-3): wood on a suppressed limb is suppressed; a new order-1 limb after the pick is too.
     if (this.scafPicked && this.nodes.length > node && (order === 1 || this.chains[this.nodes[node].chain]?.sup)) ch.sup = 1;
+    if (this.scafPicked && this.nodes.length > node && order > 1 && this.chains[this.nodes[node].chain]?.asc) ch.asc = 1;
     return ch;
   }
 
@@ -622,10 +631,13 @@ export class TreeSim {
     if (this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && ch.juv === undefined) {
       const rr = Math.hypot(n.rx, n.rz);
       if (rr > 0.3) {
-        const f = Math.min(1, rr / Math.max(1, env.radius)), e = YEAR_LEVEL_E0 + (YEAR_LEVEL_E1 - YEAR_LEVEL_E0) * f - (ch.order - 1) * 0.08;
-        const w = YEAR_LEVEL * smoothstep(0.5, 2.5, rr);
-        lx = (n.rx / rr) * Math.cos(e) * w; ly = Math.sin(e) * w; lz = (n.rz / rr) * Math.cos(e) * w;
-        gr *= 0.3;
+        if (ch.asc) { ly = YEAR_ASC_UP * (ch.order === 1 ? 1 : 0.4); }
+        else {
+          const f = Math.min(1, rr / Math.max(1, env.radius)), e = YEAR_LEVEL_E0 + (YEAR_LEVEL_E1 - YEAR_LEVEL_E0) * Math.min(1, f / YEAR_LIFT_F) + YEAR_LIFT * smoothstep(YEAR_LIFT_F, 1, f) - (ch.order - 1) * 0.08;
+          const w = YEAR_LEVEL * smoothstep(0.5, 2.5, rr);
+          lx = (n.rx / rr) * Math.cos(e) * w; ly = Math.sin(e) * w; lz = (n.rz / rr) * Math.cos(e) * w;
+          gr *= 0.3;
+        }
       }
     }
     // Years 2-3: calmer wood on every order (the wander term reads as tangle at 15 m).
@@ -662,7 +674,7 @@ export class TreeSim {
     // Years 2-3, scaffold wood (orders 1-2, not sup): never wanted steeper than YEAR_UP_MAX above the horizontal, so
     // the shell above cannot pull the upper limbs into a vase (pass 2: eM 65-82 degrees on limbs from 4.5 m up).
     if (this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && !ch.sup && ch.juv === undefined) {
-      const maxDy = YEAR_UP_MAX - (ch.order - 1) * 0.1;
+      const maxDy = (ch.asc ? YEAR_ASC_MAX : YEAR_UP_MAX) - (ch.order - 1) * 0.1;
       if (dy > maxDy) {
         let hx = dx, hz = dz, h = Math.hypot(hx, hz);
         if (h < 0.05) { const rr = Math.hypot(n.rx, n.rz) || 1; hx = n.rx / rr; hz = n.rz / rr; h = 1; }
@@ -724,7 +736,7 @@ export class TreeSim {
   /** Extra rest-pose bend of settling scaffold wood (YEAR_SETTLE); 0 for everything else. */
   private settle(nd: TreeNode, h: number) {
     const ch = this.chains[nd.chain];
-    if (ch.order < 1 || ch.order > 2 || ch.sup || ch.juv !== undefined) return 0;
+    if (ch.order < 1 || ch.order > 2 || ch.sup || ch.asc || ch.juv !== undefined) return 0;
     const rr = Math.hypot(nd.rx, nd.rz);
     return YEAR_SETTLE * (ch.order === 2 ? YEAR_SETTLE_O2 : 1) * this.ageQ * nd.len * Math.sqrt(h) * (nd.subLen / (nd.subLen + YEAR_SETTLE_L)) * smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, rr);
   }
@@ -779,6 +791,10 @@ export class TreeSim {
       if (c.order === 1) { if (!keep.has(ci)) c.sup = 1; }
       else if (chains[nodes[c.nodes[0]].chain].sup) c.sup = 1;
     }
+    // Ascending leaders: the YEAR_ASC scaffold limbs that leave the trunk highest, and the wood they carry.
+    const hi = [...keep].sort((a, b) => nodes[chains[b].nodes[0]].ry - nodes[chains[a].nodes[0]].ry || a - b).slice(0, YEAR_ASC);
+    for (const ci of hi) chains[ci].asc = 1;
+    for (let ci = 1; ci < chains.length; ci++) { const c = chains[ci]; if (c.order > 1 && c.juv === undefined && chains[nodes[c.nodes[0]].chain].asc) c.asc = 1; }
     this.scafPicked = true;
     this.scafAz = az;
     this.sFull = true; // `sup` is a structure input now (settling)

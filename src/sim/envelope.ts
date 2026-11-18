@@ -53,7 +53,7 @@ export const YEAR_DATE0 = 0.12;
  * Final envelope scale after the last growing year (majestic-oak pass): crown height x1.7 over a crown base lifted x1.6
  * (the low limbs are shed, G4), radius x2.3: a crown broader than tall on a short, clean bole.
  */
-export const YEAR_H = 1.7, YEAR_R = 2.3, YEAR_B = 1.6;
+export const YEAR_H = 2.2, YEAR_R = 1.95, YEAR_B = 1.6;
 /** Lobes of the year shells: radial reach and attractor density vary with azimuth (domes and bays, a few long limbs). */
 export const YEAR_LOBE = 0.22, YEAR_BAY = 0.6;
 /** Share of the total extra size gained in year 2 (section 5 table: 54 %); the rest comes in year 3. */

@@ -74,3 +74,15 @@ if (process.env.PROF) {
     console.log(`limb r=${(N[ids[1]].radius * 100).toFixed(1)} y0=${N[ids[0]].wy.toFixed(1)} wavy(world/rest)=${wav(we)}/${wav(re)} years2-3 from chord ${y1}: ${wav(we.slice(y1))}/${wav(re.slice(y1))}\n  world ${we.join(' ')}\n  rest  ${re.join(' ')}\n  sag   ${sg.join(' ')}`);
   }
 }
+{ // crown shape (6.12): widest height, inner-half leaf share, lowest limb tip, clear bole
+  const L = sim.leaves.filter((l) => !C[N[l.node].chain].pruned).map((l) => N[l.node]);
+  const ys = L.map((n) => n.wy).sort((a, b) => a - b), y0 = ys[Math.floor(ys.length * 0.02)], cy = (y0 + h) / 2, ry = (h - y0) / 2, rx = w / 2;
+  const nb = 12, br = []; for (let b = 0; b < nb; b++) { const a = L.filter((n) => Math.floor((n.wy - y0) / (h - y0) * nb) === b).map((n) => Math.hypot(n.wx, n.wz)).sort((p, q) => p - q); br.push(a.length ? a[Math.floor(a.length * 0.95)] : 0); }
+  const bw = br.indexOf(Math.max(...br)); let inner = 0, innerH = 0;
+  for (const n of L) { const r = Math.hypot(n.wx, n.wz); if (Math.hypot(r / rx, (n.wy - cy) / ry) < 0.5) inner++; if (r < rx * 0.5) innerH++; }
+  let lowTip = 1e9, bole = 1e9; const tips = [];
+  for (let ci = 1; ci < C.length; ci++) { const c = C[ci]; if (c.pruned || c.nodes.length < 2) continue; const t = N[c.nodes[c.nodes.length - 1]]; if (c.order <= 2 && !c.sup && N[c.nodes[1]].radius > 0.03) { tips.push(+t.wy.toFixed(1)); lowTip = Math.min(lowTip, t.wy); }
+    if (c.order === 1 && N[c.nodes[1]].radius > 0.03) bole = Math.min(bole, N[c.nodes[0]].wy); }
+  let lowWood = 1e9; for (const n of N) if (!C[n.chain].pruned && n.wy < lowWood && n.parent >= 0 && C[n.chain].order > 0) lowWood = n.wy;
+  console.log('SHAPE', JSON.stringify({ h: +h.toFixed(2), w: +w.toFixed(2), hOverW: +(h / w).toFixed(2), crownBase2pct: +y0.toFixed(2), widestAt: +(y0 + (bw + 0.5) / nb * (h - y0)).toFixed(1), widestRel: +((bw + 0.5) / nb).toFixed(2), p95rByBand: br.map((x) => +x.toFixed(1)), innerEllShare: +(inner / L.length).toFixed(3), innerHorizShare: +(innerH / L.length).toFixed(3), clearBole: +bole.toFixed(2), lowLimbTip: +lowTip.toFixed(2), lowWood: +lowWood.toFixed(2), r13cm: +(r13 * 100).toFixed(1), nodes: N.length, leaves: sim.leaves.length }));
+}
