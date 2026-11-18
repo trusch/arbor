@@ -611,6 +611,57 @@ The straighter limbs and thinner twig load moved it further down (0 limbs at eve
 
 Still not majestic: (1) the bole is short and thin for the crown: all five scaffold limbs leave between 2.1 and 5.6 m and the trunk above 2.7 m is under 15 cm, so there is no trunk inside the crown; an older tree needs a year-4-plus girth or a taller bole. (2) Limbs are even arcs: no elbows, no near-horizontal heavy stretches, and their ends hang to head height. (3) Outer branches have one radius; a hierarchy needs apical dominance inside each limb's subtree (one leader per branch that keeps its tips while its laterals are thinned), which is a growth rule in `updateLight` / bud break of years 2-3 and a census of tips per order-3 branch to tune it. (4) The crown interior is empty in summer: leaves sit in a shell at the limb ends.
 
+### 6.12 Tall dome on a raised crown: envelope, ascending leaders, crown raising, shade shoots (branch `bigtree-crown`, behind `?years=3`)
+
+Cause of the low hollow umbrella, measured on 41f267c (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; the script prints a `SHAPE` line: height, width = 2 x p95 leaf distance from the axis, p95 leaf radius in 12 height bands of the crown and the height of the widest band, inner leaf share = leaves at ellipsoidal distance < 0.5 from the crown centre (a uniformly filled crown has 12.5 %), clear bole = lowest base of an order-1 limb over 3 cm, lowest scaffold tip, lowest wood):
+
+1. The year envelope is an umbrella by construction: `YEAR_R` 2.3 x 3.6 m = 8.3 m radius, x 1.3 in the lobes = 10.8 m, against a top at 14.9 m: height : width 0.69 before any growth rule acts (measured 0.67).
+2. Nothing ascends: every scaffold limb is capped at 44 degrees (`YEAR_UP_MAX`) and steered to a level set-point that ends at 1 degree at the rim, then settled. All 5 limbs reach 8.4 to 9.8 m out and end at 5.6 to 10.3 m with end elevations of -15 to +2 degrees: even hoops.
+3. No leader: `LEADER_VIGOR` 0.45 / 0.2 stops the trunk (14 cm at 3 m, 4.9 cm at 6 m, 2.4 cm at 8 m).
+4. The bole height is the year-1 scaffold: the three thickest limbs (24, 20, 11 cm) leave at 2.1, 2.3 and 2.7 m and `pickScaffold` keeps them.
+5. The interior is empty because nothing calls growth there: the year shells lie outside last year's envelope only. The light rule is not the cause: `YEAR_PRUNE` 1.5 / 1.0 / 0.7 gives an inner share of 9.2 / 9.6 / 9.7 %.
+6. Gravity sag is not the cause: the bend term of a 10 to 24 cm limb is near 0 (6.8); the hoop shape is rule 2.
+
+Rules (only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 untouched):
+
+| Rule | Built as |
+|---|---|
+| Tall envelope | `YEAR_H` 2.2 (was 1.7), `YEAR_R` 1.95 (was 2.3); the ellipsoid profile is widest at mid-height |
+| Leaders | `LEADER_VIGOR` 1 / 0.8 / 0.6; at `pickScaffold` the `YEAR_ASC` 2 scaffold limbs with the highest bases get `Chain.asc` (inherited by the wood they carry, `newChain`): no levelling set-point (an upward term `YEAR_ASC_UP` 0.5, order 2 x 0.4), wanted direction up to `YEAR_ASC_MAX` 0.94 (sine, 70 degrees), no `settle` (`asc` is a structure input like `sup`: set once before `sFull`, constant afterwards) |
+| Limb ends lift | spreading scaffold wood: the set-point elevation falls from `YEAR_LEVEL_E0` to `YEAR_LEVEL_E1` over the inner `YEAR_LIFT_F` 0.6 of the reach and rises by `YEAR_LIFT` 0.4 rad over the rest |
+| Crown raising | `pickScaffold` picks among the order-1 limbs that leave the trunk at `YEAR_BOLE` 3 m or higher (when at least `YEAR_BOLE_MIN` 4 exist); the limbs below are `sup` and `shedLowLimb` takes them first, thickest first; `YEAR_SHED_N` 4 per growth year (was 3). The trunk keeps its radius (radii never shrink) and the upper limbs take over the pipe |
+| Shade shoots | `sampleShell` keeps a share `YEAR_INNER` 0.5 of the samples that fall inside last year's envelope, above `YEAR_INNER_H` 0.3 of last year's crown height (without that floor twigs hung to 0.01 m); the attractor count is unchanged (redistributed inward) |
+| Interior prune | `YEAR_PRUNE` 1 (was 1.5): no effect on the inner share, but more wood survives and the bole is stouter (37.8 to 43.1 cm) |
+
+Census (t = 750; `CHECK=1`: `structureCheck` 0 on both seeds):
+
+| | Before (41f267c), seed 7 | After, seed 7 | Before, seed 11 | After, seed 11 |
+|---|---|---|---|---|
+| Height / width (h : w) | 13.94 / 20.93 m (0.67) | 17.61 / 18.08 m (0.97) | 14.45 / 20.92 (0.69) | 18.35 / 18.03 (1.02) |
+| Widest band: height (share of crown height) | 7.4 m (0.38) | 9.7 m (0.46) | 7.5 m (0.38) | 8.5 m (0.38) |
+| Clear bole; trunk r at 1.3 m / 3 m / 4 m | 2.12 m; 38.3 / 14.1 / 14.1 cm | 3.19 m; 43.1 / 43.1 / 23.0 cm | 2.14 m; 35.4 | 3.02 m; 42.0 / 42.0 / 33.0 cm |
+| Inner leaf share (ellipsoidal 0.5); horizontal inner half | 7.8 %; 27.7 % | 12.8 %; 35.9 % | 14.5 %; 37.8 % | 16.1 %; 40.8 % |
+| Lowest scaffold tip; lowest wood | 3.84 m; 1.69 m | 6.28 m; 1.06 m (an order-6 twig of 20 nodes) | 3.71; 1.36 | 5.35; 1.18 |
+| Nodes / sim leaves | 27 230 / 210.7k | 28 543 (+4.8 %) / 222.3k (+5.5 %) | 23 969 / 184.0k | 25 718 / 200.6k |
+
+Step by step, seed 7: envelope + leaders + lift: 17.6 / 19.0 m (0.93), bole 2.12 m, inner 7.8 %, 25 287 nodes; + crown raising: 17.7 / 18.9, bole 3.19 m, trunk 37.8 cm up to 3 m, inner 9.2 %, 24 915 nodes; + shade shoots and `YEAR_PRUNE` 1: the "After" column. Scaffold after crown raising (seed 7, before the last step): limbs of 17.6 / 17.3 / 15.7 / 13.4 / 11.9 cm leaving at 3.2 to 4.5 m; the ascending one ends at 16.4 m (end elevation 66 degrees), the spreading ones at 8 to 10 m with ends at 0 to +24 degrees. The trunk above the last scaffold fork is still thin (4.9 cm at 6 m): the dome is carried by the ascending limbs, not by a central stem.
+
+Forks (`node scripts/forkcensus.mjs 'growth.maxNodes=40000'`): trunk 5 forks 0.92 to 1.15 (median 0.94), order 1: 35 forks 0.92 to 1.14 (0.96), order 2: 23 forks 0.92 to 1.13 (0.93); all inside 0.85 to 1.25. Trunk forks from 3.19 m: 43.1 → 36.4 + 20.8, 36.4 → 31.6 + 15.6, 31.6 → 23.0 + 19.9, 23.0 → 16.3 + 15.1.
+
+Year 1 and `years` = 0: `T=150 YEARS=0` and `T=150 YEARS=3` (`CHECK=1`) both give 4 910 nodes, 37 642 leaves, 9.09 m, 16.8 cm at 1.3 m, `structureCheck` 0 (the numbers of 6.2). Default tree drawn: `PROF_DIST=dist scripts/p3main.mjs` prints the six hashes of 6.10 (t = 60: 59 282 triangles, f0c7d638).
+
+Breakage (`YSIG=g BASES=1,0.8 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, 28 543 nodes, 784 limbs evaluated; limbs in 120 s):
+
+| `YEAR_SIGMA` | u p50 / p98 / max | 1.0 | 0.8 |
+|---|---|---|---|
+| -0.3 (6.10) | 0.37 / 1.10 / 2.31 | 8 limbs + 1 twig (largest 5.9 cm, 538 nodes) | 6 + 1 twig |
+| **-0.2 (set)** | **0.24 / 0.73 / 1.54** | **1 limb (1.0 cm, 29 nodes) + 1 twig** | **1 limb (1.0 cm, 30 nodes)** |
+| -0.1 | 0.18 / 0.55 / 1.16 | 0 | 0 |
+
+`YEAR_SIGMA` is -0.2 (year-3 wood 0.6 x as strong per stress). The curve is steep between -0.2 and -0.3 (1 → 8 limbs); 0.6 was not rerun (p98 0.73: 0 expected). Still a stand-in for the size term of 6.8.
+
+Pictures (`GPU=vulkan node scripts/majestic.mjs http://localhost:5860/ majH-after`, built app, real GPU; before = `shots/majG-after-*`; in the app 26.9k nodes / 209.1k sim leaves, 18.15 m, `structureCheck` 0, programs desktop 33): `shots/majH-after-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`, sheets `shots/majH-{desktop,phone}-sheet.jpg` (rows: before summer, after summer, before winter, after winter). What they say: the umbrella is gone. In the wide and framed shots the tree is a tall rounded crown about as high as wide on a visibly clear bole, widest near mid-height; in winter the trunk runs up to 3 m and divides into a few limbs, some spreading with lifted ends, some ascending into the top, and the crown has branches through its volume instead of one outer shell. Not majestic yet; a viewer would first name: (1) the wood is thin for the size: a 43 cm bole and 12 to 21 cm limbs under an 18 m crown read as a young tree enlarged, not an old one (three growth years of pipe-model girth; a field oak of this crown has a bole 2 to 3 times as thick); (2) in summer a vertical cleft divides the crown into two lobes (the bay rule of 6.9 with only 5 scaffold azimuths cuts from rim to top; bays should stop below the dome); (3) limbs are still long smooth arcs without elbows or level heavy stretches; (4) the outer twigs are wiry and of one radius, and single twigs hang to 1 m.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.

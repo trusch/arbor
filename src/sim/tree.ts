@@ -143,7 +143,7 @@ const YEAR_KEEP = 4;
  * at any base (u p98 0.42): -0.3 (year-3 wood at 0.4 x) gives u p98 1.06, the t = 90 oak's value, and 7 / 3 / 0 limbs
  * at wind.base 1.0 / 0.8 / 0.6. Old wood weaker per stress is a stand-in for the missing size term (6.8).
  */
-export const YEAR_SIGMA = -0.3;
+export const YEAR_SIGMA = -0.2;
 /**
  * Scaffold dominance (majestic architecture, years 2-3): at the year-2 bud break the YEAR_SCAF thickest order-1 limbs,
  * at least YEAR_SCAF_SEP rad apart in azimuth, become scaffold; every other order-1 limb and all wood on it is
