@@ -18,8 +18,8 @@ const PHONE = { viewport: { width: 411, height: 777 }, deviceScaleFactor: 2, isM
 const DESK = { viewport: { width: 1600, height: 900 } };
 const url = (hour, q = '') => `http://localhost:${PORT}/?start=0&cycle=false&speed=0&autoRotate=false&cinema=true&weather=calm&season.on=false&timeOfDay=${hour}&nogui=1&hideui=1${q}`;
 const sheet = (name, files, tile, geo) => { execFileSync('montage', [...files, '-tile', tile, '-geometry', geo, '-background', '#222', `shots/${name}.jpg`]); console.log(`shots/${name}.jpg (${files.length} frames)`); };
-const KINDS = ['wide', 'hero', 'orbit', 'rise', 'canopy', 'branch'];
-const TREES = { sapling: ['', 30], oak: ['', 90], tall: ['&preset=Low-gravity%20alien', 90], broad: ['&preset=Heavy%20world', 90] };
+const KINDS = (process.env.KINDS ?? 'wide,hero,orbit,rise,canopy,branch').split(',');
+const TREES = { sapling: ['', 30], oak: ['', 90], tall: ['&preset=Low-gravity%20alien', 90], broad: ['&preset=Heavy%20world', 90], y3: ['&years=3', 750], y2: ['&years=3', 450] };
 const HOURS = { 13: 'noon', 19.3: 'sunset' };
 const cases = (process.env.CASES ?? Object.keys(TREES).flatMap((t) => Object.keys(HOURS).map((h) => `${t}:${h}`)).join(',')).split(',').map((c) => c.split(':'));
 const open = async (layout, hour, q, t) => {
@@ -28,7 +28,8 @@ const open = async (layout, hour, q, t) => {
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   await page.goto(url(hour, q));
   await page.waitForFunction(() => window.__arbor !== undefined);
-  await page.evaluate((s) => window.__arbor.fastForward(s), t);
+  page.setDefaultTimeout(900000);
+  while (await page.evaluate(() => window.__arbor.sim.time) < t - 0.01) await page.evaluate((T) => window.__arbor.fastForward(Math.min(15, T - window.__arbor.sim.time)), t);
   await page.waitForTimeout(2500);
   return { ctx, page };
 };
@@ -42,14 +43,28 @@ try {
       const { ctx, page } = await open(layout, hour, q, t);
       const files = [];
       for (const k of KINDS) {
-        const st = await go(page, k, k === 'rise' ? 0.62 : 0.4);
+        let st = await go(page, k, -1);
+        // The shot starts through a dip to black over the next frames: wait for it, then set its clock (AT=0..1).
+        await page.waitForFunction((k) => { const s = window.__arbor.stage.director.state(); return s.kind === k && !s.cutting; }, k, { timeout: 20000 }).catch(() => {});
+        const at = process.env.AT !== undefined ? Number(process.env.AT) : k === 'rise' || k === 'ascend' ? 0.62 : 0.4;
+        st = await page.evaluate((a) => { const D = window.__arbor.stage.director; if (D.shot) D.shot.t = D.shot.dur * a; return D.state(); }, at);
         await page.waitForTimeout(1500);
-        const f = `shots/${prefix}-${layout}-${tree}-${HOURS[hour] ?? hour}-${st.kind === k ? k : `${k}_as_${st.kind}`}.png`;
+        const f = `shots/${prefix}-${layout}-${tree}-${HOURS[hour] ?? hour}-${st.kind === k ? k : `${k}_as_${st.kind}`}${process.env.AT !== undefined ? `-at${process.env.AT}` : ''}.png`;
         await page.screenshot({ path: f });
         files.push(f);
+        console.log(layout, tree, k, JSON.stringify(await page.evaluate(() => { const A = window.__arbor, c = A.stage.camera.position, t = A.stage.controls.target, r = (v) => +v.toFixed(1); return { pos: [r(c.x), r(c.y), r(c.z)], tgt: [r(t.x), r(t.y), r(t.z)], dh: r(Math.hypot(c.x, c.z)) }; })));
+      }
+      {
+        // The plain framed view (cinema off, auto-frame), as a last tile.
+        await page.evaluate(() => { const A = window.__arbor; A.params.camera.cinema = false; A.params.camera.autoFrame = true; A.stage.autoCamera?.(); A.fastForward(0); });
+        await page.waitForTimeout(5000);
+        const f = `shots/${prefix}-${layout}-${tree}-${HOURS[hour] ?? hour}-framed.png`;
+        await page.screenshot({ path: f });
+        files.push(f);
+        await page.evaluate(() => { window.__arbor.params.camera.cinema = true; });
       }
       console.log(layout, tree, hour, await page.evaluate(() => { const A = window.__arbor; return { h: +A.sim.bboxMax[1].toFixed(1), camY: +A.stage.camera.position.y.toFixed(2), programs: A.stage.renderer.info.programs.length }; }));
-      sheet(`${prefix}-${layout}-${tree}-${HOURS[hour] ?? hour}-sheet`, files, layout === 'phone' ? '6x' : '3x', geo);
+      sheet(`${prefix}-${layout}-${tree}-${HOURS[hour] ?? hour}${process.env.AT !== undefined ? `-at${process.env.AT}` : ''}-sheet`, files, layout === 'phone' ? '7x' : '4x', geo);
       await ctx.close();
     }
     if (modes.includes('burst')) {

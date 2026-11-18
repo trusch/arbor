@@ -10,7 +10,7 @@ import { makeBarkTextures, makeLeafTexture, makeClusterTexture, leafForm } from 
 import { buildPanel } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
-import { envelopeDims } from './sim/envelope';
+import { envelopeDims, YEAR_DATE0 } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
@@ -630,6 +630,15 @@ function updateHud() {
   s.name = presetName; s.age = sim.time; s.height = Math.max(0, sim.bboxMax[1]); s.width = Math.max(0, sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]);
   s.girth = 2 * Math.PI * (sim.nodes[0]?.radius ?? 0); s.nodes = sim.nodes.length; s.leaves = leaves.mesh.count; s.leafOn = season.leafOn; s.limbs = limbsLost;
   s.grown = sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive));
+  s.resting = false;
+  if (sim.years > 0) {
+    // Growth over years: the growth clock is sim time (`YEAR_DATE0`); wood grows from phase 0.02 and is at rest from
+    // 0.6 (from t = 150 on). "Fully grown" only once the last growing season is over; before that the tree rests.
+    const gp = sim.time / Math.max(10, params.season.yearLength) + YEAR_DATE0, yi = Math.floor(gp), ph = gp - yi;
+    const done = yi > sim.years - 1 || (yi === sim.years - 1 && ph >= 0.6);
+    s.grown = sim.time > 1 && (done || sim.nodes.length >= params.growth.maxNodes);
+    s.resting = !s.grown && sim.time >= 150 && (ph >= 0.6 || ph < 0.02);
+  }
   s.paused = params.time.paused; s.speed = params.time.speed; s.blossom = !!blossom && params.season.blossom > 0 && params.season.blossomType !== 'none'; s.evergreen = !leafSeason(leaves.formId).drop;
   s.cycle = k.cycle; s.windMs = windMs(wind.base);
   hudUpdate(s);

@@ -14,6 +14,8 @@ export interface HudState {
   seasons: boolean; phase: number; marks: [number, number, number]; season: string; year: number; yearLength: number;
   /** Tree: name, sim seconds, height / crown width / trunk girth in m, twigs, leaves, share of the crown in leaf, limbs lost. */
   name: string; age: number; height: number; width: number; girth: number; nodes: number; leaves: number; leafOn: number; limbs: number;
+  /** Growth over years (`sim.years` > 0): true between two growing seasons, while more growth is to come. */
+  resting?: boolean;
   grown: boolean; paused: boolean; speed: number; blossom: boolean; evergreen: boolean;
   /** Day cycle running; wind in m/s. */
   cycle: boolean; windMs: number;
@@ -46,14 +48,15 @@ export function moonPath(p: number, r: number): string {
 }
 /** What the tree is doing right now, in a short phrase. */
 export function doing(s: HudState): string {
-  if (!s.seasons) return s.grown ? 'holding its crown' : s.paused ? 'waiting' : s.age < 12 ? 'a seedling reaching up' : 'putting on wood';
+  const still = s.grown || !!s.resting;
+  if (!s.seasons) return still ? 'holding its crown' : s.paused ? 'waiting' : s.age < 12 ? 'a seedling reaching up' : 'putting on wood';
   const ph = s.phase, [su, au, wi] = s.marks;
-  if (s.evergreen) return ph >= wi ? 'evergreen, resting' : ph < su ? 'new shoots' : s.grown ? 'holding its crown' : 'putting on wood';
+  if (s.evergreen) return ph >= wi ? 'evergreen, resting' : ph < su ? 'new shoots' : still ? 'holding its crown' : 'putting on wood';
   if (ph >= wi || (ph > au && s.leafOn < 0.03)) return 'dormant';
   if (ph < 0.02) return 'buds swelling';
   if (s.blossom && ph > 0.025 && ph < 0.1) return 'in bloom';
   if (ph < su && s.leafOn < 0.97) return 'leaves unfolding';
-  if (ph < au - 0.03) return s.grown ? 'in full leaf' : s.age < 12 ? 'a seedling reaching up' : 'in full leaf, putting on wood';
+  if (ph < au - 0.03) return still ? 'in full leaf' : s.age < 12 ? 'a seedling reaching up' : 'in full leaf, putting on wood';
   if (s.leafOn > 0.9) return 'leaves turning';
   return 'leaves falling';
 }
@@ -61,6 +64,8 @@ export function treeState(s: HudState): string {
   if (s.grown) return 'fully grown';
   if (s.paused || s.speed <= 0) return 'paused';
   if (s.seasons && !s.evergreen && (s.phase >= s.marks[2] || (s.phase > s.marks[1] && s.leafOn < 0.03))) return 'resting for winter';
+  // Growth over years: between two growing seasons the wood is at rest (also an evergreen's).
+  if (s.resting) return s.seasons && s.phase < s.marks[1] - 0.03 && s.phase > 0.02 ? 'resting until spring' : 'resting for winter';
   return 'growing';
 }
 const num = (v: number, d = 1) => (v >= 100 ? v.toFixed(0) : v.toFixed(d));
@@ -68,7 +73,10 @@ const len = (m: number) => (m < 1 ? `${Math.round(m * 100)} cm` : `${num(m)} m`)
 function age(s: HudState): string {
   if (!s.seasons) return `${s.age.toFixed(0)} s`;
   const y = s.age / Math.max(10, s.yearLength);
-  return y < 1 ? `${Math.max(1, Math.round(y * 12))} mo` : `${y.toFixed(1)} yr`;
+  if (y < 1) return `${Math.max(1, Math.round(y * 12))} mo`;
+  // From the first birthday on: whole years and months ("2 years 4 months"), as one says a tree's age.
+  const mo = Math.floor(y * 12 + 1e-6), yy = Math.floor(mo / 12), m = mo % 12;
+  return `${yy} ${yy === 1 ? 'year' : 'years'}${m ? ` ${m} ${m === 1 ? 'month' : 'months'}` : ''}`;
 }
 
 const CARD: [string, string][] = [['doing', 'Right now'], ['girth', 'Trunk girth'], ['crown', 'Crown width'], ['twigs', 'Twigs'], ['leaves', 'Leaves'], ['limbs', 'Limbs lost to storms'],

@@ -9,9 +9,15 @@ import { terrainHeight } from './backdrop';
  * Camera transforms and one DOM overlay (the dip through black on a cut): no material, program or render pass.
  * Called from the cinema branch of `Stage.frame`; never runs while `stage.manual` is set.
  */
-export type ShotKind = 'wide' | 'hero' | 'orbit' | 'rise' | 'canopy' | 'branch' | 'storm' | 'bird';
-export const SHOT_KINDS: ShotKind[] = ['wide', 'hero', 'orbit', 'rise', 'canopy', 'branch'];
-const DUR: Record<ShotKind, number> = { wide: 17, hero: 18, orbit: 20, rise: 20, canopy: 14, branch: 13, storm: 12, bird: 9 };
+export type ShotKind = 'wide' | 'hero' | 'orbit' | 'rise' | 'canopy' | 'branch' | 'storm' | 'bird' | 'ascend' | 'far';
+/**
+ * The shots `choose` draws from. The last two exist only for the tree that grows over years (`big`, see `update`):
+ * their weight is 0 otherwise, and they sit at the end of the list so the draw of the other six is unchanged.
+ */
+export const SHOT_KINDS: ShotKind[] = ['wide', 'hero', 'orbit', 'rise', 'canopy', 'branch', 'ascend', 'far'];
+/** Growth over years: from this height on the size shots (`ascend`, `far`) join the list. */
+const BIG_H = 11;
+const DUR: Record<ShotKind, number> = { wide: 17, hero: 18, orbit: 20, rise: 20, canopy: 14, branch: 13, storm: 12, bird: 9, ascend: 26, far: 18 };
 /** Seconds of a travelling move between two shots that are close to each other. */
 const TRAVEL_S = 6;
 /** Dip through black: fade out, switch, fade in (seconds). */
@@ -57,6 +63,7 @@ export class Director {
   private hold = 0;
   private travelDy = NaN;
   // Smoothed tree box: height, crown radius, centre height, trunk position.
+  private big = false;
   private H = 0; private R = 0; private cy = 0; private bx = 0; private bz = 0; private fit = 0;
   // Transition state.
   private fromPos = new THREE.Vector3(); private fromTgt = new THREE.Vector3();
@@ -105,7 +112,7 @@ export class Director {
   }
 
   private choose(env: DirectorEnv | null): ShotKind {
-    const w: Record<string, number> = { wide: 1, hero: 1.4, orbit: 1, rise: 0.9, canopy: 0.8, branch: 0.9 };
+    const w: Record<string, number> = { wide: 1, hero: 1.4, orbit: 1, rise: 0.9, canopy: 0.8, branch: 0.9, ascend: 0, far: 0 };
     if (env) {
       const golden = env.sunH > -0.02 && env.sunH < 0.32;
       if (golden) { w.hero *= 2.2; w.wide *= 2; w.canopy *= 0.6; }
@@ -118,6 +125,9 @@ export class Director {
       if (ph > 0.8) { w.canopy *= 0.3; w.branch *= 0.4; w.wide *= 1.5; }
     }
     if (this.H < 5 || this.R < 1.6) { w.canopy = 0; }
+    // The big tree: two shots that make its size felt take a third of the programme; the canopy shot (looking up the
+    // bole into the crown) counts double.
+    if (this.big) { w.ascend = 1.3; w.far = 1.3; w.canopy *= 1.6; if (env && env.night > 0.5) w.ascend *= 0.4; }
     if (this.H < 4) w.rise *= 0.5;
     const h = this.history;
     if (h.length) w[h[h.length - 1]] = 0;
@@ -154,7 +164,7 @@ export class Director {
     if (kind === 'wide' || kind === 'hero' || kind === 'storm') {
       const ly = this.lightYaw(env, side);
       if (ly !== null) yaw = ly;
-    } else if ((kind === 'rise' || kind === 'branch') && !at && env.sunH > 0.08) {
+    } else if ((kind === 'rise' || kind === 'branch' || kind === 'ascend' || kind === 'far') && !at && env.sunH > 0.08) {
       // The lit side: camera on the sun's side of the tree, a little round, so the subject is not a backlit mass.
       yaw = Math.atan2(env.sunDir.x, env.sunDir.z) + side * (0.45 + 0.3 * this.rnd());
     }
@@ -213,9 +223,29 @@ export class Director {
         // Far enough out that the crown is a shape against the sky, not a wall: the eye stops at 0.7 H and the view
         // looks up past the crown edge (the tree on one third, sky on the other two).
         const dh = Math.max(R * 2.3 + 4, H * 1.0, 3);
-        const y = 0.6 + (H * 0.7 - 0.6) * smoother(u);
+        // The big tree starts above the tufts: at 0.6 m the grass cards of the meadow covered the landscape frame.
+        const y0 = this.big ? 1.5 : 0.6, y = y0 + (H * 0.7 - y0) * smoother(u);
         put(s.yaw + sd * 0.25 * e, dh, y);
         this.aim(pos, this.bx, y + 0.22 * dh, this.bz, sd * (P ? 0.12 : 0.36), -0.2, env, tgt);
+        break;
+      }
+      case 'ascend': {
+        // Elevator past the big tree, from the roots to the top: so close that the frame never holds the whole tree
+        // (a third to a half of its height), so its size is the length of the ride. Just outside the crown's reach.
+        const dh = Math.max(R * 1.25 + 2, H * 0.45, 4) * (P ? 1.12 : 1);
+        const y = 0.8 + (H * 0.8 - 0.8) * smoother(u);
+        put(s.yaw + sd * 0.3 * e, dh, y);
+        // Looks up into the crown from the grass and comes level, then a little down, as it reaches the top.
+        this.aim(pos, this.bx, y + dh * (0.3 - 0.4 * smoother(u)), this.bz, sd * (P ? 0.04 : 0.18), 0, env, tgt);
+        break;
+      }
+      case 'far': {
+        // Scale: the tree small on a third, the meadow before it and the lone trees and hedgerows of the backdrop
+        // beside it. Eye well above the grass so the far trees stand clear of the horizon line of the meadow.
+        const dh = Math.max(this.fit * 1.25, H * 3.3) * (1 - 0.05 * e);
+        put(s.yaw + sd * 0.005 * t, dh, 0);
+        pos.y = terrainHeight(pos.x, pos.z) + 1.5 + 0.2 * H;
+        this.aim(pos, this.bx, 0, this.bz, sd * (P ? 0.1 : 0.3), P ? -0.3 : -0.42, env, tgt);
         break;
       }
       case 'canopy': {
@@ -252,6 +282,7 @@ export class Director {
     const k = snap || this.H === 0 ? 1 : 1 - Math.exp(-dt * 1.2);
     this.H += (H - this.H) * k; this.R += (R - this.R) * k; this.cy += (cy - this.cy) * k; this.fit += (env.fit - this.fit) * k;
     this.bx += ((n0?.wx ?? 0) - this.bx) * k; this.bz += ((n0?.wz ?? 0) - this.bz) * k;
+    this.big = sim.years > 0 && this.H > BIG_H;
     this.clock += dt; this.hold = Math.max(0, this.hold - dt);
     this.cutFrame = false;
     const camYaw = Math.atan2(cam.x - this.bx, cam.z - this.bz);
