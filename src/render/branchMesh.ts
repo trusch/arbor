@@ -11,6 +11,11 @@ const GAP = 2048;
  * Tapered generalized-cylinder mesh for all chains. Each chain is one tube
  * with parallel-transported frames; buffers are reused and grown by doubling.
  */
+/**
+ * Root flare of an old trunk (`sim.years` > 0, blended in over growth year 2 by `sim.ageQ`; year 1 draws as before):
+ * e-fold height (m) and the share of `flare` the radius gains at the ground.
+ */
+const FLARE_OLD_H = 0.2, FLARE_OLD_AMP = 0.45;
 export class BranchMesh {
   mesh: THREE.Mesh;
   private geo = new THREE.BufferGeometry();
@@ -72,6 +77,7 @@ export class BranchMesh {
   /** Node inputs of the last write (wx, wy, wz, radius, wdx, wdy, wdz per node id) and the per-node dirty flag. */
   private nCache = new Float64Array(0); private nDirty = new Uint8Array(0); private nN = 0;
   private lastFlare = NaN;
+  private lastFq = NaN;
   /** Positions currently hold offsets (`applyOffsets`), not the rest pose. */
   private swayed = false;
   /** Stats of the last `update`: chains rewritten, of chains drawn; vertices written; full layout or not. */
@@ -90,7 +96,8 @@ export class BranchMesh {
       nc.set(this.nCache.subarray(0, this.nN * 7)); this.nCache = nc; this.nDirty = nd;
     }
     const NC = this.nCache, ND = this.nDirty;
-    let layout = !(this.nC > 0) || C < this.nC || N < this.nN || flare !== this.lastFlare || off !== null;
+    const fq = sim.years > 0 ? Math.min(1, sim.ageQ) : 0;
+    let layout = !(this.nC > 0) || C < this.nC || N < this.nN || flare !== this.lastFlare || fq !== this.lastFq || off !== null;
     for (let i = 0, o = 0; i < N; i++, o += 7) {
       const n = nodes[i];
       if (i >= this.nN || NC[o] !== n.wx || NC[o + 1] !== n.wy || NC[o + 2] !== n.wz || NC[o + 3] !== n.radius || NC[o + 4] !== n.wdx || NC[o + 5] !== n.wdy || NC[o + 6] !== n.wdz) {
@@ -221,8 +228,11 @@ export class BranchMesh {
         // Root flare: trunk widens toward the ground with buttress lobes.
         let lobe = 0;
         if (c === 0 && flare > 0) {
-          const f = flare * Math.exp(-Math.max(0, cy) / Math.max(0.15, r * 3));
-          r *= 1 + 0.9 * f;
+          // Old trunk (`years`, from growth year 2): the flare stays in the last half metre and is shallower, so the
+          // bole is a column up to the first limb (e-fold r x 3 would reach 1.1 m up a 38 cm trunk: a cone).
+          const fl = Math.max(0.15, r * 3);
+          const f = flare * Math.exp(-Math.max(0, cy) / (fq > 0 ? fl + (Math.min(fl, FLARE_OLD_H) - fl) * fq : fl));
+          r *= 1 + (fq > 0 ? 0.9 + (FLARE_OLD_AMP - 0.9) * fq : 0.9) * f;
           lobe = 0.22 * f;
         }
         if (k === m) {
@@ -275,7 +285,7 @@ export class BranchMesh {
       wr.push(vStart, v - vStart, iCnt ? this.cI[c] : -1, iCnt);
     }
     if (C > this.nC) this.nC = C;
-    this.lastFlare = flare;
+    this.lastFlare = flare; this.lastFq = fq;
     this.forceAll = false;
     this.vLive = vLive;
     // Positions of clean chains still hold the last wind pose: back to rest (the caller re-applies offsets if live).
