@@ -515,9 +515,16 @@ Census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; 
 
 Intermediate measurements (same census): lever 1 alone at `YEAR_SETTLE` 0.16 / 0.11 / 0.08 gave limb tips at -24..-32 / -18..-31 / -10..-15 degrees (0.16 too much droop); lever 2 at `YEAR_TWIG` 0.4 / 0.25: 29.8k / 27.9k nodes (0.25 outside the 10 % band), orders 5 and 6 138 / 69 against 176 / 91; lever 3 with `YEAR_SETTLE` 0.11 hung an order-6 twig 1 m below the ground (lowest leaf -0.97 m; 0.08 keeps 0.04 m). Run-to-run the limbs differ (any rule change moves the rng order), so compare the pattern, not one limb.
 
-PICTURES_AFTER
+Pictures (`MODES=phone node scripts/majestic.mjs URL prefix`, real GPU, built app; `structureCheck` 0 in every shot, programs 8): before `shots/majE-before-phone-{summer,winter}-{wide,framed,under}.png` (2680543), after `shots/majE-after-phone-*` (23245b8, `YEAR_SIGMA` does not enter calm shots). What they say: in winter the two lowest scaffold limbs now leave the trunk at about 50 degrees, level out at mid-span and hang their ends at the crown edge, so the lower crown reads as a spreading oak; the twig haze is thinner at the rim. The upper two thirds are still a ball of wavy, similar limbs (the limbs that start higher, at 4.5 m and above, stay steep: eM 65 to 82 degrees, they carry less load and settle little), and the domes and bays do not read as separate masses in leaf: summer is a broader (w:h 1.46), lower dome, still closed. Not majestic yet.
 
-BREAK_AFTER
+Breakage at size on this tree (**M**, `BASES=1,0.8,0.6 node scripts/breaksize.mjs 'growth.maxNodes=40000'`, t = 750, 31 526 nodes, 703 limbs evaluated). The change moved it, so `YEAR_SIGMA` is recalibrated to 0:
+
+| `YEAR_SIGMA` | u p50 / p95 / p98 / max | 1.0 | 0.8 | 0.6 |
+|---|---|---|---|---|
+| -0.25 (6.7) | 0.22 / 0.63 / 0.76 / 2.88 | 3 limbs (1.0, 3.8, 2.0 cm; 33 to 294 nodes) | 3 limbs | 0 |
+| **0** | **0.11 / 0.31 / 0.38 / 1.44** | **1 limb (1.0 cm, 33 nodes)** | **1 limb** | not run (p98 0.38: 0 expected) |
+
+Lever-1+2 tree (before the domes, `YEAR_SETTLE` 0.11) at -0.25: p98 0.70, 3 / 2 limbs at 1.0 / 0.8, 0 at 0.6. Gain 0 means year-3 wood is exactly as strong per `SIGMA_REF r³` as year-1 wood (the -0.25 that made it weaker was backwards). Why the big tree carries so little load: u = wind load / (strength x `SIGMA_REF` x r³), and the pipe model makes r^n proportional to the tips carried with n about 2.5 (x (1 - `YEAR_EXP` x ageQ), lower still on old wood), so r³ grows like (load)^(3/n) = load^1.2 or faster: every doubling of what a limb carries more than doubles its section modulus. On the 15 m tree the scaffold sits at u 0.1 to 0.3 and only thin (1 to 4 cm) laterals with long subtrees ever pass 1. At gain 0 a wind of 0.8 still reaches 1 limb in 120 s (a 33-node, 1 cm lateral), but 1.0 breaks no more than 0.8: the curve is flat because there is one weak lateral and then a gap. A real large-limb failure would need a size term (strength falling with r, e.g. r^2.5 instead of r³), not a year gain.
 
 ## 7. Not measured
 
