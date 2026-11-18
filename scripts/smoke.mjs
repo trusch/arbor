@@ -568,7 +568,10 @@ try {
     const { ctx, mp, merr } = await phone('?cycle=false&speed=0&weather=calm');
     const st = () => mp.evaluate(() => { const A = window.__arbor; return { programs: A.stage.renderer.info.programs.length, phases: A.debris.state.map((l) => l.phase), lowest: A.debris.state.map((l) => l.lowest), stats: A.debris.stats, fe: A.frameErrors() }; });
     await mp.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
-    await mp.waitForTimeout(7000);
+    // Wait for the bark re-key (8 -> 9 about 5 s after the tree appears, later on a loaded host; same on main) to have
+    // happened: the count must be unchanged for 3 s before it is the "before" reading.
+    await mp.waitForTimeout(5000);
+    for (let last = -1, same = 0, k = 0; same < 3 && k < 20; k++) { const n = (await st()).programs; same = n === last ? same + 1 : 0; last = n; await mp.waitForTimeout(1000); }
     const before = await st();
     const ev = await mp.evaluate(() => { const e = window.__arbor.breakLimb('big'); return e && { nodes: e.nodeIds.length, leaves: e.leaves }; });
     await mp.waitForTimeout(500);
