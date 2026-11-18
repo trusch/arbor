@@ -149,6 +149,11 @@ const YEAR_PRUNE = 1.5;
 /** Years 2-3: order >= 3 shoots stop after this many segments (long thin whips sagged metres, to below the ground). */
 const YEAR_WHIP = 18;
 /**
+ * Open twig haze (years 2-3, lever 2 of 6.8): buds on order >= 2 wood (new shoots of order >= 3) break at x YEAR_TWIG,
+ * so fewer outer twigs share the shell's attractors and each grows longer: the winter crown shows its limbs.
+ */
+const YEAR_TWIG = 0.4;
+/**
  * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
  */
@@ -811,7 +816,8 @@ export class TreeSim {
         this.extend(c, b.dx, b.dy * 0.6 + 0.25, b.dz);
         continue;
       }
-      const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1) * (ch.sup && this.growYear >= 1 ? YEAR_SUP : 1);
+      const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1) * (ch.sup && this.growYear >= 1 ? YEAR_SUP : 1)
+        * (this.years > 0 && this.growYear >= 1 && ch.order >= 2 ? YEAR_TWIG : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
