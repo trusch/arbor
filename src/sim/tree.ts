@@ -129,11 +129,12 @@ const YEAR_SHED_PH = 0.3;
 /** G4: the thickest order-1 limbs are scaffold and never shed. */
 const YEAR_KEEP = 4;
 /**
- * Breakage at size (P13): wood strength x (1 + YEAR_SIGMA x growing years done) when `years` > 0 (exactly 1 in year 1,
- * so the t = 90 calibration of SIGMA_REF holds). Calibrated with `scripts/breaksize.mjs` on the year-3 tree: wind.base
- * 0.8 breaks 1 to 3 limbs in 120 s, 1.0 a few more, 0.6 none.
+ * Breakage at size (P13): wood strength x max(0.25, 1 + YEAR_SIGMA x growing years done) when `years` > 0 (exactly 1
+ * in year 1, so the t = 90 calibration of SIGMA_REF holds). Calibrated with `scripts/breaksize.mjs` on the year-3
+ * majestic tree (docs/bigtree.md 6.7): wind.base 0.8 breaks 1 limb in 120 s, 1.0 two, 0.6 none. Negative: the thick
+ * scaffold limbs are over-strong under the r^3 normalisation, so older wood needs a lower factor to break at all.
  */
-export const YEAR_SIGMA = 0.65;
+export const YEAR_SIGMA = -0.25;
 /**
  * Scaffold dominance (majestic architecture, years 2-3): at the year-2 bud break the YEAR_SCAF thickest order-1 limbs,
  * at least YEAR_SCAF_SEP rad apart in azimuth, become scaffold; every other order-1 limb and all wood on it is
@@ -972,7 +973,7 @@ export class TreeSim {
     }
     this.flushStructure();
     const lf = L.leaf, sw = L.w, cx = L.cx, cy = L.cy, cz = L.cz;
-    const sref = sigma * SIGMA_REF * (this.years > 0 ? 1 + this.yearSigma * this.ageQ : 1);
+    const sref = sigma * SIGMA_REF * (this.years > 0 ? Math.max(0.25, 1 + this.yearSigma * this.ageQ) : 1);
     lf.fill(0, 0, N); sw.fill(0, 0, N); cx.fill(0, 0, N); cy.fill(0, 0, N); cz.fill(0, 0, N);
     for (const l of this.leaves) lf[l.node] += 1;
     for (let i = N - 1; i > 0; i--) {

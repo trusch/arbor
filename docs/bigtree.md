@@ -433,9 +433,9 @@ Rules (all only when `years` > 0 and from growth year 2 on; year 1 and `years` =
 | Old wood thickens more | pipe exponent x (1 - `YEAR_EXP` 0.03 x `ageQ`), `ageQ` = the quantised years done that already drives `girth`: same full-pass steps, exact (`structureCheck` 0 at every sample, also in the app at t = 750 summer and winter) |
 | G3 | `LEADER_VIGOR` 1 / 0.45 / 0.2 |
 | G4 lower-limb shedding | `shedLowLimb` once per growth year at phase 0.3: of the order-1 limbs starting below this year's lifted crown base, minus the `YEAR_KEEP` 4 thickest (scaffold), the one whose wood hangs lowest goes through `breakAt` with `shed: true` (stub, debris path, birds flush only on non-shed) |
-| P13 breakage at size | `loadRatios` strength x (1 + `YEAR_SIGMA` 0.65 x `ageQ`) (exactly 1 in year 1); `sim.yearSigma` for sweeps |
+| P13 breakage at size | `loadRatios` strength x max(0.25, 1 + `YEAR_SIGMA` x `ageQ`) (exactly 1 in year 1); `YEAR_SIGMA` 0.65 on the 6.6 tree, -0.25 on the 6.7 tree; `sim.yearSigma` for sweeps |
 
-Breakage (**M**, `node scripts/breaksize.mjs` = headless `stormTest`: same `windLoad` loop, 4 Hz, 120 s, fresh tree per base; `YSIG` overrides the gain). Year 3 (t = 750), limbs / twigs at wind.base 1.0 / 0.8 / 0.6: gain 0 (as before) 24 / 24 limbs at 1.0, gain 0.5: 6 / 5 / 0, gain 0.8: 2 / 0 / 0, gain 1.2: 0 / 0 / 0; **gain 0.65 (shipped): 4 / 2 / 0 limbs, 0 twigs, u p98 0.67, max 1.49**. What breaks at size are the long thin new laterals of years 2 and 3 (0.9 to 2.3 cm, 30 to 177 nodes), not scaffold. Year 1 is unchanged by construction (gain x 0); headless t = 90: p98 0.65, 1.0 -> 1 twig, 0.8 -> 1 twig, 0.6 -> 0 (the in-app `breakcalib.mjs` numbers differ: different wind clock start; compare like with like).
+Breakage (**M**, `node scripts/breaksize.mjs` = headless `stormTest`: same `windLoad` loop, 4 Hz, 120 s, fresh tree per base; `YSIG` overrides the gain). Year 3 (t = 750), limbs / twigs at wind.base 1.0 / 0.8 / 0.6: gain 0 (as before) 24 / 24 limbs at 1.0, gain 0.5: 6 / 5 / 0, gain 0.8: 2 / 0 / 0, gain 1.2: 0 / 0 / 0; **gain 0.65 (6.6 tree): 4 / 2 / 0 limbs, 0 twigs, u p98 0.67, max 1.49** (recalibrated on the 6.7 tree, see there). What breaks at size are the long thin new laterals of years 2 and 3 (0.9 to 2.3 cm, 30 to 177 nodes), not scaffold. Year 1 is unchanged by construction (gain x 0); headless t = 90: p98 0.65, 1.0 -> 1 twig, 0.8 -> 1 twig, 0.6 -> 0 (the in-app `breakcalib.mjs` numbers differ: different wind clock start; compare like with like).
 
 What the pictures say (`node scripts/majestic.mjs URL prefix`: wide 2.6 H out, the app's framed camera, under the crown; summer 0.3 / winter 0.85 held, noon, calm, real GPU; `shots/maj-{before,after}-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`): after is wider than tall, sits on a visibly heavier trunk with a cleaner bole, and the low curtain is shorter; but summer is still a dense dome with leafy curtains hanging to the meadow at the sides, and winter shows a broom of many similar wavy limbs, not a few heavy scaffold limbs that lean out and level. The lobes do not read: the dome stays closed. Not majestic yet.
 
@@ -473,6 +473,19 @@ Census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, t = 750, seed 7; 
 The limbs that already exist at the end of year 1 keep their year-1 angles (37 to 59 degrees at the base: wood is not regrown); levelling acts on the new wood of years 2 and 3. Phone cost: nodes and sim leaves -7 / -9 %, drawn leaves are capped (32k) either way, so branch rebuild, sway and the light tick move with the node count (slightly down); not timed.
 
 Pictures (`node scripts/majestic.mjs URL prefix`, real GPU): before = `shots/maj-after-*` of 6.6 (sheet `/home/trusch/projects/arbor/shots/maj-phone-sheet.jpg`), after = `shots/majD-after-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`; intermediate `majB-*` (scaffold only) and `majC-*` (harder prune, before the whip cap: curling bare whips). `structureCheck` 0 in every shot.
+
+Breakage at size on this tree (**M**, `YSIG=g BASES=1,0.8,0.6,0.35 node scripts/breaksize.mjs`, t = 750, ageQ 2): the scaffold limbs are thicker, so the 6.6 gain is far too strong (0.65: u p98 0.15, 0 limbs at 1.0). u at gust 1.0 and limbs / twigs in 120 s at wind.base 1.0 / 0.8 / 0.6 / 0.35:
+
+| `YEAR_SIGMA` | u p98 / max | 1.0 | 0.8 | 0.6, 0.35 |
+|---|---|---|---|---|
+| 0.15 to 0.45 | 0.26 to 0.18 / 0.62 to 0.43 | 0 | 0 | 0 |
+| 0 | 0.34 / 0.81 | 0 | 0 | 0 |
+| -0.1 | 0.43 / 1.01 | 0 | 0 | 0 |
+| -0.15 | 0.49 / 1.16 | 0 | 0 | 0 |
+| -0.2 | 0.57 / 1.35 | 1 limb + 2 twigs | 0 + 1 twig | 0 |
+| **-0.25** | **0.69 / 1.62** | **2 limbs + 2 twigs** | **1 limb + 2 twigs** | **0** |
+
+`YEAR_SIGMA` = -0.25: wood of a year-3 tree counts as 0.5 x year-1 strength per `SIGMA_REF r³` (the r³ normalisation over-rewards the thick scaffold; the limbs that break are 1.0 to 1.5 cm laterals of 25 to 43 nodes). Strength is clamped at 0.25 (from year 5 on with this gain). Year 1 is exactly 1 (ageQ 0).
 
 ## 7. Not measured
 
