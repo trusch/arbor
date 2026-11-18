@@ -228,7 +228,7 @@ export function buildStartScreen(p: ArborParams, auto: Automation, a: StartActio
   syncers.push(() => {
     const f = leafForm(String(get('leaves.form')));
     const hr = p.sky.timeOfDay, when = hr < 5 || hr > 21 ? 'night' : hr < 11 ? 'morning' : hr < 15 ? 'midday' : hr < 19 ? 'afternoon' : 'dusk';
-    facts.textContent = `${f.name} leaves · ${(p.crown.height + p.crown.base).toFixed(0)} m tall, ${(2 * p.crown.radius).toFixed(0)} m wide · ${when}`;
+    facts.textContent = `${f.name} leaves · ${(p.crown.height + p.crown.base).toFixed(0)} m tall, ${(2 * p.crown.radius).toFixed(0)} m wide${p.growth.years >= 2 ? ` after a year · grows for ${Math.min(3, Math.floor(p.growth.years))} years` : ''} · ${when}`;
     if (current?.adj) title.textContent = `${current.adj} ${FORM_NAME[f.id] ?? `${f.name.toLowerCase()} tree`}`;
   });
 

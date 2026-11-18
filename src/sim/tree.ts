@@ -292,6 +292,30 @@ export class TreeSim {
    * growth clock is sim time (`envelope.ts` YEAR_DATE0); everything below is a function of it, nothing accumulates.
    */
   years = 0;
+  /**
+   * Whole years taken off the growth clock (0 unless `setYears` raised `years` on a tree that had outlived its last
+   * growing season: the clock is set back so the next bud break starts the next growth year). Zeroed by `reset`.
+   */
+  yearShift = 0;
+  /** Growth clock: years since the seed incl. `YEAR_DATE0`, minus `yearShift`; floor = growth year, fraction = phase. */
+  growthAge() { return this.time / Math.max(10, this.params.season.yearLength) + YEAR_DATE0 - this.yearShift; }
+  /**
+   * Change `years` on a living tree (no reset; the wood stays). More years: a tree still inside its last growing year
+   * simply goes on (year 1 is the same tree with either setting); one that is past it continues at the next bud break
+   * (`yearShift`). Fewer years: a tree still in its first year becomes the tree of one season (`years` = 0); one that
+   * is already in a later year finishes the growing season it is in and stops there.
+   */
+  setYears(n: number) {
+    n = n >= 2 ? Math.min(3, Math.floor(n)) : 0;
+    if (n === this.years) return;
+    const yi = Math.floor(this.growthAge());
+    if (n > this.years) {
+      const last = Math.max(0, this.years - 1);
+      if (yi > last) this.yearShift += yi - last;
+      this.years = n;
+    } else if (this.growYear < 1 || this.years === 0) { this.years = 0; this.thickMul = 1; }
+    else this.years = this.growYear + 1;
+  }
   /** Growth year in use (0 = first), clamped to `years - 1`. */
   growYear = 0;
   /** Last growth wave (year x YEAR_WAVES.length + wave) whose tip revival and bud flush ran. */
@@ -345,7 +369,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
-    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.scafPicked = false; this.scafAz = []; this.attrT = new Float64Array(0); this.attrNext = 0;
+    this.yearShift = 0; this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.scafPicked = false; this.scafAz = []; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -488,7 +512,7 @@ export class TreeSim {
     // slows with age. The first year up to YEAR_EXEMPT is exactly today's tree.
     let ext = 1, lead = 1;
     if (this.years > 0) {
-      const age = this.time / Math.max(10, p.season.yearLength) + YEAR_DATE0;
+      const age = this.time / Math.max(10, p.season.yearLength) + YEAR_DATE0 - this.yearShift;
       const yi = Math.floor(age), ph = age - yi;
       this.growYear = Math.min(yi, this.years - 1);
       if (yi >= 1 && yi < this.years) {
@@ -506,7 +530,7 @@ export class TreeSim {
         this.thickMul = 1 - smoothstep(0.5, 0.6, ph);
         const prog = yi < 1 ? 0 : Math.min(this.years - 1, yi - 1 + smoothstep(0.02, 0.5, ph));
         const q0 = this.ageQ;
-        this.ageQ = Math.round(prog * 40) / 40;
+        this.ageQ = Math.max(q0, Math.round(prog * 40) / 40); // never back (a clock set back by `setYears`)
         if (this.ageQ !== q0) this.straighten();
         this.girth = 1 + YEAR_GIRTH * this.ageQ;
       }

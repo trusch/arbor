@@ -21,6 +21,10 @@ export interface UiActions {
   preset(name: string): void;
   /** Back to the start screen with a new proposal. */
   chooseTree(): void;
+  /** The Lifetime control was set by hand (1 or 3 years): remember it for this device. */
+  lifetimeSet(years: number): void;
+  /** Lifetime of the current tree (1 or 3), the growth year it is in (1-based) and its age in sim seconds. */
+  lifetime(): { years: number; growYear: number; time: number };
   presetNames: string[];
   currentPreset(): string;
   simTime(): number;
@@ -284,11 +288,28 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
     chips.append(c);
   }
   syncers.push(() => chips.querySelectorAll('button').forEach((c) => c.setAttribute('aria-pressed', String((c as HTMLElement).dataset.preset === a.currentPreset()))));
+  // Lifetime: how many years this tree grows (`growth.years`; the sim follows without a reset, see `applyYears` in main.ts).
+  const lifeBtns = [1, 3].map((n) => {
+    const b = h('button', { type: 'button', class: 'ap-life', 'data-years': n, 'aria-pressed': 'false', text: n === 1 ? '1 year' : '3 years' });
+    b.addEventListener('click', () => { set('growth.years', n); a.lifetimeSet(n); refresh(); });
+    return b;
+  });
+  const lifeNote = note('');
+  const life = h('div', { class: 'ap-row ap-lifetime', id: 'arbor-lifetime', role: 'group', 'aria-label': 'Lifetime' }, h('span', { class: 'ap-sw-name', text: 'Lifetime' }), h('div', { class: 'ap-chips' }, ...lifeBtns));
+  syncers.push(() => {
+    const l = a.lifetime();
+    lifeBtns.forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.years) === (l.years > 1 ? 3 : 1))));
+    lifeNote.textContent = l.years > 1
+      ? `This tree keeps growing for ${l.years} years (it is in year ${Math.min(l.years, l.growYear)}): each spring it adds a new layer, up to about twice the height and a much thicker trunk. Heavier for the device than one year.`
+      : l.time > 150 ? 'This tree grew for one year. Choose 3 years and it grows on from the next spring.'
+        : 'This tree grows for one year and then stays as it is. Choose 3 years to let it grow on into a big tree.';
+  });
   tab('grow', 'Grow',
     slider({ key: 'time.speed', name: 'Growth speed', help: 'How fast time passes for the tree. Works at once, while the tree is still growing.', min: 0.25, max: 20, log: true, big: true, fmt: (v) => `${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2)}x` }),
     h('div', { class: 'ap-actions' }, btn('Plant a new tree', a.newSeed, 'primary', 'arbor-new'), btn('Regrow this one', a.regrow, '', 'arbor-regrow')),
     h('div', { class: 'ap-actions' }, btn('Choose another tree', a.chooseTree, '', 'arbor-choose')),
     note('A new tree grows differently with the same settings. Regrow replays this exact tree from a seedling.'),
+    life, lifeNote,
     h('h3', { text: 'Choose a tree' }), chips,
     note('Picking a tree loads its shape, colours and sky, and starts growing from a seedling.'));
 

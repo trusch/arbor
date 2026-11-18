@@ -23,7 +23,8 @@ export const PRESETS: Record<string, Preset> = {
   },
   'Weeping willow': {
     params: {
-      growth: { weeping: 1.6, branchAngle: 48, gravitropism: 0.25, straightness: 1.3, maxTurn: 16, sag: 2.2, vigorDecay: 0.86, wander: 0.25 },
+      // One season: the year rules break this habit (docs/bigtree.md 6.15).
+      growth: { years: 1, weeping: 1.6, branchAngle: 48, gravitropism: 0.25, straightness: 1.3, maxTurn: 16, sag: 2.2, vigorDecay: 0.86, wander: 0.25 },
       crown: { shape: 2, radius: 4.6, height: 6, base: 2.2, bole: 1.8 },
       leaves: { size: 0.22, density: 3.2, hue: 0.22, saturation: 0.5, shape: 0.15, lightness: 1.15, form: 'willow' },
       sky: { timeOfDay: 9.0 },
@@ -32,7 +33,8 @@ export const PRESETS: Record<string, Preset> = {
   'Low-gravity alien': {
     params: {
       // Tall, sparse, spiralling: almost no gravitropism, upward light drive, strong torsion, long internodes, few buds.
-      growth: { gravity: 0.2, torsion: 14, gravitropism: 0.05, phototropism: 1.1, attraction: 0.8, wander: 0.4, maxTurn: 12, growthRate: 2.6, straightness: 2.4, branchAngle: 48, vigorDecay: 0.9, segmentLength: 0.42, sag: 0.3, scaffoldBranching: 0.5, branchingProbability: 0.09, apicalDominance: 0.85, selfPrune: 0.1, maxOrder: 4 },
+      // One season: the year rules break this habit (docs/bigtree.md 6.15).
+      growth: { years: 1, gravity: 0.2, torsion: 14, gravitropism: 0.05, phototropism: 1.1, attraction: 0.8, wander: 0.4, maxTurn: 12, growthRate: 2.6, straightness: 2.4, branchAngle: 48, vigorDecay: 0.9, segmentLength: 0.42, sag: 0.3, scaffoldBranching: 0.5, branchingProbability: 0.09, apicalDominance: 0.85, selfPrune: 0.1, maxOrder: 4 },
       crown: { shape: 1.8, radius: 4.2, height: 12, base: 3.5, bole: 4, attractors: 1500 },
       thickness: { exponent: 2.2, twigRadius: 0.008, rootFlare: 2.0 },
       leaves: { size: 2.0, density: 0.26, hue: 0.47, saturation: 0.55, shape: -0.2, lightness: 1.2, glow: 0.15, glowHue: 0.48, form: 'frond' },
@@ -59,7 +61,8 @@ export const PRESETS: Record<string, Preset> = {
   },
   'Heavy world': {
     params: {
-      growth: { gravity: 3, gravitropism: 0.3, branchAngle: 75, sag: 0.45, straightness: 1.4, maxTurn: 12, vigorDecay: 0.85, scaffoldBranching: 1.1, segmentLength: 0.18 },
+      // One season: the year rules break this habit (docs/bigtree.md 6.15).
+      growth: { years: 1, gravity: 3, gravitropism: 0.3, branchAngle: 75, sag: 0.45, straightness: 1.4, maxTurn: 12, vigorDecay: 0.85, scaffoldBranching: 1.1, segmentLength: 0.18 },
       crown: { shape: 2, radius: 6.5, height: 3.2, base: 1.0, bole: 0.8 },
       thickness: { exponent: 1.6, twigRadius: 0.011, rootFlare: 3 },
       leaves: { size: 0.3, density: 2.8, hue: 0.2, saturation: 0.55, shape: -0.1, lightness: 0.85, form: 'round' },

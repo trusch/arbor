@@ -18,7 +18,7 @@ export interface Keyframe { t: number; values: Snapshot }
 export interface DriftCfg { on: boolean; rate: number; range: number; base: number; phase: number }
 
 /** Groups/fields excluded from automation (structural / non-continuous). */
-const EXCLUDE = new Set(['seed.seed', 'growth.maxNodes', 'growth.maxOrder', 'crown.attractors', 'time.speed', 'sky.dayLength']);
+const EXCLUDE = new Set(['seed.seed', 'growth.maxNodes', 'growth.years', 'growth.maxOrder', 'crown.attractors', 'time.speed', 'sky.dayLength']);
 
 export function numericPaths(p: ArborParams): string[] {
   const out: string[] = [];

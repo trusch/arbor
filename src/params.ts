@@ -50,6 +50,12 @@ export interface ArborParams {
     /** Branch sag stiffness multiplier. */
     sag: number;
     maxNodes: number;
+    /**
+     * Lifetime: how many years the tree keeps growing (3 = on through two more growing seasons into the big tree;
+     * below 2 = the tree of one season, `TreeSim.years` 0). A property of the tree: presets and start-screen kinds set
+     * it; `main.ts` (`capYears`, `applyYears`) holds it at 1 on devices that did not ask for more and feeds the sim.
+     */
+    years: number;
   };
   crown: {
     /** 0 ellipsoid, 1 cone, 2 vase/umbrella (continuous blend). */
@@ -208,6 +214,7 @@ export function defaultParams(): ArborParams {
       torsion: 0,
       sag: 1,
       maxNodes: 14000,
+      years: 3,
     },
     crown: { shape: 0, radius: 3.6, height: 6.5, base: 2.4, bole: 1.7, attractors: 4000 },
     thickness: { exponent: 1.9, twigRadius: 0.0075, thickeningRate: 0.6, rootFlare: 1.4 },

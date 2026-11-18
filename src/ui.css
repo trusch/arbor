@@ -100,9 +100,11 @@ body.watch .arbor-ui { display: none !important; }
 .ap-btn.primary:hover { background: #d2f2a2; }
 
 .ap-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.ap-chip { min-height: 44px; padding: 0 14px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 22px; font-size: 14px; }
-.ap-chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.ap-chip, .ap-life { min-height: 44px; padding: 0 14px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 22px; font-size: 14px; }
+.ap-chip[aria-pressed='true'], .ap-life[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
 
+.ap-lifetime { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; margin-top: 6px; }
+.ap-lifetime .ap-chips { margin-bottom: 0; flex-wrap: nowrap; }
 .ap-switch { display: flex; align-items: center; gap: 12px; min-height: 56px; }
 .ap-switch label { flex: 1; display: flex; flex-direction: column; cursor: pointer; }
 .ap-sw-name { font-weight: 600; }

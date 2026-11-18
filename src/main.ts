@@ -10,7 +10,7 @@ import { makeBarkTextures, makeLeafTexture, makeClusterTexture, leafForm } from 
 import { buildPanel } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
-import { envelopeDims, YEAR_DATE0 } from './sim/envelope';
+import { envelopeDims } from './sim/envelope';
 import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
@@ -44,6 +44,20 @@ const automation = new Automation(params);
 let presetName = query.get('preset') ?? 'Oak meadow';
 /** Node cap for low-end devices; re-applied after every preset load. */
 let nodeBudget = Infinity;
+/**
+ * Lifetime (`growth.years`, docs/bigtree.md 6.16). The tree's own value comes from its preset or start-screen kind.
+ * `yearsAllowed` = this device takes a tree's long lifetime without being asked: the remembered choice of the Lifetime
+ * control (`localStorage['arbor.years']`: '3' yes, '1' no), else yes on desktop and no on a low-end device (the phone
+ * path: three years is the user's opt-in there). null until the device class is known (first preset load).
+ */
+const YEARS_KEY = 'arbor.years';
+const yearsInQuery = query.has('years') || query.has('growth.years');
+let yearsAllowed: boolean | null = null;
+/** Hold a freshly loaded tree's lifetime to what the link or the device allows (after a preset load or a proposal). */
+function capYears() {
+  if (yearsInQuery) { const n = Number(query.get('years') ?? query.get('growth.years')); if (Number.isFinite(n)) params.growth.years = n; }
+  else if (yearsAllowed === false) params.growth.years = 1;
+}
 /** Copy a preset into the live params object in place (GUI controllers stay bound) and load its journey. */
 function loadPreset(name: string) {
   presetName = name;
@@ -51,6 +65,7 @@ function loadPreset(name: string) {
   const dst = params as unknown as Record<string, Record<string, unknown>>;
   for (const g of Object.keys(src)) if (g !== 'seed' && g !== 'camera' && g !== 'time' && g !== 'weather' && g !== 'season' && g !== 'sound') Object.assign(dst[g], src[g]);
   params.growth.maxNodes = Math.min(params.growth.maxNodes, nodeBudget);
+  capYears();
   bumpParams();
   automation.drift = {};
   automation.journey = (PRESETS[name]?.journey ?? []).map((k) => ({ t: k.t, values: { ...k.values } }));
@@ -65,6 +80,12 @@ const lowEnd = lowEndDevice();
 if (!query.has('quality') && !query.has('sky.quality') && lowEnd) params.sky.quality = 'Low';
 // Phones also get a smaller growth budget (fewer segments → fewer tube vertices and leaves); ?maxNodes= overrides.
 if (lowEnd && !query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.min(params.growth.maxNodes, (nodeBudget = 7000));
+{
+  let stored: string | null = null;
+  try { stored = localStorage.getItem(YEARS_KEY); } catch { /* private mode */ }
+  yearsAllowed = stored === '3' || (stored !== '1' && !lowEnd);
+  capYears();
+}
 // Diagnostics bisect switches (?safe=1, ?shadows=0, ?leaves=0, ?sky=basic, ?grow=0, ?antialias=0, ?rebuildHz=N); see diag.html.
 const diag = diagSwitches(query);
 // Crash-loop guard: count context losses in this tab. After one, the next load uses safe leaves and no shadows.
@@ -147,14 +168,28 @@ tel.phase('init sim');
 const sim = new TreeSim(params);
 // Dev switch: `?structInterval=0` runs the forward structure pass every step (default 0.1 sim seconds, see `TreeSim.structureInterval`).
 if (query.get('structInterval') !== null && Number.isFinite(Number(query.get('structInterval')))) sim.structureInterval = Math.max(0, Number(query.get('structInterval')));
-// Growth over years (big tree P11/P12): `?years=3` grows the tree on for three seasons to x1.6 (`TreeSim.years`).
-const yearsQ = Number(query.get('years'));
-if (Number.isFinite(yearsQ) && yearsQ > 1) {
-  sim.years = Math.min(3, Math.floor(yearsQ));
-  // The node cap is a safety net there, not what ends growth (year 3 is about 23k nodes); ?maxNodes= still wins.
-  if (!query.has('maxNodes') && !query.has('growth.maxNodes')) params.growth.maxNodes = Math.max(params.growth.maxNodes, 40000);
-  sim.reset();
+// Growth over years (big tree P11/P12, lifetime 6.16): `growth.years` >= 2 grows the tree on for that many seasons
+// (`TreeSim.years`; below 2 = 0 = the tree of one season). `applyYears` feeds the sim: before a reset (`fresh`: new
+// tree) it just sets the field, on a living tree `sim.setYears` continues or stops it without a reset.
+/** Node budget of a tree that grows over years: a safety net on desktop (year 3 is about 31k nodes), the size limit on a low-end device. */
+const YEARS_NODES = 40000, YEARS_NODES_LOW = 14000;
+const nodesInQuery = query.has('maxNodes') || query.has('growth.maxNodes');
+const wantYears = () => { const y = Math.floor(params.growth.years); return y >= 2 ? Math.min(3, y) : 0; };
+let yearsApplied = 0;
+function applyYears(fresh = false) {
+  const want = wantYears();
+  if (!fresh && want === yearsApplied) return;
+  if (fresh) sim.years = want; else sim.setYears(want);
+  if (!nodesInQuery) {
+    const budget = Number.isFinite(nodeBudget) ? YEARS_NODES_LOW : YEARS_NODES;
+    if (want > 1) params.growth.maxNodes = Math.max(params.growth.maxNodes, budget);
+    else if (want !== yearsApplied && (fresh || sim.nodes.length < nodeBudget)) params.growth.maxNodes = Math.min(params.growth.maxNodes, Number.isFinite(nodeBudget) ? nodeBudget : presetParams(presetName).growth.maxNodes);
+  }
+  yearsApplied = want;
+  syncClusters();
 }
+let syncClusters = () => {};
+if (wantYears() > 1) { applyYears(true); sim.reset(); }
 tel.phase('init textures');
 const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
@@ -162,7 +197,7 @@ const leafMode = pickLeafMode();
 const leaves = new Leaves(makeLeafTexture(params.leaves.form), leafMode, params.sky.quality === 'Low' ? 32000 : 48000);
 // Cluster cards (big tree P7 / P8): `?clusters=1`, on with `?years=3`, `?clusters=0` off. They are drawn only while the
 // single leaves exceed the phone cap (`leaves.maxInstances`), so a tree under the cap and desktop High are unchanged.
-{ const cq = query.get('clusters'); leaves.clusters = cq === '1' || (cq !== '0' && sim.years > 1); }
+{ const cq = query.get('clusters'); syncClusters = () => { leaves.clusters = cq === '1' || (cq !== '0' && sim.years > 1); }; syncClusters(); }
 if (leaves.clusters) leaves.setClusterMap(makeClusterTexture(params.leaves.form));
 /** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
 function pickLeafMode(): LeafMode {
@@ -357,6 +392,7 @@ function advance(simSeconds: number) {
   while (left > 1e-6) {
     const d = Math.min(MAX_STEP, left);
     automation.apply(sim.time);
+    applyYears();
     const k = envSig();
     if (k !== envKey) { if (envKey && sim.time > 0) sim.rebuildAttractors(); envKey = k; }
     sim.step(d);
@@ -366,6 +402,7 @@ function advance(simSeconds: number) {
 function regrow() {
   automation.apply(0);
   envKey = envSig();
+  applyYears(true);
   sim.reset();
   invalidate();
 }
@@ -533,7 +570,7 @@ function redraw(time: number, dt: number, force = false) {
 /** Start screen (`src/start.ts`): built on first use; a proposal resets the tree to its seed and holds time until the visitor starts. */
 let startUi: ReturnType<typeof buildStartScreen> | null = null;
 const openStart = (roll?: number) => (startUi ??= buildStartScreen(params, automation, {
-  proposed: () => { params.time.paused = true; stage.intro = true; regrow(); if (stage.manual) stage.autoCamera(); },
+  proposed: () => { capYears(); params.time.paused = true; stage.intro = true; regrow(); if (stage.manual) stage.autoCamera(); },
   begin: (name) => { presetName = name; params.time.paused = false; stage.intro = false; if (audio.wanted && !audio.on) audio.setOn(true); },
 })).open(roll);
 if (query.get('nogui') !== '1') {
@@ -553,6 +590,9 @@ if (query.get('nogui') !== '1') {
     crownChanged: () => sim.rebuildAttractors(),
     preset: (name) => { loadPreset(name); regrow(); stage.autoCamera(); },
     chooseTree: () => openStart(),
+    // The Lifetime control was used: remember it as this device's choice for the trees to come.
+    lifetimeSet: (years: number) => { yearsAllowed = years >= 2; try { localStorage.setItem(YEARS_KEY, years >= 2 ? '3' : '1'); } catch { /* private mode */ } },
+    lifetime: () => ({ years: wantYears() > 1 ? wantYears() : 1, growYear: sim.years > 0 ? sim.growYear + 1 : 1, time: sim.time }),
     presetNames: Object.keys(PRESETS),
     currentPreset: () => presetName,
     simTime: () => sim.time,
@@ -634,7 +674,7 @@ function updateHud() {
   if (sim.years > 0) {
     // Growth over years: the growth clock is sim time (`YEAR_DATE0`); wood grows from phase 0.02 and is at rest from
     // 0.6 (from t = 150 on). "Fully grown" only once the last growing season is over; before that the tree rests.
-    const gp = sim.time / Math.max(10, params.season.yearLength) + YEAR_DATE0, yi = Math.floor(gp), ph = gp - yi;
+    const gp = sim.growthAge(), yi = Math.floor(gp), ph = gp - yi;
     const done = yi > sim.years - 1 || (yi === sim.years - 1 && ph >= 0.6);
     s.grown = sim.time > 1 && (done || sim.nodes.length >= params.growth.maxNodes);
     s.resting = !s.grown && sim.time >= 150 && (ph >= 0.6 || ph < 0.02);
