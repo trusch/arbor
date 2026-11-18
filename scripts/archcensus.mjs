@@ -84,6 +84,7 @@ if (process.env.PROF) {
   let lowTip = 1e9, bole = 1e9; const tips = [];
   for (let ci = 1; ci < C.length; ci++) { const c = C[ci]; if (c.pruned || c.nodes.length < 2) continue; const t = N[c.nodes[c.nodes.length - 1]]; if (c.order <= 2 && !c.sup && N[c.nodes[1]].radius > 0.03) { tips.push(+t.wy.toFixed(1)); lowTip = Math.min(lowTip, t.wy); }
     if (c.order === 1 && N[c.nodes[1]].radius > 0.03) bole = Math.min(bole, N[c.nodes[0]].wy); }
-  let lowWood = 1e9; for (const n of N) if (!C[n.chain].pruned && n.wy < lowWood && n.parent >= 0 && C[n.chain].order > 0) lowWood = n.wy;
+  let lowWood = 1e9, lwc = null; for (const n of N) if (!C[n.chain].pruned && n.wy < lowWood && n.parent >= 0 && C[n.chain].order > 0) { lowWood = n.wy; lwc = C[n.chain]; }
+  if (lwc) { let c = lwc; while (c.order > 1) c = C[N[c.nodes[0]].chain]; console.log('lowWood chain', JSON.stringify({ order: lwc.order, sup: lwc.sup ?? 0, asc: lwc.asc ?? 0, nodes: lwc.nodes.length, limbBaseY: +N[c.nodes[0]].ry.toFixed(2), limbSup: c.sup ?? 0, limbR: +(N[c.nodes[1]].radius * 100).toFixed(1) })); }
   console.log('SHAPE', JSON.stringify({ h: +h.toFixed(2), w: +w.toFixed(2), hOverW: +(h / w).toFixed(2), crownBase2pct: +y0.toFixed(2), widestAt: +(y0 + (bw + 0.5) / nb * (h - y0)).toFixed(1), widestRel: +((bw + 0.5) / nb).toFixed(2), p95rByBand: br.map((x) => +x.toFixed(1)), innerEllShare: +(inner / L.length).toFixed(3), innerHorizShare: +(innerH / L.length).toFixed(3), clearBole: +bole.toFixed(2), lowLimbTip: +lowTip.toFixed(2), lowWood: +lowWood.toFixed(2), r13cm: +(r13 * 100).toFixed(1), nodes: N.length, leaves: sim.leaves.length }));
 }

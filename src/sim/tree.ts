@@ -160,7 +160,7 @@ const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6,
  */
 const YEAR_BOLE = 3, YEAR_BOLE_MIN = 4;
 /** Interior opening (years 2-3): light pruning threshold x this for all order >= 2 wood. */
-const YEAR_PRUNE = 1.5;
+const YEAR_PRUNE = 1;
 /** Years 2-3: order >= 3 shoots stop after this many segments (long thin whips sagged metres, to below the ground). */
 const YEAR_WHIP = 18;
 /**

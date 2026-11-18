@@ -60,6 +60,8 @@ export const YEAR_LOBE = 0.22, YEAR_BAY = 0.6;
 const YEAR2_SHARE = 0.54;
 /** Attractor density of the new shells relative to the year-1 crown (coarser twig structure, bounded node count). */
 export const YEAR_DENSITY = 0.25;
+/** Share of shell samples that fall inside last year's envelope and are kept (interior shade shoots, years 2-3); none in the lowest YEAR_INNER_H of last year's crown height (they hung twigs to the ground). */
+export const YEAR_INNER = 0.5, YEAR_INNER_H = 0.3;
 
 /** Envelope scale (height, radius) of growth year `yi` (0 = first year = today's crown). */
 export function yearScale(yi: number, years: number): { h: number; r: number; b: number } {
@@ -120,7 +122,8 @@ export function sampleShell(p: ArborParams, seed: number, yi: number, years: num
     const px = x * b.radius, py = b.base + h * b.height, pz = z * b.radius;
     // Inside last year's envelope: already colonised.
     const ha = (py - a.base) / a.height;
-    if (ha >= 0 && ha <= 1 && Math.hypot(px, pz) <= envelopeProfile(sh, ha) * a.radius) continue;
+    // Shade shoots (6.12): a share YEAR_INNER of those points stays, so the old crown's interior is re-colonised in layers.
+    if (ha >= 0 && ha <= 1 && Math.hypot(px, pz) <= envelopeProfile(sh, ha) * a.radius && (yi < 1 || ha < YEAR_INNER_H || rng.next() > YEAR_INNER)) continue;
     out[i * 3] = px; out[i * 3 + 1] = py; out[i * 3 + 2] = pz;
     i++;
   }
