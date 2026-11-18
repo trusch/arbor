@@ -102,7 +102,7 @@ function paintAtlas() {
       // lower right, darker in the creases between billows.
       const up = Math.min(1, Math.max(0, (y - baseY) / (tower ? 0.8 : 0.5)));
       const edge = 1 - smooth(0.4, tower ? 2.4 : 1.5, den), bil = fbm(x * 16 + cell * 3, y * 9 + 5);
-      let b: number, lit = 0;
+      let b: number, lit = 0, under = 0;
       if (scud) b = 0.8 + 0.22 * (bil - 0.5) + 0.08 * (fine - 0.5);
       else if (tower) {
         // Dark body, bright rim along the upper outline, a little structure inside.
@@ -113,6 +113,11 @@ function paintAtlas() {
         b = 0.8 + 0.2 * smooth(-0.3, 0.2, side + 0.5 * (nx - 0.5)) + 0.06 * edge - 0.34 * (1 - smooth(0.0, 0.45, up)) + 0.3 * (bil - 0.5) + 0.08 * (fine - 0.5);
         // Facing the light: the upper left flank and the billow tops, never the base.
         lit = smooth(-0.22, 0.3, side + 0.5 * (nx - 0.5) + 0.35 * (bil - 0.5)) * smooth(0.02, 0.4, up);
+        // A thin bright margin along the upper outline (the rim of a cloud against the light), and the underside on
+        // the light's side: what a sun at the horizon, or a strike below the cloud, lights. Painted warmer (`warm`).
+        const rim = 0.45 * edge * edge * smooth(0.15, 0.5, up);
+        under = 0.8 * (1 - smooth(0.04, 0.42, up)) * smooth(-0.35, 0.25, (0.5 - x) * 0.9 + 0.5 * (bil - 0.5)) * (0.6 + 0.4 * smooth(0.3, 0.7, fine));
+        lit = Math.max(lit, rim);
       }
       b = Math.min(1, Math.max(tower ? 0.08 : 0.42, b));
       const o = ((oy + j) * W + ox + i) * 4;
@@ -121,8 +126,9 @@ function paintAtlas() {
       d[o + 1] = 255 * b * (0.9 + 0.1 * b);
       d[o + 2] = 255 * b;
       d[o + 3] = 255 * a;
-      l[o] = l[o + 1] = l[o + 2] = 255;
-      l[o + 3] = 255 * a * Math.min(1, lit);
+      const warm = under / Math.max(1e-3, under + lit);
+      l[o] = 255; l[o + 1] = 255 * (1 - 0.24 * warm); l[o + 2] = 255 * (1 - 0.42 * warm);
+      l[o + 3] = 255 * a * Math.min(1, Math.max(lit, under));
     }
   }
   return { d, l, W, H };

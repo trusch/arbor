@@ -53,9 +53,17 @@ const GRID = 12, SLOTS = GRID * GRID, PARTS = 3;
 const R_HOR = 7.6, R_OUT = 9.6;
 const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
 /** Drift in layer heights per m/s of cloud speed, and the speed of the layer (heights / s) while a change of weather is on its way in. */
-const DRIFT = 0.008, TRANSIT = 0.9;
+const DRIFT = 0.008, TRANSIT = 0.3;
 /** Deck: seconds to close once the bank has arrived, seconds to open; share of slots that must already carry the new weather. */
-const DECK_IN = 8, DECK_OUT = 6, DECK_GATE = 0.55, BANK = 0.85;
+const DECK_GATE = 0.55, BANK = 0.85;
+/**
+ * The deck is a bank with an edge: the plane's downwind edge comes in from `-DECK_E` deck heights upwind (behind the
+ * hills) to `+DECK_E` at `DECK_V` heights / s, and it leaves by its upwind edge travelling the same way. `EDGE_N`
+ * flat shreds ride on the edge so it is torn, not a ruled line.
+ */
+const DECK_E = 9, DECK_V = 0.4, EDGE_N = 12;
+/** Largest angular width (rad) of a cloud at its closest approach: a limit on the size of clouds on high routes, fixed at entry. */
+const MAX_ANG = 0.5;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
@@ -71,7 +79,7 @@ const TYPES: Record<string, [number, number, number]> = {
 export interface CloudEnv {
   sunDir: THREE.Vector3; sunH: number; night: number; sunColor: THREE.Color; moonLight: number;
   /** weather.cloud (0..1), weather.cloudType, a running storm sequence, weather.flash, wind direction and cloudSpeed in m/s. */
-  cloud: number; type: string; storm: boolean; flash: number; dirX: number; dirZ: number; speed: number;
+  cloud: number; type: string; storm: boolean; flash: number; /** weather.bolt.u (-1..1 across the view). */ boltU?: number; dirX: number; dirZ: number; speed: number;
   fogDensity: number; lowQ: boolean;
   /** Live scene fog colour (after `Stage.applyWeather`): the night grade's own sky / horizon tone; and the moon's direction. */
   fogColor: THREE.Color; moonDir: THREE.Vector3;
@@ -86,6 +94,9 @@ export class Clouds {
   heapsLit: THREE.Mesh;
   /** Mean JS cost per frame = sumMs / frames; quads = cumulus quads this frame; amount / size = eased type targets. */
   stats = { paintMs: 0, frames: 0, sumMs: 0, maxMs: 0, quads: 0, amount: 0, size: 1, dark: 0, deck: 0, tower: 0, blocker: 0 };
+  /** Script hook: when set, every drawn cloud writes [slot, generation, world x, y, z of its base centre, width, height] here (`probeN` entries). */
+  probe: Float32Array | null = null;
+  probeN = 0;
   private pos: THREE.BufferAttribute;
   private uv: THREE.BufferAttribute;
   private deckTex: THREE.DataTexture;
@@ -108,6 +119,12 @@ export class Clouds {
   private du = 0;
   private dv = 0;
   private deckK = 0;
+  /** Deck bank: 0 none, 1 arriving / closed (covers upwind of `deckE`), 2 leaving (covers downwind of `deckE`). */
+  private deckMode = 0;
+  private deckE = DECK_E;
+  private litPos: THREE.BufferAttribute;
+  private litUv: THREE.BufferAttribute;
+  private cnt = new Uint8Array(SLOTS * PARTS);
   private stormK = 0;
   private litOn = false;
   /** Drift of the layer in layer heights (wraps at 2 BOX), and the weather clock for the slow breathing. */
@@ -116,6 +133,8 @@ export class Clouds {
   private lit = new THREE.Color();
   private shade = new THREE.Color();
   private tmp = new THREE.Color();
+  private white = new THREE.Color();
+  private fwd = new THREE.Vector3();
 
   constructor(decal: THREE.MeshBasicMaterial) {
     const cs = decal.map?.colorSpace ?? THREE.SRGBColorSpace;
@@ -169,7 +188,21 @@ export class Clouds {
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     this.heaps = mk(g, atlas, 3.6);
     (this.heaps.material as THREE.MeshBasicMaterial).side = decal.side;
-    this.heapsLit = mk(g, this.litTex, 3.62);
+    // The lit layer has its own batch (same attributes): in a flash the clouds near the strike are in it up to three times.
+    const NL = N * 2, g2 = new THREE.BufferGeometry();
+    this.litPos = new THREE.BufferAttribute(new Float32Array(NL * 12), 3);
+    this.litUv = new THREE.BufferAttribute(new Float32Array(NL * 8), 2);
+    this.litPos.setUsage(THREE.DynamicDrawUsage); this.litUv.setUsage(THREE.DynamicDrawUsage);
+    const nrm2 = new Float32Array(NL * 12), idx2 = new Uint16Array(NL * 6);
+    for (let q = 0; q < NL; q++) {
+      for (let v = 0; v < 4; v++) nrm2[q * 12 + v * 3 + 2] = 1;
+      idx2.set([q * 4, q * 4 + 2, q * 4 + 1, q * 4 + 2, q * 4 + 3, q * 4 + 1], q * 6);
+    }
+    g2.setAttribute('position', this.litPos);
+    g2.setAttribute('normal', new THREE.BufferAttribute(nrm2, 3));
+    g2.setAttribute('uv', this.litUv);
+    g2.setIndex(new THREE.BufferAttribute(idx2, 1));
+    this.heapsLit = mk(g2, this.litTex, 3.62);
     (this.heapsLit.material as THREE.MeshBasicMaterial).side = decal.side;
   }
 
@@ -247,14 +280,23 @@ export class Clouds {
       else if ((w & 1) !== this.show[i] || (this.show[i] === 1 && (w >> 1) !== this.kindOf[i])) mis++;
     }
     const pending = mis / SLOTS;
-    this.boost = snap ? 0 : this.boost + ((pending > 0.03 ? 1 : 0) - this.boost) * (1 - Math.exp(-dt * 1.4));
+    this.boost = snap ? 0 : this.boost + ((pending > 0.03 ? 1 : 0) - this.boost) * (1 - Math.exp(-dt * 0.35));
     const own = E.speed * DRIFT, adv = (own + (Math.max(own, TRANSIT) - own) * this.boost) * Math.min(dt, 1), tr = 9 / (2 * DECK);
     this.ox = (this.ox + adv) % L;
-    this.du = (((this.du - adv * E.dirX * tr) % 1) + 1) % 1; this.dv = (((this.dv - adv * E.dirZ * tr) % 1) + 1) % 1;
+    this.du = (((this.du - adv * tr * (HEAP_LAYER / LAYER)) % 1) + 1) % 1;
     // The deck closes over the bank once it has arrived, and opens before the bank moves on.
-    if (snap) this.deckK = dOp;
-    else if (dOp > this.deckK) { if (pending < 1 - DECK_GATE) this.deckK = Math.min(dOp, this.deckK + dt / DECK_IN); }
-    else this.deckK = Math.max(dOp, this.deckK - dt / DECK_OUT);
+    // The deck bank: its edge comes in from upwind once the heap bank has arrived, and it leaves downwind edge last.
+    // It always travels with the wind; a change of mind waits until the edge is through.
+    if (snap) { this.deckMode = under ? 1 : 0; this.deckE = DECK_E; this.deckK = dOp; }
+    else {
+      if (this.deckMode === 0 && under && pending < 1 - DECK_GATE) { this.deckMode = 1; this.deckE = -DECK_E; this.deckK = dOp; }
+      else if (this.deckMode === 1 && !under && this.deckE >= DECK_E) { this.deckMode = 2; this.deckE = -DECK_E; }
+      else if (this.deckMode === 2 && this.deckE >= DECK_E) this.deckMode = 0;
+      if (this.deckMode) this.deckE = Math.min(DECK_E, this.deckE + DECK_V * Math.min(dt, 1));
+      // How thick the layer is follows the weather while it is over us (the leaving bank keeps what it had).
+      if (this.deckMode === 1 && under) this.deckK += (dOp - this.deckK) * (1 - Math.exp(-dt * 0.3));
+    }
+    const dCov = this.deckMode === 1 ? smooth(-DECK_E, DECK_E * 0.6, this.deckE) : this.deckMode === 2 ? 1 - smooth(-DECK_E * 0.6, DECK_E, this.deckE) : 0;
 
     // ---- light: lit colour (sun, warm when low), shade colour (sky light), both down to a moonlit grey at night ----
     const day = smooth(-0.1, 0.12, h), sunUp = smooth(-0.06, 0.1, h);
@@ -267,15 +309,19 @@ export class Clouds {
     const flash = E.flash * 1.6;
 
     // ---- deck ----
-    const deckK = this.deckK, dOpS = deckK * deckK * (3 - 2 * deckK);
+    const deckK = this.deckMode ? Math.max(0.6, this.deckK) : 0, dOpS = deckK * deckK * (3 - 2 * deckK);
+    const dl = Math.hypot(E.dirX, E.dirZ) || 1, wx = E.dirX / dl, wz = E.dirZ / dl, camY = cam.position.y;
+    // Along-wind position of the plane's centre: the covered side is upwind of the edge while arriving, downwind while leaving.
+    const dC = (this.deckMode === 2 ? this.deckE + DECK : this.deckE - DECK) * HD;
     const dk = this.deck, dm = dk.material as THREE.MeshBasicMaterial;
     dk.visible = dOpS > 0.01;
     S.deck = dOpS;
     if (dk.visible) {
-      dk.position.set(cam.position.x, cam.position.y + HD, cam.position.z);
+      dk.position.set(cam.position.x + wx * dC, cam.position.y + HD, cam.position.z + wz * dC);
+      dk.rotation.set(0, Math.atan2(-wz, wx), 0);
       dk.scale.set(2 * DECK * HD, 1, 2 * DECK * HD);
       // Scrolled with the same drift (texture v runs along world z after the rotation; 9 tiles over 2 DECK heights).
-      this.deckTex.offset.set(this.du, this.dv);
+      this.deckTex.offset.set(this.du, 0);
       // Mid grey for stratus, dark grey-blue for rain cloud and the storm; warm cast from a low sun.
       const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
@@ -316,28 +362,37 @@ export class Clouds {
     // side facing the sun is drawn on top from the `lit` map in the sun's colour. `low` is exactly 0 from sun
     // elevation sine 0.34 up, so the day picture is the single mix as before.
     const low = smooth(0.34, 0.1, h) * sunUp;
-    this.tmp.copy(this.shade).lerp(this.lit, mixLit * (1 - LOW_SPLIT * low)).multiplyScalar(1 - 0.8 * dark);
+    // High sun: a cloud is white (the sun's warm cast is taken out; the shade in the texture is blue-grey).
+    const ll = 0.3 * this.lit.r + 0.55 * this.lit.g + 0.15 * this.lit.b, wk = 0.9 * (1 - low);
+    this.white.setRGB(this.lit.r + (ll - this.lit.r) * wk, this.lit.g + (ll - this.lit.g) * wk, this.lit.b + (ll * 1.04 - this.lit.b) * wk);
+    this.tmp.copy(this.shade).lerp(this.white, mixLit * (1 - LOW_SPLIT * low)).multiplyScalar(1 - 0.8 * dark);
     const F = E.fogColor, fl = 0.3 * F.r + 0.5 * F.g + 0.2 * F.b, nk = (NIGHT_BODY + NIGHT_MOON * E.moonLight) * (1 - day);
     let r = this.tmp.r + nk * (F.r + 0.4 * (fl - F.r)), g = this.tmp.g + nk * (F.g + 0.4 * (fl - F.g)), b = this.tmp.b + nk * (F.b + 0.4 * (fl - F.b));
     // Under a deck the heaps are scud: the deck's own colour a little darker (never lighter than what is behind them,
     // day or night, by construction) and half transparent, so they are soft shapes in the layer, not cut-outs.
-    const scud = dk.visible ? dOpS : 0, tone = SCUD_TONE + (SCUD_NIGHT - SCUD_TONE) * (1 - day);
+    const scud = dk.visible ? dOpS * dCov : 0, tone = SCUD_TONE + (SCUD_NIGHT - SCUD_TONE) * (1 - day);
     r += (dm.color.r * tone - r) * scud; g += (dm.color.g * tone - g) * scud; b += (dm.color.b * tone - b) * scud;
     hm.opacity = fade * (1 - (1 - SCUD_OPACITY) * scud);
-    hm.color.setRGB(r + flash * 0.3 * (1 - scud), g + flash * 0.3 * (1 - scud), b + flash * 0.35 * (1 - scud));
+    hm.color.setRGB(r + flash * 0.1 * (1 - scud), g + flash * 0.1 * (1 - scud), b + flash * 0.13 * (1 - scud));
     // The `lit` map again: the sun's side at low sun, and in a lightning flash the billow tops and flanks of every cloud
     // (the structure shows for the frames of the flash; the body colour above takes a smaller share).
-    const lm = this.heapsLit.material as THREE.MeshBasicMaterial, lo = low * (1 - scud) * (1 - 0.8 * c), fo = Math.min(1, E.flash * 1.3 + 0.25 * sheet);
+    const lm = this.heapsLit.material as THREE.MeshBasicMaterial, fo = Math.min(1, E.flash * 1.3);
+    // Moonlight: the same layer, faint and pale, on the moon's side.
+    const moonK = E.moonLight * (1 - day) * (h < -0.04 ? 1 : 0), lo = Math.max(low * (1 - scud) * (1 - 0.8 * c), 0.55 * moonK * (1 - scud));
     this.litOn = lo > 0.01 || fo > 0.01;
-    lm.opacity = fade * Math.min(1, Math.max(lo * 1.1, fo));
-    const fw = fo / Math.max(1e-4, fo + lo);
-    lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark) * (1 - fw));
-    lm.color.r += 0.82 * fw * (0.4 + fo); lm.color.g += 0.86 * fw * (0.4 + fo); lm.color.b += fw * (0.4 + fo);
+    // In a flash the layer holds only the clouds near the strike (up to three times over), so its opacity is the flash's.
+    const flashing = fo > 0.01;
+    lm.opacity = fade * (flashing ? Math.min(0.75, 0.25 + 0.6 * fo) : Math.min(1, lo * 1.1));
+    if (flashing) lm.color.setRGB(0.8 + 0.5 * fo, 0.85 + 0.5 * fo, 1 + 0.5 * fo);
+    else if (moonK > 0) lm.color.setRGB(F.r, F.g, F.b).multiplyScalar(0.9).lerp(this.tmp.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark)), low);
+    else lm.color.copy(this.lit).multiplyScalar(LOW_GAIN * (1 - 0.8 * dark));
+    // Where the strike is: the bolt plane's azimuth (`rain.ts`: camera heading + u x 0.8 of the half field of view).
+    cam.getWorldDirection(this.fwd);
+    const bYaw = Math.atan2(this.fwd.x, this.fwd.z) + (E.boltU ?? 0) * Math.atan(Math.tan((cam.fov * Math.PI) / 360) * cam.aspect) * 0.8, bx = Math.sin(bYaw), bz = Math.cos(bYaw);
     // The painted light side faces the sun, at night the moon.
     const Ld = h < -0.04 && E.moonLight > 0 ? E.moonDir : E.sunDir;
     const sx = Ld.x, sz = Ld.z;
-    let n = 0;
-    const dl = Math.hypot(E.dirX, E.dirZ) || 1, wx = E.dirX / dl, wz = E.dirZ / dl, camY = cam.position.y;
+    let n = 0, pn = 0;
     for (let i = 0; i < SLOTS; i++) {
       // Lattice in the wind's frame: u along the wind (drifting, wrapping far under the horizon), v across.
       const gu = ((i % GRID) + 0.1 + 0.8 * hash2(i, 3.7)) / GRID;
@@ -359,7 +414,9 @@ export class Clouds {
       const isScud = this.kindOf[i] === 1;
       // Size is the cloud's own (small puffs to broad banks), fixed for its life; it only breathes a little.
       const br = 1 + 0.04 * Math.sin(this.t * (0.11 + 0.1 * h3) + h4 * 6.28), bh = 1 + 0.05 * Math.sin(this.t * (0.09 + 0.08 * h4) + h3 * 6.28);
-      const big = h3 * Math.sqrt(h3), w = H * (0.5 + 1.75 * big) * this.sz[i] * br;
+      // A cloud on a high route is limited in size by how near it will pass (known from its row, so from entry on).
+      const near = Math.hypot(v, dome(Math.abs(v)));
+      const big = h3 * Math.sqrt(h3), w = H * Math.min((0.5 + 1.75 * big) * this.sz[i], MAX_ANG * near) * br;
       // Flatter toward the horizon (seen more from the side, through more air).
       const flat = 0.62 + 0.38 * smooth(R_HOR, 2.5, r);
       const hh = w * (CH / CW) * 1.25 * flat * bh;
@@ -370,7 +427,11 @@ export class Clouds {
       // Painted light comes from the left of the sprite: mirror it when the sun is to the right of this cloud.
       const flip = rx * sx + rz * sz > 0;
       const parts = isScud ? 1 + (h4 > 0.5 ? 1 : 0) : 1 + (big > 0.22 ? 1 : 0) + (big > 0.55 ? 1 : 0);
+      if (this.probe && pn < this.probe.length / 7) this.probe.set([i, gn, cam.position.x + x, camY + y, cam.position.z + z, w, hh], 7 * pn++);
+      // Copies in the flash layer: by the angle between the cloud and the strike, and nearer clouds more.
+      const cb = (xr * bx + zr * bz) / r, copies = !flashing ? 1 : isScud ? 0 : cb > 0.9 ? 3 : cb > 0.6 ? 2 : cb > 0.1 && r < 6 ? 1 : 0;
       for (let j = 0; j < parts; j++) {
+        this.cnt[n] = copies;
         const a = hash2(i * 3 + j + 0.2, gn * 3.1 + 41.3), b = hash2(i * 3 + j + 0.6, gn * 1.3 + 57.9);
         // A cloud is put together from one to three painted heaps side by side on one base line: no two are the same.
         const off = j === 0 ? 0 : (j === 1 ? -1 : 1) * w * (0.24 + 0.2 * a), ws = j === 0 ? 1 : 0.55 + 0.35 * b;
@@ -378,10 +439,32 @@ export class Clouds {
         this.quad(n++, cam.position.x + x + rx * off, camY + y, cam.position.z + z + rz * off, rx, rz, ux, uy, uz, w * ws * (isScud ? 0.75 : 0.5), (isScud ? hh * 0.8 : hh) * (j === 0 ? 1 : 0.6 + 0.4 * b), cell, isScud ? b > 0.5 : flip);
       }
     }
-    S.blocker = 0;
+    // Torn shreds lying flat on the deck's edge while it crosses the sky.
+    if (dk.visible && this.deckE < DECK_E - 0.01) {
+      const sgn = this.deckMode === 2 ? -1 : 1;
+      for (let j = 0; j < EDGE_N && n < SLOTS * PARTS; j++) {
+        const a = hash2(j + 0.4, 7.7), b = hash2(j + 0.9, 3.1), vv = (j - (EDGE_N - 1) / 2) * 2.6 + (a - 0.5), uu = this.deckE + sgn * (0.5 * b - 0.9);
+        const ex = (uu * wx - vv * wz) * HD, ez = (uu * wz + vv * wx) * HD;
+        this.cnt[n] = 0;
+        // Level card: width across the wind, "up" along it, out from the deck.
+        this.quad(n++, cam.position.x + ex, camY + HD * 0.985, cam.position.z + ez, -wz, wx, wx * sgn, 0, wz * sgn, HD * (2.2 + 1.2 * a), HD * (2.6 + 1.4 * b), SCUD0 + (j & 1), a > 0.5);
+      }
+    }
+    // The lit layer's own batch.
+    let m = 0;
+    if (this.litOn) {
+      const P = this.pos.array as Float32Array, U = this.uv.array as Float32Array, P2 = this.litPos.array as Float32Array, U2 = this.litUv.array as Float32Array, cap = P2.length / 12;
+      for (let q = 0; q < n; q++) for (let c2 = this.cnt[q]; c2 > 0 && m < cap; c2--, m++) { P2.set(P.subarray(q * 12, q * 12 + 12), m * 12); U2.set(U.subarray(q * 8, q * 8 + 8), m * 8); }
+      if (m > 0) {
+        this.heapsLit.geometry.setDrawRange(0, m * 6);
+        this.litPos.clearUpdateRanges(); this.litPos.addUpdateRange(0, m * 12); this.litPos.needsUpdate = true;
+        this.litUv.clearUpdateRanges(); this.litUv.addUpdateRange(0, m * 8); this.litUv.needsUpdate = true;
+      }
+    }
+    S.blocker = 0; this.probeN = pn;
     S.quads = n; S.amount = this.amount; S.size = T[1]; S.dark = dark; S.deck = dOpS;
     this.heaps.visible = n > 0;
-    this.heapsLit.visible = n > 0 && this.litOn;
+    this.heapsLit.visible = m > 0 && this.litOn;
     if (n > 0) {
       this.heaps.geometry.setDrawRange(0, n * 6);
       this.pos.clearUpdateRanges(); this.pos.addUpdateRange(0, n * 12); this.pos.needsUpdate = true;
