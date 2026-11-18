@@ -811,6 +811,65 @@ Found on the way: a dip to black that was cut off in its fade-in half (cinema sw
 
 Overlay (`src/hud.ts`): from the first birthday the age reads "1 year 3 months", "2 years" (months of the first year as before); with `sim.years` > 0 the tree is "fully grown" only after the last growing season (growth phase 0.6 of the last year), and between growing seasons (growth phase 0.6 to 0.02, from t = 150) the state is "resting for winter" and the card says "in full leaf" / "leaves turning" without "putting on wood" (`HudState.resting`, set in `updateHud`). Before, the tree line said "fully grown" every time no tip was alive, i.e. each autumn. `node scripts/y3hud.mjs URL` prints the texts at a list of times next to height / width / girth measured over unpruned wood.
 
+### 6.16 Lifetime per tree and per device (branch `bigtree-perf`)
+
+How many years a tree grows is a param of the tree, `growth.years` (`params.ts`; the sim keeps reading `TreeSim.years`, which `applyYears` in `main.ts` feeds). Values of 2 and more grow the tree on (clamped to 3); below 2 is the tree of one season, `TreeSim.years` = 0, the code path of 6.2 "off". "1 year" in the interface is `years` = 0 in the sim: `TreeSim.years` = 1 does not exist as a setting (it would switch the seasonal gates on for a single year), and `?years=1` gives 0 as before.
+
+Defaults (`defaultParams` 3; the three presets 6.15 calls broken carry `years: 1`, and the start-screen kinds built on them inherit it through `flat(preset)`), read from the running app (`node scripts/lifetime.mjs URL table`: every preset loaded through the panel's preset path, every kind rolled on the start screen until all ten were seen; value = `sim.years`, 0 shown as 1; `maxNodes` in brackets):
+
+| Tree | Desktop | Phone path (`lowEndDevice`) | Phone after "3 years" was chosen once | `?years=3` desktop / phone | `?years=0` |
+|---|---|---|---|---|---|
+| Oak meadow | 3 (40 000) | 1 (7 000) | 3 (14 000) | 3 (40 000) / 3 (14 000) | 1 |
+| Windswept cypress | 3 | 1 | 3 | 3 / 3 | 1 |
+| Weeping willow | 1 (14 000) | 1 (7 000) | 1 (7 000) | 3 / 3 | 1 |
+| Low-gravity alien | 1 | 1 | 1 | 3 / 3 | 1 |
+| Crimson world | 3 | 1 | 3 | 3 / 3 | 1 |
+| Bioluminescent night | 3 | 1 | 3 | 3 / 3 | 1 |
+| Heavy world | 1 | 1 | 1 | 3 / 3 | 1 |
+| Journey: Earth to alien | 3 | 1 | 3 | 3 / 3 | 1 |
+| kinds Broad, Slender, Spreading, Young, Columnar cypress, Crimson world, Bioluminescent night | 3 | 1 | 3 | 3 / 3 | 1 |
+| kinds Weeping willow, Low-gravity alien, Heavy world | 1 | 1 | 1 | 3 / 3 | 1 |
+
+KINDS_PHONE_NOTE
+
+Device rule (`capYears` in `main.ts`, after every preset load and every proposal): `yearsAllowed` = the stored choice of the Lifetime control (`localStorage['arbor.years']`: '3' yes, '1' no), else true on desktop and false on a low-end device. Not allowed = `growth.years` is written to 1 for the tree just loaded. A `years` key in the query is written instead and wins for every tree on every device. With `sim.years` 0 nothing else runs: no reset, `growth.maxNodes` untouched, clusters off, so `?years=0` and the phone default are the app as it was.
+
+Control: Grow tab, "Lifetime" with the buttons "1 year" / "3 years" (`#arbor-lifetime`, `.ap-life[data-years]`) and a sentence under it that says what the current tree does. It writes `growth.years` through `Automation.userSet` like every control and stores the choice for the device. Stored '3' means "trees get their own lifetime from now on" (a willow planted afterwards is still one year, and its control shows "1 year"); '1' means one year for every tree, on desktop too. The start screen's facts line reads "... 9 m tall, 8 m wide after a year · grows for 3 years · ..." when the proposal will grow for three years on this device, and the old line otherwise.
+
+Change on a living tree (`TreeSim.setYears`, no reset, called by `applyYears` before the next sim step):
+
+| Change | What happens |
+|---|---|
+| 1 to 3 years while the tree is in its first year | `sim.years` = 3 and the node budget is raised; the tree is the same tree until t = 150 (year 1 is identical with either setting) and goes on at the bud break of year 2 (t = 264) |
+| 1 to 3 years on a tree that has stopped | The growth clock (`sim.growthAge()`) is set back by whole years (`sim.yearShift`) so that the tree is in its first year again; year 2 starts at the next bud break. Read: desktop oak, one year, at t = 700 (5 685 nodes, 9.07 m): after the click `yearShift` 2, nothing until t = 864, then 6 269 nodes / 10.83 m at 900, 14 726 / 13.84 m at 1 000 (rest from 1 014 to 1 164), 30 374 nodes / 18.44 m at 1 350. The wait is up to one year (300 s at 1x) and nothing on screen says when it ends except the sentence under the control |
+| 3 to 1 year in the first year | `sim.years` = 0: the tree of one season |
+| 3 to 1 year in year 2 or 3 | `sim.years` = the year it is in: the running season finishes (wood cannot be ungrown) and the tree is then fully grown. Not run in the app |
+
+Phone path with `?years=3` before this change (`node scripts/y3phone.mjs URL`, phone emulation 411 x 777, Android UA, real GPU, default oak, summer held; heap = `usedJSHeapSize` after a forced GC, GPU buffers = byte length of every attribute, index and instance array reachable from the scene, each once (no textures, no render targets); script ms = rAF callback time at rest, clock running, 4x CPU throttle, median (p90) of 5 s, on a host running several other jobs, so upper bounds). The 7 000 cap did not hold: `?years=3` raised `growth.maxNodes` to 40 000 on the phone path too (`Math.max`), so the phone grew the whole tree:
+
+| Case (phone emulation) | t | Nodes (live) | Sim leaves | Height m | Width m | Trunk r m | JS heap MB | GPU buffers MB (tree) | Script ms | Programs |
+|---|---|---|---|---|---|---|---|---|---|---|
+| one year (cap 7 000) | 750 | 5 685 (4 353) | 43.3k | 9.07 | 8.77 | 0.166 | 56.8 | 14.2 (6.7) | 19.0 (84) | 8 |
+| | 1 350 | 5 685 | 43.3k | 9.07 | 8.77 | 0.166 | 57.2 | 14.2 (6.7) | 17.5 (77) | 8 |
+| `years=3` as it was (cap 40 000) | 750 | 30 965 (14 328) | 242k | 18.09 | 20.16 | 0.672 | 122.3 | 24.3 (16.8) | 90 (175) | 8 |
+| | 1 350 | 31 372 (14 303) | 245k | 18.09 | 20.16 | 0.673 | 120.9 | 24.3 (16.8) | 78 (128) | 8 |
+| `years=3`, cap 14 000 | 750 | 14 005 (7 448) | 108k | 14.18 | 14.30 | 0.512 | 81.4 | 19.7 (12.2) | 26.5 (95) | 8 |
+| | 1 350 | 14 005 | 108k | 14.18 | 14.30 | 0.512 | 81.7 | 19.7 (12.2) | 22.5 (95) | 8 |
+| `years=3`, cap 20 000 | 750 | 20 007 (9 087) | 154k | 17.53 | 14.92 | 0.536 | 96.9 | 23.2 (15.7) | 31 (89) | 8 |
+| `years=2` (cap 40 000) | 1 350 | 26 551 (15 397) | 207k | 17.48 | 19.63 | 0.455 | 117.5 | 27.7 (20.2) | 71 (112) | 8 |
+
+Without bound: nothing. Between t = 750 and 1 350 (two more years of clock on a finished tree) the uncapped tree adds 407 nodes (the last revived tips of year 3 finishing; 0 tips alive at 1 350), heap and buffers do not move, geometries 10 to 11 and textures 28 to 29 in every case incl. the one-year tree. Drawn leaves are capped at 32k cards on Low at every size (cluster cards, 6.5), so the leaf buffers do not grow with the tree; what grows is the branch mesh (tree buffers 6.7 to 16.8 MB) and the JS heap (node objects, typed arrays: x2.1). The programs stay at 8: the years tree compiles nothing new, which is the thing that crashed the phone GPU before. The script time of the full tree is 4 to 5 times the one-year tree's in this run (the survey of 6.15 read 17.5 ms on a quieter host: the absolute value is not trustworthy, the ratio at equal load is the reading). `years=2` is no smaller tree: its envelope is the full one and it ends at 26.5k nodes.
+
+Built for the phone: a node budget for the years tree on a low-end device, `YEARS_NODES_LOW` 14 000 (`applyYears`; desktop keeps `YEARS_NODES` 40 000 as a safety net; `?maxNodes=` wins). The budget is what ends growth there: the tree runs into it during the second growing season (year 2 alone would reach about 16k), every tip stops, the trunk keeps thickening to the end of that summer. Result against the desktop tree, same camera (`shots/life-phone-optin-t750.jpg`, `shots/life-desk-default-t750.jpg`; before the change `shots/y3phone-phone-{y1,y3cap14,y3}-t750.jpg`): 14.2 m tall, 14.3 m wide, trunk radius 0.51 m (one year: 9.1 m, 8.8 m, 0.17 m; desktop three years: 18.1 m, 20.2 m, 0.67 m): clearly the bigger, thicker tree, with the crooked heavy limbs of the old tree, a thinner and more open crown than the desktop one and a crown that is not quite symmetric (the shell fills inside-out and the budget cuts it off where it was). Cost against the one-year phone tree: heap +25 MB (x1.4), GPU buffers +5.5 MB, script ms x1.3 to 1.4 at equal load. 4 001 to 6 177 buds stay in the list of a tree stopped by its budget (they cannot break; the list does not grow).
+
+OPTIN_NOTE
+
+Consequence for scripts: `?years=3` in phone emulation is now the 14 000-node tree; a script that wants the full tree there passes `maxNodes=40000` (`y3survey.mjs` does; the 6.15 numbers were taken with the old cap of 40 000).
+
+Gates. Year 1: `TIMES=150 YEARS=0 CHECK=1` and `YEARS=3` of `yearscensus.mjs` both 4 910 nodes, 37 642 leaves, 9.09 m, 16.8 cm, `structureCheck` 0. `REF=c37d616 node scripts/structeq.mjs oak,willow,break`: bit-equal, exit 0 (the sim changes are `yearShift`, which is 0 unless `setYears` moved it, and `ageQ = max(previous, new)`, which is the same value on a clock that only runs forward). GATES_NOTE
+
+Not done: nothing here ran on the real phone. `setYears` back to one year in year 2 or 3 was not run in the app; `yearShift` assumes `season.yearLength` does not change during a tree's life (the growth clock of 6.2 assumes the same). The overlay of a one-year tree switched to three years in mid-summer says "growing" while it waits for the next spring. Breakage is not calibrated at size (6.6), and the three broken habits are only kept away by their default: `?years=3` or the control still grows them.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.

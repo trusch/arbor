@@ -36,7 +36,7 @@ async function grow(key, date) {
   const page = await ctx.newPage(); page.setDefaultTimeout(900000);
   page.on('pageerror', (e) => console.error(`[pageerror ${key}]`, e.message));
   await page.addInitScript(instrument);
-  await page.goto(`${url}?start=0&nogui=1&hideui=1&years=${E.YEARS ?? 3}&cycle=false&timeOfDay=13&weather=calm&cinema=false&autoRotate=false&speed=0&season.date=${date}&season.hold=true${TREES[key]}`, { timeout: 900000 });
+  await page.goto(`${url}?start=0&nogui=1&hideui=1&years=${E.YEARS ?? 3}&maxNodes=${E.MAXNODES ?? 40000}&cycle=false&timeOfDay=13&weather=calm&cinema=false&autoRotate=false&speed=0&season.date=${date}&season.hold=true${TREES[key]}`, { timeout: 900000 });
   await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: 900000 });
   while (await page.evaluate(() => window.__arbor.sim.time) < T - 0.01) await page.evaluate((T) => window.__arbor.fastForward(Math.min(15, T - window.__arbor.sim.time)), T);
   await page.evaluate(() => { const a = window.__arbor; a.params.camera.autoFrame = true; a.stage.autoCamera?.(); a.fastForward(0); });

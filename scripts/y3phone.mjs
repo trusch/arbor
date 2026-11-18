@@ -48,7 +48,7 @@ async function one(key) {
       });
       if (window.gc) window.gc();
       const ri = a.stage.renderer.info;
-      return { t: +s.time.toFixed(0), years: s.years, maxNodes: a.params.growth.maxNodes, quality: a.params.sky.quality, nodes: s.nodes.length, live, chains: s.chains.length, simLeaves: s.leaves.length, drawnLeaves: a.leaves.mesh.count,
+      return { t: +s.time.toFixed(0), years: s.years, maxNodes: a.params.growth.maxNodes, quality: a.params.sky.quality, nodes: s.nodes.length, live, chains: s.chains.length, simLeaves: s.leaves.length, drawnLeaves: a.leaves.mesh.count, drawnCards: a.leaves.nAll, clusterCards: a.leaves.nAll - a.leaves.mesh.count,
         h: +h.toFixed(2), w: +Math.max(x1 - x0, z1 - z0).toFixed(2), dbh: +dbh.toFixed(3), alive: s.chains.filter((c) => c.alive).length, attr: s.attr ? s.attr.length / 3 : -1, buds: s.buds?.length ?? -1,
         heapMB: +(performance.memory.usedJSHeapSize / 1048576).toFixed(1), gpuMB: +(gpu / 1048576).toFixed(1), treeGpuMB: +(tree / 1048576).toFixed(1), geometries: ri.memory.geometries, textures: ri.memory.textures, programs: ri.programs?.length, tris: ri.render.triangles, calls: ri.render.calls };
     });

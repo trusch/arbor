@@ -161,7 +161,7 @@ and program count), `node scripts/blossomcost.mjs` (frame cost at peak, on / off
 | Tab | Contents |
 |---|---|
 | header (always) | state (Growing / Paused / Fully grown, twig count, age), pause/play, collapse. When fully grown a bar offers "Plant a new tree". |
-| Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed, same settings), Regrow this one, Choose another tree (back to the start screen with a new proposal), preset chips |
+| Grow | Growth speed (0.25x–20x, logarithmic), Plant a new tree (new seed, same settings), Regrow this one, Choose another tree (back to the start screen with a new proposal), Lifetime (1 year / 3 years, see below), preset chips |
 | Shape | Gravity, Reach for light, Branchiness, Branch angle, Twist, Droop, Wildness, Crown width/height/shape, Leaf size, Leaf amount. Each has a one-line explanation, a "new growth" or "instant" tag and a Drift toggle. |
 | Leaves | Leaf shape (ten forms shown as small pictures: oak, willow, birch, maple, ginkgo, round, conifer, and the alien forked, ring and spiral; changes at once on the living tree), Surprise me (harmonious random palette), Natural colours, Leaf colour, Leaf glow at night + glow colour, Sky tint, Sun colour, Ground tint (native colour picker + suggestion dots) |
 | Sky | Time of day, Day and night cycle (on by default), Length of a day, Weather right now |
@@ -170,6 +170,24 @@ and program count), `node scripts/blossomcost.mjs` (frame cost at peak, on / off
 Rule: a value set by hand wins. Every control writes through `Automation.userSet(path, value)`, which removes that path from all journey keyframes and turns its drift off, so nothing snaps back. (Before, a journey with two or more keyframes rewrote its keyed params before every sim step, so sliders reset.)
 
 Adding a section: controls are declared as data (`TREE`, `SKY`, `ADVANCED` lists of `SliderDef` / raw rows; `slider()`, `toggle()`, `colour()` builders) and a tab is one `tab(id, label, ...rows)` call in `buildPanel`.
+
+### Lifetime
+
+How many years a tree grows is a property of the tree (`growth.years`). Three years turn the 9 m oak of one season into an 18 m tree with a 67 cm trunk radius.
+
+| Tree | Lifetime |
+|---|---|
+| Oak meadow, Windswept cypress, Crimson world, Bioluminescent night, Journey; start-screen kinds Broad, Slender, Spreading, Young, Columnar cypress, Crimson world, Bioluminescent night | 3 years |
+| Weeping willow, Low-gravity alien, Heavy world (preset or start-screen roll) | 1 year (the year rules break these habits, `docs/bigtree.md` 6.15) |
+
+| Rule | Behaviour |
+|---|---|
+| Device | Desktop takes the tree's lifetime. A device classed low-end (phones) grows every tree for one year until the Lifetime control is set to 3 years there |
+| Control | Grow tab, "Lifetime: 1 year / 3 years" (`#arbor-lifetime`, buttons `.ap-life[data-years]`): shows the current tree's value, works before and during growth, no reset. The choice is remembered per device (`localStorage['arbor.years']`): "3 years" = trees get their own lifetime from now on, "1 year" = every tree grows one year |
+| Changed on a finished tree | 3 years on a tree that stopped after its one year: it continues at the next bud break (next spring of the growth clock, at most one year = 300 s at 1x later). 1 year on a tree already in year 2 or 3: it finishes the growing season it is in and stops |
+| Link | `?years=3` or `?years=0` wins for any tree on any device |
+| Phone size | On a low-end device a three-year tree has a budget of 14 000 twigs (desktop 40 000): about 14 m tall with a 51 cm trunk radius instead of 18 m and 67 cm. `?maxNodes=` overrides |
+| Start screen | The facts line says "grows for 3 years" when the proposed tree will |
 
 ## Watching
 
@@ -210,6 +228,7 @@ Bisect switches (also as tap-through links on `/diag.html`, which shows device/G
 | `?grow=0` | sim paused (combine with `?t=40` for a static grown tree) |
 | `?antialias=0` | no MSAA |
 | `?maxNodes=N` | growth cap |
+| `?years=3` / `?years=0` | lifetime of the tree: 3 = it grows on for three years, 0 or 1 = one season; wins over the tree's own default and the device default |
 | `?rebuildHz=N` | branch-mesh rebuild rate (default ~8 Hz while growing) |
 
 ## Layout
