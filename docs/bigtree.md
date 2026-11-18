@@ -302,6 +302,8 @@ P4 (T5) is not built. Open: P4; uploads per frame are still the whole position b
 
 A node whose anchor changes (thickening past 3 cm, a break, growth) has its keys re-expressed from the offsets drawn in the last update. A new node copies its parent's keys. With zero wind or `amount` 0 the function still returns early with `D` all 0. `?swayrate=1` evaluates every node every update; `__arbor.swayStats().rate` reports the split. The frustum skip is not built.
 
+Two-rate is off by default (`Sway.twoRate = false`, branch `sway-fix`): its thin wood lags the anchor by 3 to 6 updates, which at the thin-wood oscillation rate (up to 7 rad/s) and the Low update rate is 1.4 to 2.8 rad of phase; the one-curve check fails with lean lost 0.33 to 0.71 rad in a storm (reference <= 0.004). The "all 8 cases pass" reading below was vacuous: thin wood never wrote `TH`, so the probe skipped it.
+
 **P5, light tick** (`TreeSim.updateLight`):
 - **T10:** the cell is max(4 x `segmentLength`, tree height / 28). That is the old 0.88 m for every tree up to about 24.6 m, so the default oak, the year-3 tree (15 m) and oak2x (18 m) keep exactly the old grid.
 - **Per-cell light:** node light was 6 `exp` per node; it is now evaluated once per occupied cell with the same expression, so the values are bit-equal.
