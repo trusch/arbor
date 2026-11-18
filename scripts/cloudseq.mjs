@@ -28,11 +28,13 @@ try {
     // side = looking across the wind (clouds travel left to right or right to left), wind = upwind, down = downwind.
     const w = Math.atan2(-a.wind.dirZ, -a.wind.dirX), az = w + (view === 'side' ? 1.25 : view === 'down' ? Math.PI : 0);
     const H = a.sim.bboxMax[1], n0 = a.sim.nodes[0], D = H * (innerWidth < innerHeight ? 3.0 : 2.1);
-    a.params.camera.autoFrame = false; a.stage.takeControl?.(); a.stage.controls.maxPolarAngle = Math.PI;
+    a.params.camera.autoFrame = false;
     // SKY=1: the tree behind the camera, looking higher (sky and landscape only).
     const px = n0.wx - Math.cos(az) * (sky ? -8 : D), pz = n0.wz - Math.sin(az) * (sky ? -8 : D), py = 1.7, el = sky ? 0.85 : 0.3;
     a.stage.camera.position.set(px, py, pz);
     a.stage.controls.target.set(px + Math.cos(az) * Math.cos(el) * 10, py + Math.sin(el) * 10, pz + Math.sin(az) * Math.cos(el) * 10);
+    // Pose first, then take control: the hand-set view is limited to the polar angle at the grab.
+    a.stage.camera.lookAt(a.stage.controls.target); a.stage.takeControl?.(); a.stage.grabPolar = Math.PI; a.stage.controls.maxPolarAngle = Math.PI;
   }, { view, sky: process.env.SKY === '1' });
   const shots = [], t0 = Date.now();
   // FLASH=1: a held storm, then one lightning flash stepped through its levels (weather.flash pinned per frame), 12 frames.
