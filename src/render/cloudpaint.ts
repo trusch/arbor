@@ -38,9 +38,10 @@ export const CW = 256, CH = 128, COLS = 4, ROWS = 4, HEAPS = 10, SCUD0 = 12;
 const HEAP_WIDE = [0.12, 0.16, 0.2, 0.25, 0.3, 0.27, 0.33, 0.4, 0.36, 0.41];
 
 function paintAtlas() {
-  const W = CW * COLS, H = CH * ROWS, d = new Uint8Array(W * H * 4), l = new Uint8Array(W * H * 4);
+  const W = CW * COLS, H = CH * ROWS, d = new Uint8Array(W * H * 4), l = new Uint8Array(W * H * 8);
   // RGB under alpha 0 is cloud colour everywhere (no dark fringe in the mips).
-  for (let o = 0; o < d.length; o += 4) { d[o] = 226; d[o + 1] = 232; d[o + 2] = 240; l[o] = l[o + 1] = l[o + 2] = 255; }
+  for (let o = 0; o < d.length; o += 4) { d[o] = 226; d[o + 1] = 232; d[o + 2] = 240; }
+  for (let o = 0; o < l.length; o += 4) { l[o] = 255; l[o + 1] = 236; l[o + 2] = 214; }
   const regions: [number, number, number, number, number][] = [];
   for (let c = 0; c < HEAPS; c++) regions.push([c, (c % COLS) * CW, Math.floor(c / COLS) * CH, CW, CH]);
   regions.push([SCUD0, 0, 3 * CH, CW, CH], [SCUD0 + 1, CW, 3 * CH, CW, CH], [99, 2 * CW, 2 * CH, 2 * CW, 2 * CH]);
@@ -102,7 +103,7 @@ function paintAtlas() {
       // lower right, darker in the creases between billows.
       const up = Math.min(1, Math.max(0, (y - baseY) / (tower ? 0.8 : 0.5)));
       const edge = 1 - smooth(0.4, tower ? 2.4 : 1.5, den), bil = fbm(x * 16 + cell * 3, y * 9 + 5);
-      let b: number, lit = 0, under = 0;
+      let b: number, lit = 0, under = 0, rimA = 0, rimW = 0;
       if (scud) b = 0.8 + 0.22 * (bil - 0.5) + 0.08 * (fine - 0.5);
       else if (tower) {
         // Dark body, bright rim along the upper outline, a little structure inside.
@@ -118,6 +119,10 @@ function paintAtlas() {
         const rim = 0.45 * edge * edge * smooth(0.15, 0.5, up);
         under = (1 - smooth(0.06, 0.5, up)) * smooth(-0.45, 0.2, (0.5 - x) * 0.9 + 0.5 * (bil - 0.5)) * (0.6 + 0.4 * smooth(0.3, 0.7, fine));
         lit = Math.max(lit, rim);
+        // Rim variant (second half of the `lit` map; drawn on clouds toward a low sun or the moon): the thin margin all
+        // round the upper outline glows, the underside is lit from below on both sides, the dense core stays dark.
+        const thin = edge * edge * (0.35 + 0.65 * smooth(0.05, 0.4, up)), below = (1 - smooth(0.04, 0.42, up)) * (0.55 + 0.45 * smooth(0.3, 0.7, bil));
+        rimA = Math.min(1, 1.5 * thin + 0.8 * below); rimW = below / Math.max(1e-3, below + 1.5 * thin);
       }
       b = Math.min(1, Math.max(tower ? 0.08 : 0.36, b));
       const o = ((oy + j) * W + ox + i) * 4;
@@ -129,6 +134,10 @@ function paintAtlas() {
       const warm = under / Math.max(1e-3, under + lit);
       l[o] = 255; l[o + 1] = 255 * (1 - 0.24 * warm); l[o + 2] = 255 * (1 - 0.42 * warm);
       l[o + 3] = 255 * a * Math.min(1, Math.max(lit, under));
+      // Rows H.. of the lit map: the rim variant (pale warm rim, pink-orange underside); alpha lifted where the cloud is thin.
+      const o2 = o + W * H * 4;
+      l[o2] = 255; l[o2 + 1] = 255 * (0.93 - 0.3 * rimW); l[o2 + 2] = 255 * (0.82 - 0.4 * rimW);
+      l[o2 + 3] = 255 * Math.min(1, a * (1 + 1.2 * (1 - a))) * rimA;
     }
   }
   return { d, l, W, H };
@@ -177,5 +186,5 @@ function paintEdge(deck: CloudMap): CloudMap {
 export function paintClouds(): { atlas: CloudMap; deck: CloudMap; lit: CloudMap; edge: CloudMap } {
   const a = paintAtlas();
   const deck = flip(paintDeck());
-  return { atlas: flip({ d: a.d, W: a.W, H: a.H }), deck, lit: flip({ d: a.l, W: a.W, H: a.H }), edge: paintEdge(deck) };
+  return { atlas: flip({ d: a.d, W: a.W, H: a.H }), deck, lit: flip({ d: a.l, W: a.W, H: 2 * a.H }), edge: paintEdge(deck) };
 }

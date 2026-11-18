@@ -73,7 +73,9 @@ const OVERHEAD = 0.55;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
-const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.8, SCUD_NIGHT = 0.6, SCUD_OPACITY = 0.5;
+const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.9, SCUD_NIGHT = 0.72, SCUD_OPACITY = 0.5;
+/** Bank pieces (heaps that entered under a deck): height of the base as a share of the layer height (lo + span x hash), so the bank's underside is lobes at different levels, not one line. */
+const BANK_LO = 0.55, BANK_SPAN = 0.75;
 /** Low sun: share of the sun's light taken out of the body mix, and the gain of the sunlit side drawn over it. */
 const LOW_SPLIT = 0.75, LOW_GAIN = 1.1, LOW_WARM = 0.2, BODY_CAP = 1.15;
 /** Target share of slots shown, size factor and darkness per cloud type. */
@@ -120,6 +122,8 @@ export class Clouds {
   private kindOf = new Uint8Array(SLOTS);
   private sz = new Float32Array(SLOTS);
   private pu = new Float32Array(SLOTS);
+  /** Per slot: entered under a deck (a bank piece), fixed at entry like the kind. */
+  private bk = new Uint8Array(SLOTS);
   private boost = 0;
   /** Deck texture offset (the same drift, kept apart because it wraps at one tile). */
   private du = 0;
@@ -138,6 +142,8 @@ export class Clouds {
   private litPos: THREE.BufferAttribute;
   private litUv: THREE.BufferAttribute;
   private cnt = new Uint8Array(SLOTS * PARTS);
+  /** Copies of a quad in the lit layer that read the rim variant (lower half of the `lit` map). */
+  private cntR = new Uint8Array(SLOTS * PARTS);
   private stormK = 0;
   private litOn = false;
   /** Drift of the layer in layer heights (wraps at 2 BOX), and the weather clock for the slow breathing. */
@@ -153,7 +159,7 @@ export class Clouds {
     const cs = decal.map?.colorSpace ?? THREE.SRGBColorSpace;
     const atlas = this.atlas = dataTex(ATLAS_W, ATLAS_H, cs, false);
     this.deckTex = dataTex(DECK_S, DECK_S, cs, true);
-    this.litTex = dataTex(ATLAS_W, ATLAS_H, cs, false);
+    this.litTex = dataTex(ATLAS_W, 2 * ATLAS_H, cs, false);
     this.deckTex.repeat.set(TILES_U, TILES);
     this.edgeTex = dataTex(2 * DECK_S, DECK_S, cs, true);
     this.edgeTex.wrapS = THREE.ClampToEdgeWrapping;
@@ -315,7 +321,7 @@ export class Clouds {
     let mis = 0;
     for (let i = 0; i < SLOTS; i++) {
       const w = this.want(i, T[0], under);
-      if (snap) { this.gen[i] = (this.gen[i] + 1) & 0xffff; const w2 = this.want(i, T[0], under); this.show[i] = w2 & 1; this.kindOf[i] = w2 >> 1; this.sz[i] = T[1]; }
+      if (snap) { this.gen[i] = (this.gen[i] + 1) & 0xffff; const w2 = this.want(i, T[0], under); this.show[i] = w2 & 1; this.kindOf[i] = w2 >> 1; this.sz[i] = T[1]; this.bk[i] = under ? 1 : 0; }
       else if ((w & 1) !== this.show[i] || (this.show[i] === 1 && (w >> 1) !== this.kindOf[i])) mis++;
     }
     const pending = mis / SLOTS;
@@ -463,6 +469,8 @@ export class Clouds {
     // The painted light side faces the sun, at night the moon.
     const Ld = h < -0.04 && E.moonLight > 0 ? E.moonDir : E.sunDir;
     const sx = Ld.x, sz = Ld.z;
+    // Toward the light (low sun, or the moon at night): clouds near its direction get the rim variant on top.
+    const rimOn = !flashing && (low > 0.05 || moonK > 0.05);
     let n = 0, pn = 0;
     for (let i = 0; i < SLOTS; i++) {
       // Lattice in the wind's frame: u along the wind (drifting, wrapping far under the horizon), v across.
@@ -472,7 +480,7 @@ export class Clouds {
       if (u < this.pu[i] - 1 && !snap) {
         this.gen[i] = (this.gen[i] + 1) & 0xffff;
         const w = this.want(i, T[0], under);
-        this.show[i] = w & 1; this.kindOf[i] = w >> 1; this.sz[i] = T[1];
+        this.show[i] = w & 1; this.kindOf[i] = w >> 1; this.sz[i] = T[1]; this.bk[i] = under ? 1 : 0;
       }
       this.pu[i] = u;
       if (!this.show[i]) continue;
@@ -482,16 +490,17 @@ export class Clouds {
       if (Math.abs(v) < OVERHEAD) v = v < 0 ? -OVERHEAD : OVERHEAD;
       const xr = u * wx - v * wz, zr = u * wz + v * wx, r = Math.hypot(xr, zr);
       if (r > R_OUT) continue;
-      const isScud = this.kindOf[i] === 1;
+      const isScud = this.kindOf[i] === 1, bank = this.bk[i] === 1 && !isScud;
       // Size is the cloud's own (small puffs to broad banks), fixed for its life; it only breathes a little.
       const br = 1 + 0.04 * Math.sin(this.t * (0.11 + 0.1 * h3) + h4 * 6.28), bh = 1 + 0.05 * Math.sin(this.t * (0.09 + 0.08 * h4) + h3 * 6.28);
       // A cloud on a high route is limited in size by how near it will pass (known from its row, so from entry on).
       const near = Math.hypot(v, dome(Math.abs(v)));
-      const big = h3 * Math.sqrt(h3), w = H * Math.min((0.5 + 1.75 * big) * this.sz[i], MAX_ANG * near) * br;
+      // Bank pieces: no small puffs (they hung under the line as drips). Open sky: routes that pass low carry some large heaps.
+      const big0 = h3 * Math.sqrt(h3), big = bank ? 0.25 + 0.75 * big0 : Math.min(1, big0 + (h4 > 0.45 ? 0.45 * smooth(2.6, 5, Math.abs(v)) : 0)), w = H * Math.min((0.5 + 1.75 * big) * this.sz[i], MAX_ANG * near) * br;
       // Flatter toward the horizon (seen more from the side, through more air).
       const flat = 0.62 + 0.38 * smooth(R_HOR, 2.5, r);
       const hh = w * (CH / CW) * 1.25 * flat * bh;
-      const x = xr * H, z = zr * H, y = H * dome(r) * (1 - 0.04 * h4);
+      const x = xr * H, z = zr * H, y = H * dome(r) * (bank ? BANK_LO + BANK_SPAN * h2 : 1 - 0.04 * h4);
       // Facing the camera: level across, and leaning back with elevation so a high cloud is not seen edge-on.
       const rx = -zr / r, rz = xr / r, dd = Math.hypot(x, y, z), el = Math.max(0, y) / dd, cu = Math.sqrt(1 - el * el);
       const ux = -(xr / r) * el, uz = -(zr / r) * el, uy = cu;
@@ -501,12 +510,14 @@ export class Clouds {
       if (this.probe && pn < this.probe.length / 7) this.probe.set([i, gn, cam.position.x + x, camY + y, cam.position.z + z, w, hh], 7 * pn++);
       // Copies in the flash layer: by the angle between the cloud and the strike, and nearer clouds more.
       const cb = (xr * bx + zr * bz) / r, copies = !flashing ? 1 : isScud ? 0 : cb > 0.9 ? 3 : cb > 0.6 ? 2 : cb > 0.1 && r < 6 ? 1 : 0;
+      // Angle to the light in 3D: within about 55 degrees one rim copy, a cloud crossing the sun or moon two.
+      const cl3 = (x * Ld.x + Math.max(0, y) * Ld.y + z * Ld.z) / (dd || 1), rimC = !rimOn || isScud ? 0 : cl3 > 0.93 ? 2 : cl3 > 0.58 ? 1 : 0;
       for (let j = 0; j < parts; j++) {
-        this.cnt[n] = copies;
+        this.cnt[n] = copies; this.cntR[n] = rimC;
         const a = hash2(i * 3 + j + 0.2, gn * 3.1 + 41.3), b = hash2(i * 3 + j + 0.6, gn * 1.3 + 57.9);
         // A cloud is put together from one to three painted heaps side by side on one base line: no two are the same.
         const off = j === 0 ? 0 : (j === 1 ? -1 : 1) * w * (0.24 + 0.2 * a), ws = j === 0 ? 1 : 0.55 + 0.35 * b;
-        const cell = isScud ? SCUD0 + (a > 0.5 ? 1 : 0) : big < 0.2 ? Math.floor(a * 5) : 2 + Math.floor(a * (HEAPS - 2));
+        const cell = isScud || (bank && b > 0.55) ? SCUD0 + (a > 0.5 ? 1 : 0) : big < 0.2 ? Math.floor(a * 5) : 2 + Math.floor(a * (HEAPS - 2));
         this.quad(n++, cam.position.x + x + rx * off, camY + y, cam.position.z + z + rz * off, rx, rz, ux, uy, uz, w * ws * (isScud ? 0.75 : 0.5), (isScud ? hh * 0.8 : hh) * (j === 0 ? 1 : 0.6 + 0.4 * b), cell, isScud ? b > 0.5 : flip);
       }
     }
@@ -517,7 +528,7 @@ export class Clouds {
       for (let j = 0; j < EDGE_N && n < SLOTS * PARTS; j++) {
         const a = hash2(j + 0.4, 7.7), b = hash2(j + 0.9, 3.1), vv = (j - (EDGE_N - 1) / 2) * 2.6 + (a - 0.5), uu = eu + sgn * (0.5 * b - 0.9);
         const ex = (uu * wx - vv * wz) * HD, ez = (uu * wz + vv * wx) * HD;
-        this.cnt[n] = 0;
+        this.cnt[n] = 0; this.cntR[n] = 0;
         // Level card: width across the wind, "up" along it, out from the deck.
         this.quad(n++, cam.position.x + ex, camY + HD * 0.985, cam.position.z + ez, -wz, wx, wx * sgn, 0, wz * sgn, HD * (2.2 + 1.2 * a), HD * (2.6 + 1.4 * b), SCUD0 + (j & 1), a > 0.5);
       }
@@ -526,7 +537,12 @@ export class Clouds {
     let m = 0;
     if (this.litOn) {
       const P = this.pos.array as Float32Array, U = this.uv.array as Float32Array, P2 = this.litPos.array as Float32Array, U2 = this.litUv.array as Float32Array, cap = P2.length / 12;
-      for (let q = 0; q < n; q++) for (let c2 = this.cnt[q]; c2 > 0 && m < cap; c2--, m++) { P2.set(P.subarray(q * 12, q * 12 + 12), m * 12); U2.set(U.subarray(q * 8, q * 8 + 8), m * 8); }
+      // The lit map is two atlases stacked: v 0.5..1 = lit flank (as before), v 0..0.5 = rim variant.
+      for (let q = 0; q < n; q++) for (let c2 = this.cnt[q] + this.cntR[q]; c2 > 0 && m < cap; c2--, m++) {
+        P2.set(P.subarray(q * 12, q * 12 + 12), m * 12);
+        const vo = c2 > this.cntR[q] ? 0.5 : 0, uo = q * 8, mo = m * 8;
+        for (let e = 0; e < 8; e += 2) { U2[mo + e] = U[uo + e]; U2[mo + e + 1] = vo + 0.5 * U[uo + e + 1]; }
+      }
       if (m > 0) {
         this.heapsLit.geometry.setDrawRange(0, m * 6);
         this.litPos.clearUpdateRanges(); this.litPos.addUpdateRange(0, m * 12); this.litPos.needsUpdate = true;
