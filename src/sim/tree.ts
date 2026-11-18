@@ -173,6 +173,8 @@ const SHELL_OPEN = 0.28;
 const SAG_RIGHT = 3;
 /** Steepest downward growth direction (unit dy) a shoot aims for when `growth.weeping` is 0; weeping >= 1 lifts the limit. */
 const DOWN_MAX = 0.3;
+/** Years 2-3: steepest wanted direction (sine of the elevation) of scaffold wood; order 2 is 0.1 lower. */
+const YEAR_UP_MAX = 0.7;
 /**
  * Seedling / sapling phase (only when `crown.bole` > 0). Wood that grows below JUV_H metres is juvenile: its scale
  * `juv` runs from JUV_MIN at the soil to 1 at JUV_H and multiplies internode length; speed, radius floor and leaf size
@@ -636,6 +638,16 @@ export class TreeSim {
       const h = Math.hypot(dx, dz);
       if (h > 1e-4) { const f = Math.sqrt(1 - minDy * minDy) / h; dx *= f; dz *= f; dy = minDy; }
     }
+    // Years 2-3, scaffold wood (orders 1-2, not sup): never wanted steeper than YEAR_UP_MAX above the horizontal, so
+    // the shell above cannot pull the upper limbs into a vase (pass 2: eM 65-82 degrees on limbs from 4.5 m up).
+    if (this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && !ch.sup && ch.juv === undefined) {
+      const maxDy = YEAR_UP_MAX - (ch.order - 1) * 0.1;
+      if (dy > maxDy) {
+        let hx = dx, hz = dz, h = Math.hypot(hx, hz);
+        if (h < 0.05) { const rr = Math.hypot(n.rx, n.rz) || 1; hx = n.rx / rr; hz = n.rz / rr; h = 1; }
+        const f = Math.sqrt(1 - maxDy * maxDy) / h; dx = hx * f; dz = hz * f; dy = maxDy;
+      }
+    }
     const maxT = (g.maxTurn * Math.PI) / 180;
     const cosA = Math.max(-1, Math.min(1, dx * n.dx + dy * n.dy + dz * n.dz));
     const ang = Math.acos(cosA);
@@ -693,7 +705,7 @@ export class TreeSim {
     const ch = this.chains[nd.chain];
     if (ch.order < 1 || ch.order > 2 || ch.sup || ch.juv !== undefined) return 0;
     const rr = Math.hypot(nd.rx, nd.rz);
-    return YEAR_SETTLE * (ch.order === 2 ? YEAR_SETTLE_O2 : 1) * this.ageQ * nd.len * h * (nd.subLen / (nd.subLen + YEAR_SETTLE_L)) * smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, rr);
+    return YEAR_SETTLE * (ch.order === 2 ? YEAR_SETTLE_O2 : 1) * this.ageQ * nd.len * Math.sqrt(h) * (nd.subLen / (nd.subLen + YEAR_SETTLE_L)) * smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, rr);
   }
 
   /** Settling is on once the scaffold is picked and the tree has aged (years 2-3). */
