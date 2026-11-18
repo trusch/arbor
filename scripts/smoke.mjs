@@ -257,16 +257,14 @@ try {
     check('director never moves a hand-set view (N key, forced shot and an event while manual); next-shot button hidden',
       a0[6] === 1 && a1[6] === 1 && a1[7] === 1 && Math.max(...a0.slice(0, 6).map((v, j) => Math.abs(v - a1[j]))) < 1e-3, JSON.stringify(a1.map((v) => +v.toFixed(3))));
     // Grab a low shot and zoom far out: the camera must stay above the terrain (maxPolarAngle keeps the low grab angle).
-    await dp.keyboard.press('c'); await dp.waitForTimeout(300);
-    await dp.evaluate(() => window.__arbor.stage.director.go('rise', true));
-    await dp.waitForTimeout(3600);
-    const grab = await dp.evaluate(() => window.__arbor.stage.controls.getPolarAngle() / Math.PI);
+    // The pose a low director shot hands over (eye 0.6 m, looking up into the crown), grabbed as a drag does.
+    const grab = await dp.evaluate(() => { const s = window.__arbor.stage, n = window.__arbor.sim.nodes[0]; s.camera.position.set(n.wx + 7, 0.6, n.wz); s.controls.target.set(n.wx, 5, n.wz); s.director.go('rise'); s.takeControl(); s.controls.update(); return s.controls.getPolarAngle() / Math.PI; });
     await dp.mouse.move(300, 250); await dp.mouse.down(); await dp.mouse.move(400, 250, { steps: 6 }); await dp.mouse.up();
     let lowY = 1e9;
     for (let i = 0; i < 14; i++) { await dp.mouse.wheel(0, 400); await dp.waitForTimeout(120); lowY = Math.min(lowY, await dp.evaluate(() => { const c = window.__arbor.stage.camera.position; return c.y - window.__arbor.terrainHeight(c.x, c.z); })); }
     await camSettled(dp);
     const gz = await dp.evaluate(() => { const s = window.__arbor.stage, c = s.camera.position; return { y: c.y - window.__arbor.terrainHeight(c.x, c.z), d: c.distanceTo(s.controls.target), polar: s.controls.getPolarAngle() / Math.PI, manual: s.manual }; });
-    check('hand-set zoom-out from a low director shot stays above the terrain', gz.manual && lowY >= 0.29 && gz.y >= 0.29 && gz.d > 20, JSON.stringify({ grab: +grab.toFixed(3), lowY: +lowY.toFixed(2), ...gz }));
+    check('hand-set zoom-out from a low director shot stays above the terrain', gz.manual && grab > 0.52 && lowY >= 0.29 && gz.y >= 0.29 && gz.d > 20, JSON.stringify({ grab: +grab.toFixed(3), lowY: +lowY.toFixed(2), ...gz }));
     await dp.close();
   }
   {
