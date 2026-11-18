@@ -367,21 +367,26 @@ export class BranchMesh {
     const n = this.vUsed;
     if (n === 0) return false;
     const P = this.pos, R = this.rest, VN = this.vNode, cV = this.cV, cR = this.cR, cM = this.cM;
+    let lo = n, hi = 0;
     // Only the vertices drawn: each live chain's used rings ((nodes + 1) x (radial + 1) from its range start). Slack,
     // abandoned ranges and pruned chains are never indexed, so their positions do not matter (about a third to half
     // of the buffer on a big tree).
     for (let c = 0; c < this.nC; c++) {
       const rc = cR[c];
       if (!rc || cM[c] < 1) continue;
-      const v0 = cV[c], v1 = v0 + (cM[c] + 1) * (rc + 1);
-      for (let v = v0, o = v0 * 3; v < v1; v++, o += 3) {
-        const q = VN[v] * 3;
-        P[o] = R[o] + off[q]; P[o + 1] = R[o + 1] + off[q + 1]; P[o + 2] = R[o + 2] + off[q + 2];
+      // Ring by ring: the rc + 1 vertices of a ring belong to one node, so its offset is read once per ring.
+      const v0 = cV[c], v1 = v0 + (cM[c] + 1) * (rc + 1), w = (rc + 1) * 3;
+      if (v0 < lo) lo = v0;
+      if (v1 > hi) hi = v1;
+      for (let v = v0, o = v0 * 3; v < v1; v += rc + 1) {
+        const q = VN[v] * 3, dx = off[q], dy = off[q + 1], dz = off[q + 2];
+        for (const e = o + w; o < e; o += 3) { P[o] = R[o] + dx; P[o + 1] = R[o + 1] + dy; P[o + 2] = R[o + 2] + dz; }
       }
     }
+    if (hi <= lo) return false;
     const a = this.geo.attributes.position as THREE.BufferAttribute;
     a.clearUpdateRanges();
-    a.addUpdateRange(0, n * 3);
+    a.addUpdateRange(lo * 3, (hi - lo) * 3);
     a.needsUpdate = true;
     this.swayed = true;
     return true;

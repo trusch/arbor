@@ -25,8 +25,19 @@ export class Sway {
   maxNode = -1;
   lastMs = 0;
   /** Accumulated (raw) rotation per node: of the pose itself (direct), of the newest complete key (keyed). Probes read it. */
-  TH = new Float32Array(0);
-  private THd = new Float32Array(0);
+  get TH(): Float32Array {
+    if (!this.keyed) return this.THd;
+    // Keyed: the blend of the two keys' rotations, like the offsets (first order: the pose of the blended rotation
+    // is the blend of the poses). Filled only when somebody reads it (probes), once per update.
+    if (this.thDirty) {
+      if (this.THb.length < this.D.length) this.THb = new Float32Array(this.D.length);
+      const B = this.THb, T0 = this.T0, T1 = this.T1, al = this.slice / this.kR, LV = this.LV;
+      for (let j = 0; j < this.nLive; j++) { const o = LV[j] * 3; B[o] = T0[o] + (T1[o] - T0[o]) * al; B[o + 1] = T0[o + 1] + (T1[o + 1] - T0[o + 1]) * al; B[o + 2] = T0[o + 2] + (T1[o + 2] - T0[o + 2]) * al; }
+      this.thDirty = false;
+    }
+    return this.THb;
+  }
+  private THd = new Float32Array(0); private THb = new Float32Array(0); private thDirty = true;
   private F = new Float32Array(0);
   private S = new Float32Array(0);
   private K = new Float32Array(0);
@@ -46,10 +57,10 @@ export class Sway {
    * the update interval holds. Below `keyMin` nothing here runs (the default tree is the direct cascade, bit for bit).
    */
   private R0 = new Float32Array(0); private R1 = new Float32Array(0); private RN = new Float32Array(0);
-  private T1 = new Float32Array(0); private TN = new Float32Array(0);
+  private T0 = new Float32Array(0); private T1 = new Float32Array(0); private TN = new Float32Array(0);
   private FN = new Float32Array(0); private fnChains = 0; private keyT = 0; private keyAmount = 0;
   private keyed = false; private slice = 0; private kR = 1; private kB = new Int32Array(KEY_MAX + 1);
-  private lastT = NaN; private lastNow = NaN; private dtW = 0.05; private dtR = 0.05;
+  private lastT = NaN; private dtW = 0.05;
   /** Live-node count from which key poses are used (`Infinity` = never: every node every update; 0 = always). Leaves at 0.8 x. */
   keyMin = KEY_ON;
   /** Last update: nodes run through the cascade, keyed or not, slices per key. */
@@ -70,9 +81,9 @@ export class Sway {
     const t0 = performance.now();
     if (this.D.length < N * 3) {
       const cap = Math.ceil(N * 1.5) + 256;
-      this.D = new Float32Array(cap * 3); this.THd = new Float32Array(cap * 3); this.TH = this.THd; this.P = new Int32Array(cap);
+      this.D = new Float32Array(cap * 3); this.THd = new Float32Array(cap * 3); this.THb = new Float32Array(0); this.P = new Int32Array(cap);
       // Key arrays exist only once a tree is large enough to use them.
-      this.R0 = this.R1 = this.RN = this.T1 = this.TN = new Float32Array(0); this.keyed = false;
+      this.R0 = this.R1 = this.RN = this.T0 = this.T1 = this.TN = new Float32Array(0); this.keyed = false;
     }
     if (this.F.length < chains.length * 3) {
       const f = new Float32Array((chains.length * 2 + 64) * 3), fn = new Float32Array(f.length);
@@ -85,7 +96,7 @@ export class Sway {
       if (this.LV.length < N) this.LV = new Int32Array(D.length / 3);
       if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); this.CAP = new Float32Array(D.length / 3); this.W = new Float32Array(D.length / 3); }
       const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W, LV = this.LV, TH = this.THd;
-      const kz = this.keyed ? [this.R0, this.R1, this.RN, this.T1, this.TN] : [];
+      const kz = this.keyed ? [this.R0, this.R1, this.RN, this.T0, this.T1, this.TN] : [];
       let nLive = 0;
       for (let i = 0, o = 0; i < N; i++, o += 3) {
         const nd = nodes[i], pi = nd.parent, pn = pi >= 0 ? nodes[pi] : undefined;
@@ -128,13 +139,13 @@ export class Sway {
       // own segment turned by the parent's key rotation (copying the offset alone draws a new segment in rest
       // orientation on a leaning parent). The key in progress reaches it in its last slice (new ids are the largest).
       if (this.keyed) {
-        const R0 = this.R0, R1 = this.R1, T1 = this.T1, oldN = this.cN > 0 ? Math.min(this.cN, N) : 0;
+        const R0 = this.R0, R1 = this.R1, T0 = this.T0, T1 = this.T1, oldN = this.cN > 0 ? Math.min(this.cN, N) : 0;
         for (let i = oldN, o = oldN * 3; i < N; i++, o += 3) {
           if (C[i] < 0) continue;
           const po = P[i] * 3;
           let tx = T1[po], ty = T1[po + 1], tz = T1[po + 2];
           const tq = tx * tx + ty * ty + tz * tz, cap = CAP[i], sat = cap / Math.sqrt(cap * cap + tq);
-          T1[o] = tx; T1[o + 1] = ty; T1[o + 2] = tz;
+          T1[o] = tx; T1[o + 1] = ty; T1[o + 2] = tz; T0[o] = T0[po]; T0[o + 1] = T0[po + 1]; T0[o + 2] = T0[po + 2];
           tx *= sat; ty *= sat; tz *= sat;
           const sx = S[o], sy = S[o + 1], sz = S[o + 2];
           let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
@@ -148,26 +159,25 @@ export class Sway {
       this.nLive = nLive;
       this.cGeom = sim.geomVersion; this.cTopo = sim.topology; this.cN = N;
     }
-    const t = wind.t, now = performance.now(), nLive = this.nLive, LV = this.LV;
-    // Update interval, wind clock and real time (smoothed; a gap such as a hidden tab does not count).
+    const t = wind.t, nLive = this.nLive, LV = this.LV;
+    // Update interval on the wind clock (smoothed; a gap such as a hidden tab does not count).
     if (this.lastT === this.lastT) {
-      const dw = t - this.lastT, dr = (now - this.lastNow) / 1000;
+      const dw = t - this.lastT;
       if (dw > 0 && dw < 0.6) this.dtW += (dw - this.dtW) * 0.3;
-      if (dr > 0 && dr < 0.6) this.dtR += (dr - this.dtR) * 0.3;
     }
-    this.lastT = t; this.lastNow = now;
+    this.lastT = t;
     const wasKeyed = this.keyed;
     const keyed = nLive >= (wasKeyed ? this.keyMin * 0.8 : this.keyMin);
     let maxSq = 0, maxNode = -1, evaluated = 0;
     if (!keyed) {
       // Direct: the pose of this instant, every live node.
-      this.keyed = false; this.TH = this.THd;
+      this.keyed = false;
       this.forces(sim, wind, amount, F, 0, t);
       evaluated = this.cascade(F, this.THd, D, 0, N);
     } else {
       if (this.R0.length < D.length) {
         this.R0 = new Float32Array(D.length); this.R1 = new Float32Array(D.length); this.RN = new Float32Array(D.length);
-        this.T1 = new Float32Array(D.length); this.TN = new Float32Array(D.length);
+        this.T0 = new Float32Array(D.length); this.T1 = new Float32Array(D.length); this.TN = new Float32Array(D.length);
       }
       const FN = this.FN;
       if (!wasKeyed) {
@@ -175,20 +185,21 @@ export class Sway {
         // full, as the direct path would, and takes it as the newest key; the following key is computed in full too,
         // once, so the blend continues from here without a stop.
         this.keyed = true; this.stats.keys = 0;
-        this.R0.fill(0); this.R1.fill(0); this.RN.fill(0); this.T1.fill(0); this.TN.fill(0);
+        this.R0.fill(0); this.R1.fill(0); this.RN.fill(0); this.T0.fill(0); this.T1.fill(0); this.TN.fill(0);
         this.forces(sim, wind, amount, F, 0, t);
         evaluated = this.cascade(F, this.T1, this.R1, 0, N);
         this.kR = this.pickR();
         this.forces(sim, wind, amount, FN, 0, t + this.kR * this.dtW);
         evaluated += this.cascade(FN, this.TN, this.RN, 0, N);
         this.slice = this.kR; // the key in progress is complete: the next update starts a cycle
+        this.T0.set(this.T1); // blend factor 1 below reads T1 either way; T0 only must not be stale
         D.set(this.R1.subarray(0, N * 3));
         for (let j = 0; j < nLive; j++) { const o = LV[j] * 3, dq = D[o] * D[o] + D[o + 1] * D[o + 1] + D[o + 2] * D[o + 2]; if (dq > maxSq) { maxSq = dq; maxNode = LV[j]; } }
       } else {
         if (this.slice >= this.kR) {
           // Cycle start: the finished key becomes the target; the next one is for the last update of the NEXT cycle.
           const r = this.R0; this.R0 = this.R1; this.R1 = this.RN; this.RN = r;
-          const th = this.T1; this.T1 = this.TN; this.TN = th;
+          const th = this.T0; this.T0 = this.T1; this.T1 = this.TN; this.TN = th;
           this.slice = 0; this.stats.keys++;
           const R = this.kR = this.pickR(), kB = this.kB;
           for (let s = 0; s < R; s++) kB[s] = LV[Math.floor(nLive * s / R)] ?? 0;
@@ -206,7 +217,7 @@ export class Sway {
           if (dq > maxSq) { maxSq = dq; maxNode = i; }
         }
       }
-      this.TH = this.T1;
+      this.thDirty = true;
     }
     if (!keyed) { maxSq = this.mSq; maxNode = this.mNode; }
     this.stats.evaluated = evaluated; this.stats.live = nLive; this.stats.keyed = keyed; this.stats.slices = keyed ? this.kR : 1;
@@ -216,9 +227,14 @@ export class Sway {
     return true;
   }
 
-  /** Slices per key: a key about every `KEY_S` seconds of real time, at most `KEY_MAX` updates apart. */
+  /**
+   * Slices per key: a key about every `KEY_S` seconds of the WIND clock, at most `KEY_MAX` updates apart. The clock
+   * runs up to 2.6x faster in a storm and twigs swing at up to 7 rad/s of it, so in a storm on a slow device this
+   * is 1: every update computes the whole pose, as the direct path does (keys 0.5 clock seconds apart blended the
+   * whip of thin wood away: one-curve check 0.28 rad).
+   */
   private pickR(): number {
-    const r = Math.round(KEY_S / this.dtR);
+    const r = Math.round(KEY_S / this.dtW);
     return r < 1 ? 1 : r > KEY_MAX ? KEY_MAX : r;
   }
 
@@ -300,6 +316,6 @@ const OSC = 0.25;
 const D_LIM = 2.0;
 /**
  * Key poses: used from KEY_ON live nodes (the default tree stays under 6k; left again below 0.8 x), one key about
- * every KEY_S seconds of real time and at most KEY_MAX updates apart.
+ * every KEY_S seconds of the wind clock and at most KEY_MAX updates apart.
  */
 const KEY_ON = 9000, KEY_S = 0.2, KEY_MAX = 4;
