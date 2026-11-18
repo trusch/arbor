@@ -4,6 +4,8 @@ import type { BarkTextures } from './textures';
 import { tel } from '../tel';
 
 const BARK_V_SCALE = 0.35; // metres of length per texture repeat (scaled by radius)
+const COLLAR_FLARE = 1.55; // collar ring radius / child radius (capped by the parent's radius)
+const COLLAR_BLEND = 0.9; // weight of the parent's surface normal in the collar ring's normals
 
 /**
  * Tapered generalized-cylinder mesh for all chains. Each chain is one tube
@@ -73,7 +75,7 @@ export class BranchMesh {
       const R = BranchMesh.radial(ch.order, nodes[ch.nodes[1]].radius);
       radials[c] = R;
       sig = (sig * 31 + R * m) | 0;
-      const rings = m + 1; // +1 tip cap ring
+      const rings = m + 1 + (c > 0 ? 1 : 0); // +1 tip cap ring, +1 collar ring on every child chain
       vCount += rings * (R + 1);
       iCount += (rings - 1) * R * 6;
     }
@@ -123,6 +125,8 @@ export class BranchMesh {
         const nd = nodes[ids[kk]];
         let cx = nd.wx, cy = nd.wy, cz = nd.wz;
         let r = k === 0 ? nodes[ids[1]].radius : nd.radius;
+        // Child chains start on the parent's axis: keep that ring inside the parent (nothing shows on its far side).
+        if (k === 0 && c > 0) r = Math.min(r * COLLAR_FLARE, 0.85 * Math.max(nd.radius, r));
         // Tangent: central difference, one-sided at ends.
         const ia = ids[Math.max(0, kk - 1)], ib = ids[Math.min(m - 1, kk + 1)];
         const a = nodes[ia], b = nodes[ib];
@@ -134,6 +138,7 @@ export class BranchMesh {
         }
         let tl = Math.hypot(tx, ty, tz);
         if (tl < 1e-7) { tx = nd.wdx; ty = nd.wdy; tz = nd.wdz; tl = 1; }
+        const tl0 = tl;
         tx /= tl; ty /= tl; tz /= tl;
         // Root flare: trunk widens toward the ground with buttress lobes.
         let lobe = 0;
@@ -171,9 +176,40 @@ export class BranchMesh {
           VN[v] = ids[kk];
           v++;
         }
+        if (k === 0 && c > 0) {
+          // Collar ring: where the child's axis leaves the parent's surface, wider than the child (tapers to the
+          // child's radius at its first node), normals blended toward the parent's surface normal, and tied to the
+          // PARENT node for `applyOffsets` (moves rigidly with the parent: no gap under sway).
+          const pr = Math.max(nd.radius, 1e-4), r1 = nodes[ids[1]].radius;
+          const ux = nd.wdx, uy = nd.wdy, uz = nd.wdz;
+          const dt = tx * ux + ty * uy + tz * uz;
+          const exit = pr / Math.max(0.4, Math.sqrt(Math.max(0, 1 - dt * dt)));
+          const e = Math.min(exit, 0.7 * tl0);
+          const rc = Math.min(r1 * COLLAR_FLARE, Math.max(r1, 0.95 * pr));
+          const ex = cx + tx * e, ey = cy + ty * e, ez = cz + tz * e;
+          along += e; px = ex; py = ey; pz = ez;
+          const vc = along * vScale;
+          for (let j = 0; j <= R; j++) {
+            const ox = cs[j] * nx + sn[j] * bx, oy = cs[j] * ny + sn[j] * by, oz = cs[j] * nz + sn[j] * bz;
+            const o3 = v * 3;
+            const qx = ex + ox * rc, qy = ey + oy * rc, qz = ez + oz * rc;
+            P[o3] = qx; P[o3 + 1] = qy; P[o3 + 2] = qz;
+            // Parent surface normal at this vertex: away from the parent's axis.
+            let wx = qx - cx, wy = qy - cy, wz = qz - cz;
+            const wd = wx * ux + wy * uy + wz * uz;
+            wx -= ux * wd; wy -= uy * wd; wz -= uz * wd;
+            const wl = Math.hypot(wx, wy, wz) || 1;
+            let mx = ox + COLLAR_BLEND * wx / wl, my = oy + COLLAR_BLEND * wy / wl, mz = oz + COLLAR_BLEND * wz / wl;
+            const ml = Math.hypot(mx, my, mz) || 1;
+            Nn[o3] = mx / ml; Nn[o3 + 1] = my / ml; Nn[o3 + 2] = mz / ml;
+            UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vc;
+            VN[v] = ids[0];
+            v++;
+          }
+        }
       }
       if (writeIndex) {
-        const rings = m + 1;
+        const rings = m + 1 + (c > 0 ? 1 : 0);
         for (let k = 0; k < rings - 1; k++) {
           const r0 = vStart + k * (R + 1), r1 = r0 + R + 1;
           for (let j = 0; j < R; j++) {

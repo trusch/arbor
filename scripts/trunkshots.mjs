@@ -29,7 +29,7 @@ try {
     page.setDefaultTimeout(180000);
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
     const still = cs.probe === 'storm' || cs.probe === 'move' ? '' : '&sway=0';
-    await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false${phone ? '' : '&quality=High'}${cs.probe === 'sway0' ? '&sway=0' : still}`);
+    await page.goto(`http://localhost:${PORT}/?cycle=false&nogui=1&hideui=1&speed=0&autoRotate=false&cinema=false${phone ? '' : '&quality=High'}${cs.probe === 'sway0' ? '&sway=0' : still}&weather=${cs.probe === 'storm' ? 'storm' : 'calm'}`);
     await page.waitForFunction(() => window.__arbor !== undefined);
     await page.evaluate(([t, h]) => { const A = window.__arbor; A.params.sky.timeOfDay = h; A.params.camera.autoFrame = false; return A.fastForward(t); }, [cs.t, cs.hour]);
     await page.evaluate((probe) => {
@@ -37,7 +37,6 @@ try {
       if (probe === 'double') { m.side = 2; m.needsUpdate = true; }
       if (probe === 'noshadow') { A.branches.mesh.receiveShadow = false; m.needsUpdate = true; A.stage.renderer.shadowMap.enabled = false; }
       if (probe === 'noao' && A.stage.post?.gtao) A.stage.post.gtao.enabled = false;
-      if (probe === 'storm') { try { A.wind.base = 14; A.wind.gust = 1; } catch {} if (A.params.wind) { A.params.wind.speed = 14; } }
     }, cs.probe);
     const name = `${cs.mode}-t${cs.t}-h${cs.hour}-${cs.kind}-${cs.probe}`;
     const files = [];
