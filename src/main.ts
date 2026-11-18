@@ -378,6 +378,8 @@ let rebuilds = 0;
 let swayLeafMs = 0;
 /** Wind sway (render-side offsets from the rest pose; ?sway=0). */
 const sway = new Sway();
+/** ?swayrate=1: every node every update (P4 two-rate sway off, the reference). */
+if (query.get('swayrate') === '1') sway.twoRate = false;
 /** Tree was reset: rebuild everything on the next frame, drop an open leaf pass, re-run the paused structure pass. */
 function invalidate() {
   branchTime = -1; leavesDirty = true; structPV = -1;
@@ -750,7 +752,7 @@ requestAnimationFrame(loop);
   clouds,
   debris,
   sway,
-  swayStats: () => ({ live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
+  swayStats: () => ({ rate: { ...sway.stats }, live: sway.live, maxOffset: sway.maxOffset, maxNode: sway.maxNode, nodeMs: sway.lastMs, leafMs: swayLeafMs }),
   leafFall,
   blossom,
   critters,
