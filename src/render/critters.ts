@@ -72,7 +72,7 @@ const KINDS = [
   // tit: black cap and bib, white cheek, yellow belly, blue-grey wing with a white bar
   { L: 0.14, fat: 1.0, head: 1.02, beak: 0.65, tail: 0.95, wing: 0.95, glide: false, back: '#66763a', belly: '#e3c93e', breast: '', face: '', cap: '#14161a', cheek: '#f1efe6', bib: '#14161a', beakC: '#1c1c1e', ring: '', wing0: '#2c3a4a', cov: '#5a7186', bar: '#eeeeea', under: '#c4c8c8', leg: '#3c4652' },
   // blackbird: larger, slimmer, long tail, yellow beak and eye ring; glides between bursts
-  { L: 0.25, fat: 0.9, head: 0.86, beak: 1.2, tail: 1.3, wing: 1.1, glide: true, back: '#1b1a19', belly: '#2b2724', breast: '', face: '', cap: '', cheek: '', bib: '', beakC: '#eba21c', ring: '#e2a820', wing0: '#151413', cov: '#242120', bar: '', under: '#3a3531', leg: '#3a2c20' },
+  { L: 0.25, fat: 0.9, head: 0.86, beak: 1.2, tail: 1.3, wing: 1.1, glide: true, back: '#2b2826', belly: '#383330', breast: '', face: '', cap: '', cheek: '', bib: '', beakC: '#eba21c', ring: '#e2a820', wing0: '#211f1d', cov: '#302c2a', bar: '', under: '#4a443f', leg: '#3a2c20' },
 ];
 /** Body profile, tail root to beak tip: x along the body, centre height, half height, half width (units of body length). */
 const RINGS = [[-0.25, 0.0, 0.014, 0.014], [-0.18, 0.0, 0.062, 0.056], [-0.08, 0.0, 0.115, 0.105], [0.04, 0.005, 0.135, 0.125], [0.14, 0.02, 0.125, 0.115], [0.21, 0.05, 0.096, 0.09], [0.27, 0.08, 0.092, 0.086], [0.32, 0.09, 0.082, 0.079], [0.36, 0.085, 0.056, 0.052], [0.385, 0.08, 0.026, 0.022], [0.47, 0.068, 0.002, 0.002]];
@@ -101,6 +101,8 @@ function birdAtlas() {
     g.strokeStyle = 'rgba(0,0,0,0.22)'; g.lineWidth = 1.5;
     for (let q = 0; q < 14; q++) { const x = 6 + q * 6; g.beginPath(); g.moveTo(x, y + 2 + (q % 3) * 4); g.lineTo(x - 7, y + 12 + (q % 3) * 4); g.stroke(); }
     g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, y, 22, 64);
+    g.strokeStyle = 'rgba(255,255,255,0.1)';
+    for (let q = 0; q < 12; q++) { const x = 9 + q * 7; g.beginPath(); g.moveTo(x, y + 6 + (q % 2) * 5); g.lineTo(x - 6, y + 15 + (q % 2) * 5); g.stroke(); }
     if (k.breast) ell(60, y + 50, 30, 20, k.breast);
     if (k.face) ell(90, y + 38, 20, 17, k.face);
     if (k.bib) { ell(70, y + 62, 34, 6, k.bib); ell(96, y + 56, 12, 10, k.bib); }

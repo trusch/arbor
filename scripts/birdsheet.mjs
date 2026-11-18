@@ -31,14 +31,14 @@ try {
       page.on('pageerror', (e) => console.error('[pageerror]', e.message));
       await page.goto(url(q), { timeout: T });
       await page.waitForFunction(() => window.__arbor !== undefined, null, { timeout: T });
-      await page.evaluate(() => {
+      await page.evaluate(`(() => {
         const A = window.__arbor, c = A.critters;
         A.fastForward(90);
         if (!c) return;
         c.force = { butterflies: 0, fireflies: 0, birds: 1 };
         const f = c.frame.bind(c);
-        window.__slow = 1; window.__step = 0;
-        c.frame = (dt, sim, env) => { let d = dt * window.__slow; if (window.__step) { d = window.__step; window.__step = 0; } f(d, sim, env); };
+        window.__slow = 1; window.__step = 0; window.__freezeAt = 0.35; window.__kind = ${Number(process.env.KIND ?? 0)};
+        c.frame = (dt, sim, env) => { const b0 = c.birds[0]; if (window.__freezeAt && b0.st === 1 && b0.s > window.__freezeAt) { window.__slow = 0; window.__freezeAt = 0; } if (window.__kind >= 0 && b0.kind !== undefined && b0.kind !== window.__kind && b0.st !== 0) { b0.kind = window.__kind; c.birdUv(0, b0.kind); } let d = dt * window.__slow; if (window.__step) { d = window.__step; window.__step = 0; } f(d, sim, env); };
         c.birds[1].st = 0; c.birds[1].wait = 1e9; c.birds[0].st = 0; c.birds[0].wait = 0.01;
         // Camera d metres from bird 0: az from its heading (0 = in front of it), el up.
         window.__cam = (az, el, d) => {
@@ -48,7 +48,7 @@ try {
           st.camera.position.set(b.x + d * ce * (Math.cos(az) * fx + Math.sin(az) * rx), b.y + 0.06 + d * Math.sin(el), b.z + d * ce * (Math.cos(az) * fz + Math.sin(az) * rz));
           st.controls.update();
         };
-      });
+      })()`);
       await page.waitForTimeout(6000);
       return { ctx, page };
     };
@@ -60,7 +60,7 @@ try {
     const AZ = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => (i * Math.PI) / 4);
     if (cases.includes('fly') || cases.includes('perch')) {
       const { ctx, page } = await open('&cinema=false');
-      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return b.st === 1 && b.s > 0.4; });
+      await page.waitForFunction(() => { const b = window.__arbor.critters.birds[0]; return window.__slow === 0 || b.st === 2; });
       await page.evaluate(() => { window.__slow = 0; const b = window.__arbor.critters.birds[0]; b.fold = 1; b.flapping = true; b.flap = 0.6; b.cyc = 0.05; b.per = 0.7; b.bank = 0; });
       if (cases.includes('fly')) {
         await prog(page, 'flying');
@@ -71,6 +71,10 @@ try {
         for (const az of [0, 1.57, 3.14, 4.71]) fs.push(await snap(page, `window.__cam(${az}, 1.4, 0.8)`));
         for (const az of [0, 1.57, 3.14, 4.71]) fs.push(await snap(page, `window.__cam(${az}, -1.1, 0.8)`));
         sheet('turn', fs);
+        fs = [];
+        for (const k of [0, 1, 2]) { await page.evaluate((k) => { window.__kind = k; window.__step = 1e-6; }, k); for (const [az, el] of [[1.57, 0.1], [0.5, 0.25], [2.4, 0.5], [1.57, -0.6]]) fs.push(await snap(page, `window.__cam(${az}, ${el}, 0.7)`)); }
+        await page.evaluate((k) => { window.__kind = k; window.__step = 1e-6; }, Number(process.env.KIND ?? 0));
+        sheet('kinds', fs, '4x');
         await page.evaluate(() => { window.__arbor.critters.birds[0].bank = 0; });
         fs = [];
         for (const az of [1.57, 0, 0.8]) for (let i = 0; i < 8; i++) fs.push(await snap(page, `window.__step = 0.009; requestAnimationFrame(() => requestAnimationFrame(() => window.__cam(${az}, 0.12, 0.8)))`));
