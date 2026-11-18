@@ -19,7 +19,7 @@ const DESK = { viewport: { width: 1600, height: 900 } };
 const url = (hour, q = '') => `http://localhost:${PORT}/?start=0&cycle=false&speed=0&autoRotate=false&cinema=true&weather=calm&season.on=false&timeOfDay=${hour}&nogui=1&hideui=1${q}`;
 const sheet = (name, files, tile, geo) => { execFileSync('montage', [...files, '-tile', tile, '-geometry', geo, '-background', '#222', `shots/${name}.jpg`]); console.log(`shots/${name}.jpg (${files.length} frames)`); };
 const KINDS = (process.env.KINDS ?? 'wide,hero,orbit,rise,canopy,branch').split(',');
-const TREES = { sapling: ['', 30], oak: ['', 90], tall: ['&preset=Low-gravity%20alien', 90], broad: ['&preset=Heavy%20world', 90], y3: ['&years=3', 750], y2: ['&years=3', 450] };
+const TREES = { sapling: ['', 30], oak: ['', 90], tall: ['&preset=Low-gravity%20alien', 90], broad: ['&preset=Heavy%20world', 90], y3: ['&years=3&critters=0', 750], y2: ['&years=3&critters=0', 450] };
 const HOURS = { 13: 'noon', 19.3: 'sunset' };
 const cases = (process.env.CASES ?? Object.keys(TREES).flatMap((t) => Object.keys(HOURS).map((h) => `${t}:${h}`)).join(',')).split(',').map((c) => c.split(':'));
 const open = async (layout, hour, q, t) => {

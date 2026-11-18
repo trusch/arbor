@@ -760,6 +760,51 @@ Twigs: no twig rule was added. The lowest wood rose from 1.06 m to 2.6 to 3.0 m 
 
 Pictures (`GPU=vulkan node scripts/majestic.mjs http://127.0.0.1:5861/ majI-after`, built app, real GPU; before = `shots/majH-after-*`; in the app 31.0k nodes / 241.6k sim leaves, 18.09 m, `structureCheck` 0, programs desktop 33 / phone 8): `shots/majI-after-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`, sheets `shots/majI-{desktop,phone}-sheet.jpg` (rows: before summer, after summer, before winter, after winter). What they say: the heart shape is gone on both layouts; the summer crown is one closed dome with a slightly uneven outline, and the bole reads as a trunk (visibly stout against the crown, limbs thick at the fork). Not majestic yet; a viewer would name: (1) the crown is a near-perfect ball on a stick (the bays are now so shallow that the outline has little character; wider than tall would read older); (2) in winter the crown is a tangle of long, evenly thin, curved whips: limb, branch and spray do not separate, and the thicker twig radius makes it heavier; (3) the trunk forks into its limbs within 1.3 m, with no central stem above. Not run: `scripts/p3main.mjs` (drawn-triangle hash of the default tree; no code on the `years` = 0 path changed), the full smoke, seeds 11 and 3 in the app (headless census only).
 
+### 6.15 Every tree at year 3, camera and overlay for the big tree (branch `bigtree-perf`, behind `?years=3`)
+
+Survey: `node scripts/y3survey.mjs URL` (built app, phone emulation 411 x 777, real GPU) grows every panel preset and the four start-screen kinds that have no preset (at the middle of their roll ranges; willow, cypress and the four worlds roll around the presets of the same name) with `years=3` to t = 750 and takes wide / framed / close shots in summer and the wide shot in winter. Sheets `shots/y3-<key>-sheet.jpg`, all wide summer shots `shots/y3-overview.jpg` (each at its own distance, 3.4 x the larger of height and width: sizes are not comparable between tiles), numbers `shots/y3-survey.json`. Height and width are over unpruned nodes; trunk radius is the trunk node nearest 1.3 m; nodes = all ids (live = on unpruned chains); `structureCheck` is 0 for all twelve in summer and winter. Script ms = rAF callback time per frame with the tree at rest and the clock running, 4x CPU throttle, median (p90) of one 5 s window per tree, taken while three other pages of the same browser were growing on a loaded host: upper bounds, good for "which trees are heavier", not as absolute values.
+
+| Tree | Height m | Width m | Trunk r m | Nodes (live) | Sim leaves | Script ms | Verdict |
+|---|---|---|---|---|---|---|---|
+| Oak meadow | 18.1 | 20.2 | 0.67 | 31.0k (14.3k) | 242k | 17.5 (32) | good as is |
+| Windswept cypress | 23.1 | 6.7 | 0.29 | 7.3k (3.2k) | 55k | 13 (18) | acceptable: the spire holds; the top is loose with two competing leaders and the trunk is thin for the height (height / radius 81, oak 27) |
+| Weeping willow | 15.7 | 17.2 | 0.65 | 28.0k (11.7k) | 213k | 15 (32) | broken: thick limbs sag into coils and loops that reach the ground, the curtains are bare ropes with few leaves in summer |
+| Low-gravity alien | 51.9 | 18.5 | 0.30 | 11.9k (7.9k) | 95k | 15.5 (22) | broken: 52 m on a 30 cm trunk (height / radius 171), a dense egg; the sparse spiral of year 1 is gone |
+| Crimson world | 19.6 | 26.2 | 0.40 | 31.3k (15.8k) | 246k | 35 (90) | acceptable: the umbrella holds; thin, crooked trunk under a 26 m crown |
+| Bioluminescent night | 25.1 | 20.6 | 0.73 | 32.1k (18.0k) | 254k | 47 (101) | acceptable: a solid egg dome; the weeping habit is gone |
+| Heavy world | 9.35 | 24.8 | 2.38 | 39.1k (17.2k) | 301k | 20 (116) | broken: trunk radius 2.4 m, crown lopsided and lying on the meadow, node count at the 40k cap |
+| Journey: Earth to alien | 30.1 | 19.6 | 0.67 | 35.4k (16.2k) | 279k | 43 (91) | acceptable: a 30 m egg with a clean silhouette |
+| kind Broad (maple) | 18.1 | 19.8 | 0.71 | 31.2k (16.2k) | 245k | 26 (64) | good as is |
+| kind Slender (birch) | 23.2 | 14.7 | 0.62 | 24.5k (12.1k) | 192k | 23 (65) | good (an oval; less slender than in year 1) |
+| kind Spreading (linden) | 15.5 | 19.0 | 0.65 | 28.7k (14.0k) | 226k | 21 (35) | good as is |
+| kind Young (ginkgo) | 20.4 | 13.9 | 0.52 | 20.9k (8.1k) | 163k | 20 (37) | good: the cone holds |
+
+Causes of the broken ones (read from the pictures and the rules; none was changed or tested):
+
+- Low-gravity alien: the year envelope multiplies the preset's crown height (`YEAR_H` 1.7 on `crown.height` 12 above `crown.base` 3.5) and the tree fills it at `growthRate` 2.6 with `gravity` 0.2, while its `thickness.twigRadius` 0.008 and `branchingProbability` 0.09 give the pipe model few tips to thicken the trunk with. The height factor of the year envelope is the one constant that would have to be per preset here (about 1.2 for a crown that is already 12 m).
+- Heavy world: `thickness.exponent` 1.6 with `YEAR_EXP` and `YEAR_GIRTH` on 17k live nodes gives the 2.4 m trunk radius; per-preset girth constants would be needed, and the scaffold settling (`YEAR_SETTLE`) at `gravity` 3 puts the crown on the ground. Two constants, not one.
+- Weeping willow: `growth.weeping` >= 1 switches off the sag fade (`SAG_RIGHT`) by design, and years 2 and 3 add girth, scaffold settling and reaction wood on wood that hangs: not one constant; the willow needs its own pass over the year rules.
+
+The oak rules carry the oak-like habits (broad, spreading, slender, young cone) unchanged; presets whose `growth` or `thickness` group is far from the default do not.
+
+Camera. The framed distance (`Stage.frame`) and the director's box are functions of the live bounding box each frame, so they followed the big tree already; `node scripts/y3frame.mjs URL phone|desk` projects the live crown box every 0.5 s while year 2 grows at 8x (t = 285 on) with the plain framed view and with held wide / orbit / far shots. Read on the year-3 oak (`KINDS=... CASES=y3:13 node scripts/dirshots.mjs sheet phone,desk prefix`, before `shots/y3dir-before-{phone,desk}-y3-noon-sheet.jpg`, after `shots/y3dir-after-*`; tiles = the shots in order, then the plain framed view):
+
+| Shot | Year-3 oak before | Change |
+|---|---|---|
+| wide, orbit, framed | tree whole, backdrop trees beside it | none |
+| hero | whole on desktop; on the phone the 20 m crown is cut a little at one side | none |
+| rise | desktop: starts 0.6 m up inside the grass cards, which cover the frame | starts at 1.5 m for the big tree |
+| canopy | beside the bole looking up the limbs: the one shot that showed the size | weight x 1.6 for the big tree |
+| branch | a twig mass 4 m from the lens, no size | none |
+| ascend (new) | | elevator from 0.8 m to 0.75 H at max(1.6 R + 2, 0.6 H) from the axis, looking up into the crown from the grass and level at the top; 26 s |
+| far (new) | | max(1.25 fit, 3.3 H) out, eye 1.5 m + 0.2 H above the terrain there, trunk base on a third: meadow in front, the lone trees and hedgerows of the backdrop beside the tree |
+
+`ascend` and `far` are drawn only while `sim.years` > 0 and the smoothed height is over `BIG_H` 11 m (`Director.big`); otherwise their weight is 0, and they sit at the end of `SHOT_KINDS`, so the draw of the other six is the same sequence as before. Default tree unchanged, checked with `node scripts/dirpose.mjs URL '' 90` on the build before and after: smoothed box, 18 poses (six shots x three shot times, fixed azimuth) and 300 `choose` draws identical on desktop and phone; the plain framed view has the same distance, height and target (its azimuth is whatever the running shot left). A hand-set view: nothing new writes the camera (`Stage.frame` is unchanged apart from the overlay fix below).
+
+Found on the way: a dip to black that was cut off in its fade-in half (cinema switched off, or a drag) left the `#arbor-cut` overlay part-opaque over the picture (the phone "framed" tile of the before sheet is black). `Director.rest` now drops a dip in either half, and the plain auto-frame branch calls `rest(0)`.
+
+Overlay (`src/hud.ts`): from the first birthday the age reads "1 year 3 months", "2 years" (months of the first year as before); with `sim.years` > 0 the tree is "fully grown" only after the last growing season (growth phase 0.6 of the last year), and between growing seasons (growth phase 0.6 to 0.02, from t = 150) the state is "resting for winter" and the card says "in full leaf" / "leaves turning" without "putting on wood" (`HudState.resting`, set in `updateHud`). Before, the tree line said "fully grown" every time no tip was alive, i.e. each autumn. `node scripts/y3hud.mjs URL` prints the texts at a list of times next to height / width / girth measured over unpruned wood.
+
 ## 7. Not measured
 
 - Clean absolute frame times and fps (parallel-load caveat); desktop High fps at any size; anything on the real PowerVR phone.

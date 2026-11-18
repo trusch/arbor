@@ -503,6 +503,7 @@ export class Stage {
         this.center.z + Math.cos(this.cineYaw) * ce * this.dist,
       );
     } else if (p.camera.autoFrame && auto) {
+      this.director.rest(0); // cinema switched off during a dip to black: clear the overlay
       const want = Math.max(MIN_DIST, fit);
       // Pull back faster than we push in so a growing crown never outruns the frame.
       const kk = snap ? 1 : 1 - Math.exp(-dt * (want > this.dist ? 2.5 : 1.0));

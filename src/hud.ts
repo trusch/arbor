@@ -73,7 +73,7 @@ const len = (m: number) => (m < 1 ? `${Math.round(m * 100)} cm` : `${num(m)} m`)
 function age(s: HudState): string {
   if (!s.seasons) return `${s.age.toFixed(0)} s`;
   const y = s.age / Math.max(10, s.yearLength);
-  if (y < 1) return `${Math.max(1, Math.round(y * 12))} mo`;
+  if (y < 1) return `${Math.min(11, Math.max(1, Math.round(y * 12)))} mo`;
   // From the first birthday on: whole years and months ("2 years 4 months"), as one says a tree's age.
   const mo = Math.floor(y * 12 + 1e-6), yy = Math.floor(mo / 12), m = mo % 12;
   return `${yy} ${yy === 1 ? 'year' : 'years'}${m ? ` ${m} ${m === 1 ? 'month' : 'months'}` : ''}`;

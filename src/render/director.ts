@@ -85,7 +85,12 @@ export class Director {
     this.pending = { kind, x, y, z };
   }
   /** No shot change for `s` seconds (the ease back from a hand-set view must not meet a cut). */
-  rest(s: number) { this.hold = Math.max(this.hold, s); if (this.cutT >= 0 && this.cutT < CUT_OUT) { this.cutT = -1; this.next = null; this.fade(0); } }
+  rest(s: number) {
+    this.hold = Math.max(this.hold, s);
+    // A dip to black in flight is dropped in either half: the director may not be called again (hand-set view, cinema
+    // switched off), and an overlay left part-way through its fade-in stayed dark over the picture.
+    if (this.cutT >= 0) { if (this.cutT < CUT_OUT) this.next = null; this.cutT = -1; this.fade(0); }
+  }
   /** Forget the running shot: the next `update` starts from the camera's pose (seedling hand-over, new tree). */
   reset() { this.shot = null; this.travelT = 1e9; this.cutT = -1; this.next = null; this.fade(0); this.H = 0; }
   state() { const s = this.shot; return { kind: s?.kind ?? null, t: s?.t ?? 0, shots: this.shots, cuts: this.cuts, cutting: this.cutT >= 0, travelling: this.travelT < TRAVEL_S, cutFrame: this.cutFrame }; }
@@ -231,9 +236,10 @@ export class Director {
       }
       case 'ascend': {
         // Elevator past the big tree, from the roots to the top: so close that the frame never holds the whole tree
-        // (a third to a half of its height), so its size is the length of the ride. Just outside the crown's reach.
-        const dh = Math.max(R * 1.25 + 2, H * 0.45, 4) * (P ? 1.12 : 1);
-        const y = 0.8 + (H * 0.8 - 0.8) * smoother(u);
+        // (about two thirds of its height), so its size is the length of the ride. Just outside the crown's reach.
+        // (At 1.25 R the lens was 4 m from the leaves and the frame a wall of twigs.)
+        const dh = Math.max(R * 1.6 + 2, H * 0.6, 4);
+        const y = 0.8 + (H * 0.75 - 0.8) * smoother(u);
         put(s.yaw + sd * 0.3 * e, dh, y);
         // Looks up into the crown from the grass and comes level, then a little down, as it reaches the top.
         this.aim(pos, this.bx, y + dh * (0.3 - 0.4 * smoother(u)), this.bz, sd * (P ? 0.04 : 0.18), 0, env, tgt);
