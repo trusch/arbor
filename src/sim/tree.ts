@@ -131,6 +131,23 @@ const YEAR_GIRTH = 0.4;
  * node carrying many tips (trunk, scaffold limbs) gains more girth than a twig, and girth falls off quickly outward.
  */
 const YEAR_EXP = 0.05;
+/**
+ * Taper through a fork (years trees from the second growing year on, docs 6.19): a node's radius is at most its
+ * thickest child's x (1 + TAPER_M x own segment length), so below a fork the stem widens by that share per metre
+ * until it reaches its pipe radius, instead of jumping to the sum of all limbs in one node. The pipe contribution
+ * passed down is unchanged, so the butt keeps its girth. Wood whose thickest child is under TAPER_R0 is free
+ * (limit x (1 + TAPER_FREE)), from TAPER_R1 on the limit holds in full.
+ */
+const TAPER_M = 0.14, TAPER_R0 = 0.07, TAPER_R1 = 0.15, TAPER_FREE = 3;
+/**
+ * Butt swell: the first nodes of a chain that is not the trunk are thicker than their pipe radius by SWELL x SWELL_W
+ * (by node index from the junction), weighted by smoothstep(SWELL_R0, SWELL_R1, radius) so twigs keep theirs. The
+ * swell is not part of the node's pipe contribution; a parent is never thinner than any child and at least
+ * SWELL_OVER x a swollen limb base on it.
+ */
+const SWELL = 0.32, SWELL_R0 = 0.05, SWELL_R1 = 0.14, SWELL_W = [1, 0.7, 0.4, 0.15], SWELL_OVER = 1.06;
+function swellR(r: number, w: number) { return r * (1 + SWELL * w * smoothstep(SWELL_R0, SWELL_R1, r)); }
+function taperLim(rc: number, len: number) { return rc * (1 + TAPER_M * len + TAPER_FREE * (1 - smoothstep(TAPER_R0, TAPER_R1, rc))); }
 /** G4 lower-limb shedding: phase of the growing year at which the year's one low limb is let go. */
 const YEAR_SHED_PH = 0.3;
 /** G4: the thickest order-1 limbs are scaffold and never shed. */
@@ -269,6 +286,10 @@ export class TreeSim {
   private sNext = new Int32Array(0);
   private sT = new Float64Array(0);
   private sC = new Float64Array(0);
+  /** Taper: `sQ` = a node's radius target before its own butt swell; full pass only: largest child `sQ` and largest swollen chain-base child per node. */
+  private sQ = new Float64Array(0);
+  private sM = new Float64Array(0);
+  private sW = new Float64Array(0);
   /** Copy of `radius` as of the node's last structure visit, so the thickening-only loop touches no node object at rest. */
   private sR = new Float64Array(0);
   /** Bit 1: an input of the bottom-up values changed (recompute); bit 2: radius still below its target (thickening). */
@@ -448,7 +469,7 @@ export class TreeSim {
     const f64 = (a: Float64Array) => { const b = new Float64Array(cap); b.set(a); return b; };
     const u8 = (a: Uint8Array) => { const b = new Uint8Array(cap); b.set(a); return b; };
     this.sPar = i32(this.sPar); this.sFirst = i32(this.sFirst); this.sNext = i32(this.sNext); this.sStamp = i32(this.sStamp);
-    this.sT = f64(this.sT); this.sC = f64(this.sC); this.sR = f64(this.sR); this.sUp = u8(this.sUp); this.sDown = u8(this.sDown);
+    this.sT = f64(this.sT); this.sC = f64(this.sC); this.sM = f64(this.sM); this.sQ = f64(this.sQ); this.sW = f64(this.sW); this.sR = f64(this.sR); this.sUp = u8(this.sUp); this.sDown = u8(this.sDown);
     this.sCap = cap;
   }
 
@@ -1236,6 +1257,7 @@ export class TreeSim {
     const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, R = this.sR, first = this.sFirst, next = this.sNext;
     let lo = this.sDownLo, nUp = 0, nThick = 0;
     const inv = 1 / n, kk = dt > 0 ? k : 1, snap = dt <= 0;
+    const taper = this.years > 0 && this.ageQ > 0, Q = this.sQ;
     for (let i = N - 1; i >= 0; i--) {
       const f = up[i];
       if (f === 0) continue;
@@ -1252,11 +1274,16 @@ export class TreeSim {
       let target: number;
       {
         nUp++;
-        let pipe = 0, sub = 0;
+        let pipe = 0, sub = 0, mc = 0, sw = 0;
         for (let c = first[i]; c >= 0; c = next[c]) {
           const cn = nodes[c];
           if (chains[cn.chain].pruned) continue;
           pipe += C[c]; sub += cn.subLen;
+          if (taper) {
+            const q = Q[c];
+            if (q > mc) mc = q;
+            if (cn.chain !== nd.chain) { const s = swellR(q, 1); if (s > sw) sw = s; }
+          }
         }
         const rj = nd.juv < 1 ? r0 * (JUV_RADIUS + (1 - JUV_RADIUS) * nd.juv) : r0;
         if (pipe === 0) {
@@ -1266,7 +1293,13 @@ export class TreeSim {
           target = Math.max(rj, Math.pow(pipe, inv));
         }
         if (!chains[nd.chain].pruned) sub += nd.len;
+        // The contribution is always the plain pipe radius; taper limit and butt swell only shape the node's own radius.
         const c = Math.pow(target, n);
+        if (taper) {
+          if (pipe !== 0) target = Math.max(rj, Math.min(target, taperLim(mc, nd.len)), mc, sw * SWELL_OVER);
+          if (target !== Q[i]) { Q[i] = target; if (nd.parent >= 0) up[nd.parent] |= 1; }
+          if (nd.chain !== 0) { const bi = this.baseIdx(nd); if (bi < 4) target = swellR(target, SWELL_W[bi]); }
+        }
         let chg = c !== C[i];
         if (sub !== nd.subLen) { nd.subLen = sub; chg = true; down[i] = 1; if (i < lo) lo = i; }
         nd.pipe = pipe; T[i] = target; C[i] = c;
@@ -1371,7 +1404,20 @@ export class TreeSim {
   }
 
   /** The plain pass over every node (the reference the incremental pass must equal); also rebuilds the incremental state. */
-  private structureFull(dt: number, n: number, r0: number, k: number, gk: number, right: number) {
+/** Index of a node from its chain's first node, 4 for anything further out (butt swell). */
+  private baseIdx(nd: TreeNode) {
+    const nodes = this.nodes;
+    let m = nd;
+    for (let k = 0; k < 4; k++) {
+      if (m.parent < 0) return k;
+      const pn = nodes[m.parent];
+      if (pn.chain !== m.chain) return k;
+      m = pn;
+    }
+    return 4;
+  }
+
+    private structureFull(dt: number, n: number, r0: number, k: number, gk: number, right: number) {
     const nodes = this.nodes, N = nodes.length;
     if (N > this.sCap) this.sGrow(N);
     const T = this.sT, C = this.sC, R = this.sR, up = this.sUp, par = this.sPar, first = this.sFirst, next = this.sNext;
@@ -1388,6 +1434,8 @@ export class TreeSim {
       nodes[i].pipe = 0;
       nodes[i].subLen = 0;
     }
+    const taper = this.years > 0 && this.ageQ > 0, M = this.sM, W = this.sW, Q = this.sQ;
+    if (taper) { M.fill(0, 0, N); W.fill(0, 0, N); }
     // Children always have larger ids than parents: reverse pass is bottom-up.
     for (let i = N - 1; i >= 0; i--) {
       const nd = nodes[i];
@@ -1400,16 +1448,29 @@ export class TreeSim {
       } else {
         target = Math.max(rj, Math.pow(nd.pipe, 1 / n));
       }
+      // The contribution is always the plain pipe radius; taper limit and butt swell only shape the node's own radius.
+      const cu = Math.pow(target, n);
+      if (taper) {
+        if (nd.pipe !== 0) target = Math.max(rj, Math.min(target, taperLim(M[i], nd.len)), M[i], W[i] * SWELL_OVER);
+        Q[i] = target;
+        if (nd.chain !== 0) { const bi = this.baseIdx(nd); if (bi < 4) target = swellR(target, SWELL_W[bi]); }
+      }
       // Secondary growth only ever adds wood: radii never shrink (pruned twigs leave their girth behind).
       if (target > nd.radius) nd.radius += (target - nd.radius) * (dt > 0 ? k : 1);
       if (dt <= 0) nd.radius = Math.max(nd.radius, target * 0.999);
-      T[i] = target; C[i] = Math.pow(target, n); R[i] = nd.radius; up[i] = target > nd.radius ? 2 : 0;
+      T[i] = target; C[i] = cu; R[i] = nd.radius; up[i] = target > nd.radius ? 2 : 0;
       if (this.chains[nd.chain].pruned) continue;
       nd.subLen += nd.len;
       if (nd.parent >= 0) {
         const pn = nodes[nd.parent];
         pn.pipe += C[i];
         pn.subLen += nd.subLen;
+        if (taper) {
+          const pi = nd.parent;
+          const q = Q[i];
+          if (q > M[pi]) M[pi] = q;
+          if (nd.chain !== pn.chain) { const s = swellR(q, 1); if (s > W[pi]) W[pi] = s; }
+        }
       }
     }
     // Forward pass: accumulate sag (bend toward -Y) and world positions.
