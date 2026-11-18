@@ -288,6 +288,8 @@ The sun is a small hot core (drawn in the sky shader, about 0.3 degrees radius) 
 
 Night follows the moon. While it is up the scene has a cool, dim key light from the moon's direction with soft shadows, brighter at full moon; with the moon down or new there is no key light and no tree shadow, only dim starlight. Sun and moon hand over while both are at zero brightness (sun 2.3 degrees below the horizon), so nothing pops. Stars vary in brightness and colour, twinkle (more near the horizon), thin out toward the horizon and around a bright moon, and fade at dawn. Storm cloud hides sun glow, moon and stars.
 
+Clouds keep their size and come in over the upwind horizon, cross the sky with the wind and leave over the downwind one; a change of weather is carried in on the wind and can take up to a minute. An overcast is a bank with a torn edge that moves in from upwind and leaves the same way. Heaps are white with blue-grey bases at noon, take the low sun on their sunward side and undersides, show a pale edge toward the moon, and a lightning flash lights the heaps near the strike more than those far from it. `node scripts/cloudproof.mjs` records a change of weather frame by frame on a virtual clock (contact sheets `shots/clouds3-*`).
+
 `?celestial=0` turns the glow, moon and star detail off (comparison and the smoke program gate). `PROF_DIST=<build dir> node scripts/skyshots.mjs desk|phone [prefix] [cases]` takes the fixed-camera shots (noon, h1730, crown, sunset, dusk, full, half, new, moonrise, storm) and prints program counts.
 
 ## Meadow and wind
