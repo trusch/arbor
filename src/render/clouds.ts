@@ -53,7 +53,7 @@ const GRID = 12, SLOTS = GRID * GRID, PARTS = 3;
 const R_HOR = 7.6, R_OUT = 9.6;
 const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
 /** Drift in layer heights per m/s of cloud speed, and the speed of the layer (heights / s) while a change of weather is on its way in. */
-const DRIFT = 0.008, TRANSIT = 0.3;
+const DRIFT = 0.008, TRANSIT = 0.5;
 /** Deck: seconds to close once the bank has arrived, seconds to open; share of slots that must already carry the new weather. */
 const DECK_GATE = 0.55, BANK = 0.85;
 /**
@@ -61,9 +61,11 @@ const DECK_GATE = 0.55, BANK = 0.85;
  * hills) to `+DECK_E` at `DECK_V` heights / s, and it leaves by its upwind edge travelling the same way. `EDGE_N`
  * flat shreds ride on the edge so it is torn, not a ruled line.
  */
-const DECK_E = 9, DECK_V = 0.4, EDGE_N = 12;
+const DECK_E = 9, DECK_V = 0.5, EDGE_N = 12;
+/** Deck plane: tiles across and along the wind, tile size and length in deck heights, and where its leading edge rests once closed (then it drifts, wrapping by one tile). */
+const TILES = 9, TILES_U = 5, TILE = (2 * DECK) / TILES, DECK_L = TILES_U * TILE, DECK_REST = 12;
 /** Largest angular width (rad) of a cloud at its closest approach: a limit on the size of clouds on high routes, fixed at entry. */
-const MAX_ANG = 0.5;
+const MAX_ANG = 0.34;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
@@ -121,6 +123,10 @@ export class Clouds {
   private deckK = 0;
   /** Deck bank: 0 none, 1 arriving / closed (covers upwind of `deckE`), 2 leaving (covers downwind of `deckE`). */
   private deckMode = 0;
+  private edgeTex: THREE.DataTexture;
+  /** The torn edges of the deck: one tile deep, on the plane's downwind and upwind side. */
+  edgeLead: THREE.Mesh;
+  edgeTrail: THREE.Mesh;
   private deckE = DECK_E;
   private litPos: THREE.BufferAttribute;
   private litUv: THREE.BufferAttribute;
@@ -141,7 +147,10 @@ export class Clouds {
     const atlas = this.atlas = dataTex(ATLAS_W, ATLAS_H, cs, false);
     this.deckTex = dataTex(DECK_S, DECK_S, cs, true);
     this.litTex = dataTex(ATLAS_W, ATLAS_H, cs, false);
-    this.deckTex.repeat.set(9, 9);
+    this.deckTex.repeat.set(TILES_U, TILES);
+    this.edgeTex = dataTex(2 * DECK_S, DECK_S, cs, true);
+    this.edgeTex.wrapS = THREE.ClampToEdgeWrapping;
+    this.edgeTex.repeat.set(1, TILES);
     this.group.visible = false;
     // The GTAO g-buffer pass must not see these planes (its override material would draw solid quads).
     const hidden = new THREE.MeshBasicMaterial({ visible: false });
@@ -172,6 +181,10 @@ export class Clouds {
     const dg = new THREE.PlaneGeometry(1, 1);
     dg.rotateX(Math.PI / 2);
     this.deck = mk(dg, this.deckTex, 3.4);
+    const eg = (u0: number) => { const g = dg.clone(), a = g.getAttribute('uv') as THREE.BufferAttribute; for (let i = 0; i < 4; i++) a.setX(i, u0 + 0.5 * a.getX(i)); return g; };
+    this.edgeLead = mk(eg(0.5), this.edgeTex, 3.41);
+    this.edgeTrail = mk(eg(0), this.edgeTex, 3.42);
+    this.edgeTrail.material = this.edgeLead.material;
     // Batched quads: position / normal / uv / index, like a PlaneGeometry (same attributes, same program).
     const N = SLOTS * PARTS, g = new THREE.BufferGeometry();
     this.pos = new THREE.BufferAttribute(new Float32Array(N * 12), 3);
@@ -212,16 +225,17 @@ export class Clouds {
    */
   paint() {
     const t0 = performance.now();
-    const local = () => setTimeout(() => { if (!this.ready) { const m = paintClouds(); this.setMaps(m.atlas, m.deck, m.lit, t0); } }, 4000);
+    const local = () => setTimeout(() => { if (!this.ready) { const m = paintClouds(); this.setMaps(m.atlas, m.deck, m.lit, t0, m.edge); } }, 4000);
     try {
       const w = new Worker(new URL('./cloudpaint.worker.ts', import.meta.url), { type: 'module' });
-      w.onmessage = (e: MessageEvent<{ atlas: CloudMap; deck: CloudMap; lit: CloudMap }>) => { this.setMaps(e.data.atlas, e.data.deck, e.data.lit, t0); w.terminate(); };
+      w.onmessage = (e: MessageEvent<{ atlas: CloudMap; deck: CloudMap; lit: CloudMap; edge: CloudMap }>) => { this.setMaps(e.data.atlas, e.data.deck, e.data.lit, t0, e.data.edge); w.terminate(); };
       w.onerror = () => { w.terminate(); local(); };
       w.postMessage(0);
     } catch { local(); }
   }
 
-  setMaps(atlas: CloudMap, deck: CloudMap, lit: CloudMap, t0 = performance.now()) {
+  setMaps(atlas: CloudMap, deck: CloudMap, lit: CloudMap, t0 = performance.now(), edge?: CloudMap) {
+    if (edge) { (this.edgeTex.image as { data: Uint8Array }).data = edge.d; this.edgeTex.needsUpdate = true; }
     (this.litTex.image as { data: Uint8Array }).data = lit.d;
     this.litTex.needsUpdate = true;
     (this.atlas.image as { data: Uint8Array }).data = atlas.d;
@@ -287,16 +301,20 @@ export class Clouds {
     // The deck closes over the bank once it has arrived, and opens before the bank moves on.
     // The deck bank: its edge comes in from upwind once the heap bank has arrived, and it leaves downwind edge last.
     // It always travels with the wind; a change of mind waits until the edge is through.
-    if (snap) { this.deckMode = under ? 1 : 0; this.deckE = DECK_E; this.deckK = dOp; }
-    else {
-      if (this.deckMode === 0 && under && pending < 1 - DECK_GATE) { this.deckMode = 1; this.deckE = -DECK_E; this.deckK = dOp; }
-      else if (this.deckMode === 1 && !under && this.deckE >= DECK_E) { this.deckMode = 2; this.deckE = -DECK_E; }
-      else if (this.deckMode === 2 && this.deckE >= DECK_E) this.deckMode = 0;
-      if (this.deckMode) this.deckE = Math.min(DECK_E, this.deckE + DECK_V * Math.min(dt, 1));
-      // How thick the layer is follows the weather while it is over us (the leaving bank keeps what it had).
-      if (this.deckMode === 1 && under) this.deckK += (dOp - this.deckK) * (1 - Math.exp(-dt * 0.3));
+    const advD = adv * (HEAP_LAYER / LAYER);
+    if (snap) { this.deckMode = under ? 1 : 0; this.deckE = DECK_REST; this.deckK = dOp; }
+    else if (!this.deckMode) { if (under && pending < 1 - DECK_GATE) { this.deckMode = 1; this.deckE = -DECK_E; this.deckK = dOp; } }
+    else if (under && this.deckE <= DECK_REST + TILE) {
+      // Arriving, then resting overhead: it drifts on with the layer and steps back by one tile far downwind (same picture).
+      this.deckE += this.deckE < DECK_REST ? Math.max(DECK_V * Math.min(dt, 1), advD) : advD;
+      if (this.deckE >= DECK_REST + TILE) this.deckE -= TILE;
+      this.deckK += (dOp - this.deckK) * (1 - Math.exp(-dt * 0.3));
+    } else {
+      // Leaving (also a bank that came in while the weather changed its mind): on with the wind until its upwind edge is gone.
+      this.deckE += Math.max(DECK_V * Math.min(dt, 1), advD);
+      if (this.deckE - DECK_L > DECK_E) this.deckMode = 0;
     }
-    const dCov = this.deckMode === 1 ? smooth(-DECK_E, DECK_E * 0.6, this.deckE) : this.deckMode === 2 ? 1 - smooth(-DECK_E * 0.6, DECK_E, this.deckE) : 0;
+    const dCov = this.deckMode ? smooth(-DECK_E, DECK_E * 0.6, this.deckE) * (1 - smooth(-DECK_E * 0.6, DECK_E, this.deckE - DECK_L)) : 0;
 
     // ---- light: lit colour (sun, warm when low), shade colour (sky light), both down to a moonlit grey at night ----
     const day = smooth(-0.1, 0.12, h), sunUp = smooth(-0.06, 0.1, h);
@@ -312,21 +330,31 @@ export class Clouds {
     const deckK = this.deckMode ? Math.max(0.6, this.deckK) : 0, dOpS = deckK * deckK * (3 - 2 * deckK);
     const dl = Math.hypot(E.dirX, E.dirZ) || 1, wx = E.dirX / dl, wz = E.dirZ / dl, camY = cam.position.y;
     // Along-wind position of the plane's centre: the covered side is upwind of the edge while arriving, downwind while leaving.
-    const dC = (this.deckMode === 2 ? this.deckE + DECK : this.deckE - DECK) * HD;
+    const dC = (this.deckE - DECK_L / 2) * HD;
     const dk = this.deck, dm = dk.material as THREE.MeshBasicMaterial;
     dk.visible = dOpS > 0.01;
     S.deck = dOpS;
     if (dk.visible) {
       dk.position.set(cam.position.x + wx * dC, cam.position.y + HD, cam.position.z + wz * dC);
       dk.rotation.set(0, Math.atan2(-wz, wx), 0);
-      dk.scale.set(2 * DECK * HD, 1, 2 * DECK * HD);
+      dk.scale.set(DECK_L * HD, 1, 2 * DECK * HD);
       // Scrolled with the same drift (texture v runs along world z after the rotation; 9 tiles over 2 DECK heights).
-      this.deckTex.offset.set(this.du, 0);
+
       // Mid grey for stratus, dark grey-blue for rain cloud and the storm; warm cast from a low sun.
       const g = 0.86 - 0.56 * smooth(0.5, 0.95, c);
       this.tmp.copy(this.shade).lerp(this.lit, 0.3).multiplyScalar(g);
       dm.color.setRGB(this.tmp.r + nightL + flash * 0.5, this.tmp.g + nightL * 1.1 + flash * 0.52, this.tmp.b + nightL * 1.3 + flash * 0.6);
       dm.opacity = dOpS * fade;
+      const em = this.edgeLead.material as THREE.MeshBasicMaterial;
+      em.color.copy(dm.color); em.opacity = dm.opacity;
+      for (const [e, c] of [[this.edgeLead, this.deckE + TILE / 2], [this.edgeTrail, this.deckE - DECK_L - TILE / 2]] as [THREE.Mesh, number][]) {
+        e.position.set(cam.position.x + wx * c * HD, cam.position.y + HD, cam.position.z + wz * c * HD);
+        e.rotation.copy(dk.rotation); e.scale.set(TILE * HD, 1, 2 * DECK * HD);
+      }
+    }
+    this.edgeLead.visible = dk.visible && this.deckE < DECK_REST - 1;
+    this.edgeTrail.visible = dk.visible && this.deckE - DECK_L > -DECK_REST;
+    if (dk.visible) {
     }
 
     // ---- storm tower: comes up over the upwind horizon at a fixed size and advances; the deck closes over it ----
@@ -348,7 +376,10 @@ export class Clouds {
       tw.scale.set(wdt, hgt, 1);
       tw.rotation.set(0, Math.atan2(E.dirX, E.dirZ), 0);
       this.tmp.copy(this.shade).lerp(this.lit, 0.6);
-      const fl = flash + 0.5 * sheet * (0.35 + 0.65 * (1 - day));
+      // A strike on the tower's side lights it fully, one elsewhere much less.
+      cam.getWorldDirection(this.fwd);
+      const ty = Math.atan2(this.fwd.x, this.fwd.z) + (E.boltU ?? 0) * Math.atan(Math.tan((cam.fov * Math.PI) / 360) * cam.aspect) * 0.8;
+      const fl = flash * (0.2 + 0.8 * smooth(0.2, 0.9, -(wx * Math.sin(ty) + wz * Math.cos(ty)))) + 0.5 * sheet * (0.35 + 0.65 * (1 - day));
       tm.color.setRGB(this.tmp.r + nightL * 1.5 + fl, this.tmp.g + nightL * 1.6 + fl, this.tmp.b + nightL * 1.9 + fl * 1.15);
     }
 
@@ -440,10 +471,11 @@ export class Clouds {
       }
     }
     // Torn shreds lying flat on the deck's edge while it crosses the sky.
-    if (dk.visible && this.deckE < DECK_E - 0.01) {
-      const sgn = this.deckMode === 2 ? -1 : 1;
+    for (const sgn of [1, -1]) {
+      const eu = sgn > 0 ? this.deckE + TILE * 0.5 : this.deckE - DECK_L - TILE * 0.5;
+      if (!dk.visible || Math.abs(eu) > DECK_E + 2) continue;
       for (let j = 0; j < EDGE_N && n < SLOTS * PARTS; j++) {
-        const a = hash2(j + 0.4, 7.7), b = hash2(j + 0.9, 3.1), vv = (j - (EDGE_N - 1) / 2) * 2.6 + (a - 0.5), uu = this.deckE + sgn * (0.5 * b - 0.9);
+        const a = hash2(j + 0.4, 7.7), b = hash2(j + 0.9, 3.1), vv = (j - (EDGE_N - 1) / 2) * 2.6 + (a - 0.5), uu = eu + sgn * (0.5 * b - 0.9);
         const ex = (uu * wx - vv * wz) * HD, ez = (uu * wz + vv * wx) * HD;
         this.cnt[n] = 0;
         // Level card: width across the wind, "up" along it, out from the deck.

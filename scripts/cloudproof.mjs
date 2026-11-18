@@ -77,7 +77,7 @@ try {
         out.push([F[o] * 65536 + F[o + 1], +((q.x - p.x) * cw / 2).toFixed(1), +((1 - p.y) * chh / 2).toFixed(0), +((p.x + 1) * cw / 2).toFixed(0), +dist.toFixed(0), +F[o + 5].toFixed(1)]);
       }
       const W = a.weather;
-      return { band: diff / lum.length, bandMax: mx, hy: hy / 96, clouds: out, cloud: +W.cloud.toFixed(3), deck: +(C.stats.deck ?? 0).toFixed(3), tower: +(C.stats.tower ?? 0).toFixed(3), quads: C.stats.quads, programs: a.stage.renderer.info.programs.length };
+      return { band: diff / lum.length, bandMax: mx, hy: hy / 96, clouds: out, cloud: +W.cloud.toFixed(3), deck: +(C.stats.deck ?? 0).toFixed(3), tower: +(C.stats.tower ?? 0).toFixed(3), quads: C.stats.quads, flash: W.flash > 0.01 || W.bolt.on ? 1 : 0, programs: a.stage.renderer.info.programs.length };
     };
     window.__vc.on();
   }, view);
@@ -93,8 +93,8 @@ try {
       if (i % EVERY === EVERY - 1) shots.push((await page.screenshot({ type: 'jpeg', quality: 70 })).toString('base64'));
       if (inBurst) burst.push((await page.screenshot({ type: 'jpeg', quality: 70 })).toString('base64'));
     }
-    const mine = rows.filter((r) => r.kind === list[ki] && r.f >= f - perKind), b = mine.map((r) => r.band).sort((x, y) => x - y);
-    console.log(tag, list[ki], 'band step median', b[b.length >> 1].toFixed(2), 'p95', b[Math.floor(b.length * 0.95)].toFixed(2), 'max', b[b.length - 1].toFixed(2), 'at t', mine.find((r) => r.band === b[b.length - 1]).t, 'programs', mine[mine.length - 1].programs, 'quads', mine[mine.length - 1].quads, 'deck', mine[mine.length - 1].deck);
+    const mine = rows.filter((r) => r.kind === list[ki] && r.f >= f - perKind), b = mine.filter((r) => !r.flash).map((r) => r.band).sort((x, y) => x - y);
+    console.log(tag, list[ki], 'band step median', b[b.length >> 1].toFixed(2), 'p95', b[Math.floor(b.length * 0.95)].toFixed(2), 'max (frames without lightning)', b[b.length - 1].toFixed(2), 'at t', mine.find((r) => r.band === b[b.length - 1]).t, 'programs', mine[mine.length - 1].programs, 'quads', mine[mine.length - 1].quads, 'deck', mine[mine.length - 1].deck);
   }
   // Per cloud: apparent width over its visible life. k = px x distance / world width is the projection constant.
   const tracks = new Map();

@@ -156,7 +156,26 @@ function flip(p: CloudMap): CloudMap {
   return { d: f, W: p.W, H: p.H };
 }
 export const ATLAS_W = CW * COLS, ATLAS_H = CH * ROWS, DECK_S = 256;
-export function paintClouds(): { atlas: CloudMap; deck: CloudMap; lit: CloudMap } {
+/**
+ * The deck's two edges, 512 x 256: each half is one deck tile (same pixels, so it continues the tiled plane without
+ * a seam) with its alpha torn away along u. Left half = the upwind (trailing) edge, alpha rising with u; right half
+ * = the downwind (leading) edge, alpha falling to 0. Tileable along v.
+ */
+function paintEdge(deck: CloudMap): CloudMap {
+  const S = deck.W, d = new Uint8Array(2 * S * S * 4);
+  for (let j = 0; j < S; j++) for (let i = 0; i < 2 * S; i++) {
+    const lead = i >= S, ii = lead ? i - S : i, x = (ii + 0.5) / S, y = j / S, q = lead ? 1 - x : x;
+    const n = fbm(q * 5 + (lead ? 0 : 2), y * 6 + (lead ? 0 : 3), 6), n2 = fbm(q * 14 + 5, y * 18, 18);
+    // q = 0 at the open side, 1 where the plane begins: shreds and holes in between, nothing at the outer border.
+    let a = smooth(0, 1, q * 2.1 - 0.75 + 1.5 * (n - 0.5) + 0.5 * (n2 - 0.5)) * smooth(0, 0.08, q);
+    a = Math.max(a, smooth(0.86, 1, q));
+    const o = (j * 2 * S + i) * 4, s = (j * S + ii) * 4;
+    d[o] = deck.d[s]; d[o + 1] = deck.d[s + 1]; d[o + 2] = deck.d[s + 2]; d[o + 3] = deck.d[s + 3] * a;
+  }
+  return { d, W: 2 * S, H: S };
+}
+export function paintClouds(): { atlas: CloudMap; deck: CloudMap; lit: CloudMap; edge: CloudMap } {
   const a = paintAtlas();
-  return { atlas: flip({ d: a.d, W: a.W, H: a.H }), deck: flip(paintDeck()), lit: flip({ d: a.l, W: a.W, H: a.H }) };
+  const deck = flip(paintDeck());
+  return { atlas: flip({ d: a.d, W: a.W, H: a.H }), deck, lit: flip({ d: a.l, W: a.W, H: a.H }), edge: paintEdge(deck) };
 }
