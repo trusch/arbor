@@ -609,10 +609,16 @@ try {
     const on = await phone('?cycle=false&speed=0&weather=calm'), off = await phone('?cycle=false&speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
+    // Like with like: safe-path instance colours carry the view-dependent bake, and the director changes the shot between
+    // stations (light branch, auto camera: summer read 16.8 and 9.8 at the same date, flush 9.9). One hand-set view for the
+    // whole block; under it flush 13.7 / summer 10.2 (main 15.6 / 11.6), repeatable to the third decimal.
+    await on.mp.evaluate(() => { const S = window.__arbor.stage; S.takeControl(); S.camera.position.set(14, 4, 14); S.controls.target.set(0, 4.5, 0); });
     const st = {}, offP = [], land = {};
     for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
       await on.mp.evaluate((dd) => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
       await settle(1);
+      // The drawn colours are from a pass that began at this date (a pass begun before the scrub, e.g. for the view, does not count).
+      await on.mp.waitForFunction((dd) => { const L = window.__arbor.leaves; return !L.passOpen && Math.abs(L.passPhase - dd) < 1e-3; }, d, { timeout: 30000 });
       st[name] = await read(on.mp);
       offP.push((await read(off.mp)).programs);
       land[name] = await on.mp.evaluate(() => window.__arbor.meadow.probe());
