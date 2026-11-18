@@ -28,6 +28,11 @@ d.sort((a, b) => a - b);
 const w = 2 * d[Math.floor(d.length * 0.95)];
 const trunk = C[0].nodes; const taper = [];
 for (const hh of [0.05, 0.5, 1.3, 2, 3, 4, 6, 8, 10, 12]) { let r = 0; for (const id of trunk) if (N[id].ry <= hh) r = N[id].radius; taper.push(`${hh}m:${(r * 100).toFixed(1)}`); }
+// World (sagged) elevation in degrees of the limb's chord over its first, middle and last fifth of nodes.
+const wElev = (c) => { const ids = c.nodes, m = ids.length, q = Math.max(1, Math.floor(m / 5));
+  const ch = (a, b) => { const A = N[ids[a]], Bn = N[ids[b]]; return +(Math.atan2(Bn.wy - A.wy, Math.hypot(Bn.wx - A.wx, Bn.wz - A.wz)) * 57.3).toFixed(0); };
+  const mid = Math.floor(m / 2);
+  return { eB: ch(0, Math.min(m - 1, q)), eM: ch(Math.max(0, mid - (q >> 1)), Math.min(m - 1, mid + (q >> 1) + 1)), eT: ch(Math.max(0, m - 1 - q), m - 1) }; };
 // order stats: base radius = radius of chain.nodes[1]
 const byOrd = {};
 const limbs = [];
@@ -35,7 +40,7 @@ for (let ci = 1; ci < C.length; ci++) { const c = C[ci]; if (c.pruned || c.nodes
   const b = N[c.nodes[1]], o = c.order; const r = b.radius;
   (byOrd[o] ??= []).push(r);
   if (o === 1) { const tip = N[c.nodes[c.nodes.length - 1]]; let L = 0; for (let k = 1; k < c.nodes.length; k++) L += N[c.nodes[k]].len;
-    limbs.push({ r: +(r * 100).toFixed(1), y0: +N[c.nodes[0]].wy.toFixed(1), L: +L.toFixed(1), reach: +Math.hypot(tip.wx, tip.wz).toFixed(1), tipY: +tip.wy.toFixed(1), elev: +(Math.asin(Math.max(-1, Math.min(1, b.dy))) * 57.3).toFixed(0), sub: +b.subLen.toFixed(0) }); } }
+    limbs.push({ r: +(r * 100).toFixed(1), y0: +N[c.nodes[0]].wy.toFixed(1), L: +L.toFixed(1), reach: +Math.hypot(tip.wx, tip.wz).toFixed(1), tipY: +tip.wy.toFixed(1), elev: +(Math.asin(Math.max(-1, Math.min(1, b.dy))) * 57.3).toFixed(0), ...wElev(c), sub: +b.subLen.toFixed(0) }); } }
 const ostat = Object.entries(byOrd).map(([o, a]) => { a.sort((x, y) => y - x); return `o${o}: n=${a.length} max=${(a[0] * 100).toFixed(1)} p90=${(a[Math.floor(a.length * 0.1)] * 100).toFixed(1)} med=${(a[a.length >> 1] * 100).toFixed(2)}cm`; });
 limbs.sort((a, b) => b.r - a.r);
 let r13 = 0; for (const id of trunk) if (N[id].ry <= 1.3) r13 = N[id].radius;

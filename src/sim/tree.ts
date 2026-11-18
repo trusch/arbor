@@ -153,6 +153,15 @@ const YEAR_WHIP = 18;
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
  */
 const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = 0.02, YEAR_CALM = 0.35;
+/**
+ * Settling (years 2-3, lever 1 of 6.8): scaffold wood (order 1 and 2, not `sup`) bends down in the rest pose under its
+ * growing weight: extra bend per node = YEAR_SETTLE x ageQ x len x h x load x reach (order 2: x YEAR_SETTLE_O2), with
+ * h = horizontal share of the rest direction (no moment on vertical wood), load = subLen / (subLen + YEAR_SETTLE_L)
+ * (metres of wood carried) and reach = smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, distance from the axis), so the
+ * steep year-1 limbs sweep out and level toward the crown edge. Computed in the structure pass (exact; inputs are the
+ * node's own rest data, subLen, the chain's order / `sup` and the quantised ageQ, whose steps are full passes).
+ */
+const YEAR_SETTLE = 0.11, YEAR_SETTLE_O2 = 0.5, YEAR_SETTLE_L = 15, YEAR_SETTLE_R0 = 0.6, YEAR_SETTLE_R1 = 4.5;
 const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
@@ -674,6 +683,17 @@ export class TreeSim {
    * Scaffold dominance: the YEAR_SCAF thickest order-1 limbs (greedy, at least YEAR_SCAF_SEP apart in azimuth) stay
    * scaffold; every other order-1 limb and the wood it carries is marked `sup`. Flags only (no structure input).
    */
+  /** Extra rest-pose bend of settling scaffold wood (YEAR_SETTLE); 0 for everything else. */
+  private settle(nd: TreeNode, h: number) {
+    const ch = this.chains[nd.chain];
+    if (ch.order < 1 || ch.order > 2 || ch.sup || ch.juv !== undefined) return 0;
+    const rr = Math.hypot(nd.rx, nd.rz);
+    return YEAR_SETTLE * (ch.order === 2 ? YEAR_SETTLE_O2 : 1) * this.ageQ * nd.len * h * (nd.subLen / (nd.subLen + YEAR_SETTLE_L)) * smoothstep(YEAR_SETTLE_R0, YEAR_SETTLE_R1, rr);
+  }
+
+  /** Settling is on once the scaffold is picked and the tree has aged (years 2-3). */
+  private get settleOn() { return this.years > 0 && this.scafPicked && this.ageQ > 0; }
+
   private pickScaffold() {
     const nodes = this.nodes, chains = this.chains;
     const o1: number[] = [];
@@ -694,6 +714,7 @@ export class TreeSim {
       else if (chains[nodes[c.nodes[0]].chain].sup) c.sup = 1;
     }
     this.scafPicked = true;
+    this.sFull = true; // `sup` is a structure input now (settling)
   }
 
   private springFlush(yi: number, wave: number, t0: number) {
@@ -1134,7 +1155,7 @@ export class TreeSim {
         }
         const pn = nodes[pi];
         const h = Math.hypot(nd.dx, nd.dz);
-        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius)) + (this.settleOn ? this.settle(nd, h) : 0);
         const sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
         bendDown(nd.dx, nd.dy, nd.dz, sag, tmp);
         const wx = pn.wx + tmp[0] * nd.len, wy = pn.wy + tmp[1] * nd.len, wz = pn.wz + tmp[2] * nd.len;
@@ -1171,7 +1192,7 @@ export class TreeSim {
       if (nd.parent < 0 || down[i] === 0) continue;
       const pn = nodes[nd.parent];
       const h = Math.hypot(nd.dx, nd.dz);
-      const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+      const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius)) + (this.settleOn ? this.settle(nd, h) : 0);
       nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
       bendDown(nd.dx, nd.dy, nd.dz, nd.sag, tmp);
       nd.wdx = tmp[0]; nd.wdy = tmp[1]; nd.wdz = tmp[2];
@@ -1239,7 +1260,7 @@ export class TreeSim {
       } else {
         const pn = nodes[nd.parent];
         const h = Math.hypot(nd.dx, nd.dz);
-        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius));
+        const bend = Math.min(0.08, (gk * nd.subLen * nd.len * h) / (nd.radius * nd.radius)) + (this.settleOn ? this.settle(nd, h) : 0);
         // Inherited sag fades over SAG_RIGHT metres of wood (each new internode rights itself toward the direction it
         // grew in), so droop is local to the loaded stretch instead of piling up along the whole path to the cap.
         nd.sag = Math.min(1.3, pn.sag * Math.exp(-nd.len * right) + bend);
