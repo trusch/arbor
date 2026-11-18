@@ -134,6 +134,9 @@ const DOWN_MAX = 0.3;
 const JUV_H = 1.5, JUV_MIN = 0.2, JUV_SPEED = 0.16, JUV_RADIUS = 0.3, JUV_LEAF = 0.6;
 const JUV_BUDS = 0.75, JUV_BREAK = 3, JUV_SEGS = [3, 6], JUV_SHED = [3.2, 6.4];
 
+/** Light grid: at most this many cells over the tree's height (T10, big tree P5). */
+const LIGHT_CELLS_H = 28;
+
 export class TreeSim {
   nodes: TreeNode[] = [];
   chains: Chain[] = [];
@@ -682,8 +685,11 @@ export class TreeSim {
   private updateLight() {
     const nodes = this.nodes, N = nodes.length;
     if (N < 50) return;
-    const cell = this.params.growth.segmentLength * 4;
     const mn = this.bboxMin, mx = this.bboxMax;
+    // T10: the cell grows with the tree once it passes LIGHT_CELLS_H cells of height, so the cell count (and the cost
+    // of the column sums) stays bounded; below that (every tree up to about 24.6 m at the default 0.22 m segment) the
+    // cell is the old 4 segments exactly.
+    const cell = Math.max(this.params.growth.segmentLength * 4, (mx[1] - Math.min(0, mn[1])) / LIGHT_CELLS_H);
     const ox = mn[0] - cell, oy = Math.min(0, mn[1]) - cell, oz = mn[2] - cell;
     const nx = Math.ceil((mx[0] - ox) / cell) + 2, ny = Math.ceil((mx[1] - oy) / cell) + 2, nz = Math.ceil((mx[2] - oz) / cell) + 2;
     if (!isFinite(nx * ny * nz) || nx * ny * nz > 400000) return;
@@ -716,10 +722,14 @@ export class TreeSim {
       for (let z = 0; z < nz; z++) { const c = idx(x, y, z); sz0[c] = a + dens[c] * 0.5; a += dens[c]; }
       for (let z = nz - 1; z >= 0; z--) { const c = idx(x, y, z); sz1[c] = b + dens[c] * 0.5; b += dens[c]; }
     }
+    // Light is a function of the cell alone: evaluated once per occupied cell (big tree P5; the same expression, so
+    // every node gets bit-for-bit the value it got per node before), NaN = not evaluated yet.
+    const Lc = new Float64Array(dens.length).fill(NaN);
     for (let i = 0; i < N; i++) {
       const c = cellOf[i];
       if (c < 0) { nodes[i].light = 1; continue; }
-      const L = (2 * Math.exp(-k * up[c]) + Math.exp(-k * sx0[c]) + Math.exp(-k * sx1[c]) + Math.exp(-k * sz0[c]) + Math.exp(-k * sz1[c])) / 6;
+      let L = Lc[c];
+      if (L !== L) L = Lc[c] = (2 * Math.exp(-k * up[c]) + Math.exp(-k * sx0[c]) + Math.exp(-k * sx1[c]) + Math.exp(-k * sz0[c]) + Math.exp(-k * sz1[c])) / 6;
       nodes[i].light = L;
     }
     const thr = this.params.growth.selfPrune;
