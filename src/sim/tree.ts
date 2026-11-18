@@ -49,6 +49,8 @@ export interface Chain {
   wx: number; wy: number; wz: number;
   /** Juvenile side shoot (trunk-borne below `crown.bole`): number of segments it grows; shed when the trunk thickens. */
   juv?: number;
+  /** Growth over years: 1 = wood of a suppressed (non-scaffold) order-1 limb, set at the year-2 flush (`pickScaffold`). */
+  sup?: number;
 }
 
 export interface Bud {
@@ -116,7 +118,7 @@ const LEADER_VIGOR = [1, 0.45, 0.2];
 const YEAR_REACH = 1.5, YEAR_BUDS = 2;
 /** Phases of the growing season at which dead tips are revived and buds set (the first also adds the year's shell). */
 /** G2 girth by age: twig radius of the pipe model +13 % per growing year after the first (trunk x1.25 by year 3). */
-const YEAR_GIRTH = 0.13;
+const YEAR_GIRTH = 0.2;
 /**
  * Old wood thickens more than new (majestic-oak pass): the pipe exponent drops by this share per growing year, so a
  * node carrying many tips (trunk, scaffold limbs) gains more girth than a twig, and girth falls off quickly outward.
@@ -132,6 +134,22 @@ const YEAR_KEEP = 4;
  * 0.8 breaks 1 to 3 limbs in 120 s, 1.0 a few more, 0.6 none.
  */
 export const YEAR_SIGMA = 0.65;
+/**
+ * Scaffold dominance (majestic architecture, years 2-3): at the year-2 bud break the YEAR_SCAF thickest order-1 limbs,
+ * at least YEAR_SCAF_SEP rad apart in azimuth, become scaffold; every other order-1 limb and all wood on it is
+ * suppressed: elongation x YEAR_SUP, no spring revival or buds, light pruning at YEAR_SUP_PRUNE x the threshold, and up
+ * to YEAR_SHED_N of them are shed per growth year (lowest and thinnest first, phases YEAR_SHED_PH + k x 0.025).
+ */
+/** Scaffold wood (order >= 1, not `sup`) elongates x YEAR_SCAF_VIGOR in years 2-3: it takes the freed shell. */
+const YEAR_SCAF_VIGOR = 1.25;
+const YEAR_SCAF = 6, YEAR_SCAF_SEP = 0.75, YEAR_SUP = 0.4, YEAR_SUP_PRUNE = 1.6, YEAR_SHED_N = 3;
+/** Interior opening (years 2-3): light pruning threshold x this for all order >= 2 wood. */
+const YEAR_PRUNE = 1.5;
+/**
+ * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
+ * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
+ */
+const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = -0.12, YEAR_CALM = 0.35;
 const YEAR_WAVES = [0.02, 0.12, 0.22];
 /** Shell attractors open evenly from bud break over this share of the year (0.02 .. 0.3 of the phase). */
 const SHELL_OPEN = 0.28;
@@ -237,6 +255,8 @@ export class TreeSim {
   shedYear = 0;
   /** Breakage strength gain per growing year (YEAR_SIGMA; a field so calibration scripts can sweep it). */
   yearSigma = YEAR_SIGMA;
+  /** Scaffold limbs picked (year-2 bud break; `pickScaffold`). */
+  scafPicked = false;
   private sAcc = 0;
   /** Nodes that elongated or were created since the last forward pass of any kind, parents before children. */
   private sTips: number[] = [];
@@ -267,7 +287,7 @@ export class TreeSim {
     this.shedStats = { shoots: 0, shed: 0, shedLeaves: 0, lastShedT: 0 };
     this.sFull = true; this.sLen = 0; this.sValid = false;
     this.sDownLo = Infinity; this.sTips.length = 0; this.sBox = false; this.sAcc = 0;
-    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.attrT = new Float64Array(0); this.attrNext = 0;
+    this.yearDone = 0; this.growYear = 0; this.thickMul = 1; this.girth = 1; this.ageQ = 0; this.shedYear = 0; this.scafPicked = false; this.attrT = new Float64Array(0); this.attrNext = 0;
     this.rebuildAttractors();
     // Root node at ground plus the first growing leader segment.
     const root = this.addNode(-1, 0, 0, 0, 1, 0, 0);
@@ -293,7 +313,10 @@ export class TreeSim {
 
   private newChain(node: number, order: number): Chain {
     const w = this.rng.unit([0, 0, 0]);
-    return { nodes: [node], order, alive: true, starve: 0, pruned: false, shade: 0, wx: w[0], wy: w[1], wz: w[2] };
+    const ch: Chain = { nodes: [node], order, alive: true, starve: 0, pruned: false, shade: 0, wx: w[0], wy: w[1], wz: w[2] };
+    // Scaffold dominance (years 2-3): wood on a suppressed limb is suppressed; a new order-1 limb after the pick is too.
+    if (this.scafPicked && this.nodes.length > node && (order === 1 || this.chains[this.nodes[node].chain]?.sup)) ch.sup = 1;
+    return ch;
   }
 
   get attractorCount() {
@@ -425,7 +448,11 @@ export class TreeSim {
         this.ageQ = Math.round(prog * 40) / 40;
         this.girth = 1 + YEAR_GIRTH * this.ageQ;
       }
-      if (yi >= 1 && yi < this.years && ph >= YEAR_SHED_PH && this.shedYear < yi) { this.shedYear = yi; this.shedLowLimb(yi); }
+      // G4 + scaffold dominance: up to YEAR_SHED_N limbs per growth year, one per 0.025 of the phase from YEAR_SHED_PH.
+      if (yi >= 1 && yi < this.years) {
+        const k = ph < YEAR_SHED_PH ? 0 : Math.min(YEAR_SHED_N, Math.floor((ph - YEAR_SHED_PH) / 0.025) + 1);
+        if (this.shedYear < (yi - 1) * YEAR_SHED_N + k) { this.shedYear = Math.max(this.shedYear, (yi - 1) * YEAR_SHED_N) + 1; this.shedLowLimb(yi); }
+      }
       lead = LEADER_VIGOR[Math.min(LEADER_VIGOR.length - 1, this.growYear)];
     }
     const full = this.nodes.length >= g.maxNodes || ext <= 0;
@@ -443,7 +470,7 @@ export class TreeSim {
         const vigor = Math.pow(g.vigorDecay, ch.order);
         // A seedling starts slowly: juvenile wood elongates at JUV_SPEED..1 of the adult rate.
         const jv = tip.juv < 1 ? JUV_SPEED + (1 - JUV_SPEED) * (tip.juv - JUV_MIN) / (1 - JUV_MIN) : 1;
-        tip.len += g.segmentLength * g.growthRate * vigor * jv * dt * ext * (ch.order === 0 ? lead : 1);
+        tip.len += g.segmentLength * g.growthRate * vigor * jv * dt * ext * (ch.order === 0 ? lead : this.growYear < 1 || this.years === 0 ? 1 : ch.sup ? YEAR_SUP : YEAR_SCAF_VIGOR);
         this.sUp[tipId] |= 1; this.sDown[tipId] = 1;
         this.sTips.push(tipId);
         if (tipId < this.sDownLo) this.sDownLo = tipId;
@@ -553,13 +580,24 @@ export class TreeSim {
     const wl = Math.hypot(wx, wy, wz) || 1;
     ch.wx = wx /= wl; ch.wy = wy /= wl; ch.wz = wz /= wl;
     const att = cnt > 0 ? g.attraction : 0;
+    // Levelling (years 2-3, orders 1 and 2): an outward set-point that settles toward the horizontal with reach.
+    let lx = 0, ly = 0, lz = 0, wan = g.wander, gr = grav;
+    if (this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && ch.juv === undefined) {
+      const rr = Math.hypot(n.rx, n.rz);
+      if (rr > 0.3) {
+        const f = Math.min(1, rr / Math.max(1, env.radius)), e = YEAR_LEVEL_E0 + (YEAR_LEVEL_E1 - YEAR_LEVEL_E0) * f - (ch.order - 1) * 0.12;
+        const w = YEAR_LEVEL * smoothstep(0.5, 2.5, rr);
+        lx = (n.rx / rr) * Math.cos(e) * w; ly = Math.sin(e) * w; lz = (n.rz / rr) * Math.cos(e) * w;
+        wan *= YEAR_CALM; gr *= 0.3;
+      }
+    }
     // Trunk below the crown: strong upward drive.
     const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
     // Weeping: twigs of order >= 2 bend down (positive gravitropism) ∝ gravity.
     const weep = ch.order >= 2 ? g.weeping * Math.min(3, g.gravity) * Math.min(1, (ch.order - 1) * 0.6) : 0;
-    let dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + wx * g.wander;
-    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (grav + lead - weep) * UP[1] + wy * g.wander;
-    let dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + wz * g.wander;
+    let dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + wx * wan + lx;
+    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (gr + lead - weep) * UP[1] + wy * wan + ly;
+    let dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + wz * wan + lz;
     // Torsion: twist the direction about the vertical axis each segment (spiralling growth).
     if (g.torsion !== 0) {
       const ta = ((g.torsion * Math.PI) / 180) * (ch.order % 2 ? -1 : 1);
@@ -607,8 +645,16 @@ export class TreeSim {
     for (let ci = 1; ci < chains.length; ci++) { const c = chains[ci]; if (c.order === 1 && !c.pruned && !c.juv && c.nodes.length >= 2) o1.push(ci); }
     o1.sort((a, b) => nodes[chains[b].nodes[1]].radius - nodes[chains[a].nodes[1]].radius || a - b);
     let pick = -1, low = Infinity;
-    for (let j = YEAR_KEEP; j < o1.length; j++) {
+    for (let j = this.scafPicked ? 0 : YEAR_KEEP; j < o1.length; j++) {
       const c = chains[o1[j]];
+      if (this.scafPicked) {
+        // Suppressed limbs only; the low ones first, then the thinnest (score: lowest wood in m + 100 x base radius in m).
+        if (!c.sup) continue;
+        let m = Infinity; for (let k = 1; k < c.nodes.length; k++) m = Math.min(m, nodes[c.nodes[k]].wy);
+        const sc = Math.min(m, nodes[c.nodes[0]].ry) + 100 * nodes[c.nodes[1]].radius;
+        if (sc < low) { low = sc; pick = o1[j]; }
+        continue;
+      }
       if (nodes[c.nodes[0]].ry >= base) continue;
       let m = Infinity; for (let k = 1; k < c.nodes.length; k++) m = Math.min(m, nodes[c.nodes[k]].wy);
       if (m < low) { low = m; pick = o1[j]; }
@@ -618,8 +664,35 @@ export class TreeSim {
     if (ev) ev.shed = true;
   }
 
+  /**
+   * Scaffold dominance: the YEAR_SCAF thickest order-1 limbs (greedy, at least YEAR_SCAF_SEP apart in azimuth) stay
+   * scaffold; every other order-1 limb and the wood it carries is marked `sup`. Flags only (no structure input).
+   */
+  private pickScaffold() {
+    const nodes = this.nodes, chains = this.chains;
+    const o1: number[] = [];
+    for (let ci = 1; ci < chains.length; ci++) { const c = chains[ci]; if (c.order === 1 && !c.pruned && !c.juv && c.nodes.length >= 2) o1.push(ci); }
+    o1.sort((a, b) => nodes[chains[b].nodes[1]].radius - nodes[chains[a].nodes[1]].radius || a - b);
+    const az: number[] = [], keep = new Set<number>();
+    for (const ci of o1) {
+      if (keep.size >= YEAR_SCAF) break;
+      const c = chains[ci], t = nodes[c.nodes[c.nodes.length - 1]], a = Math.atan2(t.rz, t.rx);
+      if (az.some((b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < YEAR_SCAF_SEP)) continue;
+      az.push(a); keep.add(ci);
+    }
+    // Chains are appended after their parent chain's node exists, so one forward pass sees every parent's flag first.
+    for (let ci = 1; ci < chains.length; ci++) {
+      const c = chains[ci];
+      if (c.juv !== undefined) continue;
+      if (c.order === 1) { if (!keep.has(ci)) c.sup = 1; }
+      else if (chains[nodes[c.nodes[0]].chain].sup) c.sup = 1;
+    }
+    this.scafPicked = true;
+  }
+
   private springFlush(yi: number, wave: number, t0: number) {
     const p = this.params, g = p.growth;
+    if (yi >= 1 && wave === 0 && !this.scafPicked) this.pickScaffold();
     if (wave === 0) {
       // This year's shell, sorted inside-out (distance from the crown base point in envelope units) and opened at an
       // even rate from bud break (t0) to SHELL_OPEN of the year, so the crown grows through the season, not in a burst.
@@ -650,7 +723,7 @@ export class TreeSim {
     const nChains = this.chains.length;
     for (let c = 0; c < nChains; c++) {
       const ch = this.chains[c];
-      if (ch.pruned || ch.juv !== undefined || ch.nodes.length < 2) continue;
+      if (ch.pruned || ch.juv !== undefined || ch.nodes.length < 2 || ch.sup) continue;
       const tipId = ch.nodes[ch.nodes.length - 1], n = this.nodes[tipId];
       if (!ch.alive && this.nodes.length < g.maxNodes) {
         const cnt = this.attractorPull(n.rx, n.ry, n.rz, n.dx, n.dy, n.dz, this.perception() * YEAR_REACH, tmp);
@@ -711,7 +784,7 @@ export class TreeSim {
         this.extend(c, b.dx, b.dy * 0.6 + 0.25, b.dz);
         continue;
       }
-      const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1);
+      const vigor = Math.pow(g.vigorDecay, ch.order + 1) * (ch.order === 0 ? g.scaffoldBranching : 1) * (ch.sup && this.growYear >= 1 ? YEAR_SUP : 1);
       if (this.rng.next() > g.branchingProbability * release * vigor * dt) continue;
       const cnt = this.attractorPull(n.rx, n.ry, n.rz, b.dx, b.dy, b.dz, this.perception() * 1.2, tmp);
       this.buds[i] = this.buds[this.buds.length - 1];
@@ -783,10 +856,13 @@ export class TreeSim {
       if (ch.pruned) continue;
       const parentChain = this.chains[nodes[ch.nodes[0]].chain];
       if (parentChain !== ch && parentChain.pruned) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); continue; }
-      if (thr <= 0 || ch.order < 2 || ch.nodes.length < 2) { ch.shade = 0; continue; }
+      const yr = this.years > 0 && this.growYear >= 1;
+      if (thr <= 0 || (ch.order < 2 && !(yr && ch.sup && ch.order === 1)) || ch.nodes.length < 2) { ch.shade = 0; continue; }
       let L = 0;
       for (let j = 1; j < ch.nodes.length; j++) L = Math.max(L, nodes[ch.nodes[j]].light);
-      if (L < thr) ch.shade++; else ch.shade = 0;
+      // Years 2-3: the interior clears (harder threshold), suppressed limbs go at a still higher light level.
+      const t = yr ? thr * (ch.sup ? YEAR_SUP_PRUNE : YEAR_PRUNE) : thr;
+      if (L < t) ch.shade++; else ch.shade = 0;
       if (ch.shade >= 4) { ch.pruned = true; ch.alive = false; this.sChainDirty(ch); }
     }
   }
