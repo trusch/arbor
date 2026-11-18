@@ -23,7 +23,7 @@ try {
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE ?? 4) });
   const res = await page.evaluate(async () => {
     const A = window.__arbor;
-    const before = (await import('/scripts/_branchMesh.before.ts')).BranchMesh, after = (await import('/src/render/branchMesh.ts')).BranchMesh;
+    const before = (await import('/scripts/_branchMesh.before.ts')).BranchMesh, after = (await import('/src/render/branchMesh.ts?cost=1')).BranchMesh;
     const mat = A.branches.mesh.material;
     const ms = { before: new before(mat), after: new after(mat) };
     const D = new Float32Array(A.sim.nodes.length * 3);

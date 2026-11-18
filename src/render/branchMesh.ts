@@ -198,9 +198,9 @@ export class BranchMesh {
             let wx = qx - cx, wy = qy - cy, wz = qz - cz;
             const wd = wx * ux + wy * uy + wz * uz;
             wx -= ux * wd; wy -= uy * wd; wz -= uz * wd;
-            const wl = Math.hypot(wx, wy, wz) || 1;
-            let mx = ox + COLLAR_BLEND * wx / wl, my = oy + COLLAR_BLEND * wy / wl, mz = oz + COLLAR_BLEND * wz / wl;
-            const ml = Math.hypot(mx, my, mz) || 1;
+            const wl = Math.sqrt(wx * wx + wy * wy + wz * wz) || 1;
+            const mx = ox + COLLAR_BLEND * wx / wl, my = oy + COLLAR_BLEND * wy / wl, mz = oz + COLLAR_BLEND * wz / wl;
+            const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
             Nn[o3] = mx / ml; Nn[o3 + 1] = my / ml; Nn[o3 + 2] = mz / ml;
             UV[v * 2] = (j / R) * uRep; UV[v * 2 + 1] = vc;
             VN[v] = ids[0];
