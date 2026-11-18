@@ -274,7 +274,7 @@ function weatherRender(dt: number) {
   canopy.fade(dt);
   canopy.flicker(wind, fleckLight.copy(stage.sun.color).multiplyScalar(Math.min(stage.sun.intensity, stage.atmo.keyIntensity)), 1 - stage.atmo.night);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
-  clouds?.frame(stage.camera, { sunDir: stage.atmo.sunDir, sunH: stage.atmo.sunH, night: stage.atmo.night, sunColor: stage.atmo.sunColor, moonLight: stage.atmo.moonLight, cloud: weather.cloud, type: weather.cloudType, storm: weather.kind === 'storm', flash: weather.flash, dirX: wind.dirX, dirZ: wind.dirZ, speed: weather.cloudSpeed(wind.base), fogDensity: stage.fog.density, lowQ: params.sky.quality === 'Low', fogColor: stage.fog.color, moonDir: stage.atmo.moonDir }, dt);
+  clouds?.frame(stage.camera, { sunDir: stage.atmo.sunDir, sunH: stage.atmo.sunH, night: stage.atmo.night, sunColor: stage.atmo.sunColor, moonLight: stage.atmo.moonLight, cloud: weather.cloud, type: weather.cloudType, storm: weather.kind === 'storm', flash: weather.flash, boltU: weather.bolt.u, dirX: wind.dirX, dirZ: wind.dirZ, speed: weather.cloudSpeed(wind.base), fogDensity: stage.fog.density, lowQ: params.sky.quality === 'Low', fogColor: stage.fog.color, moonDir: stage.atmo.moonDir }, dt);
   if (!rain) return;
   const night = stage.atmo.night, low = params.sky.quality === 'Low';
   // PowerVR rule: on Low the rain/bolt planes only draw once the canopy decal (their program donor) has been drawn,

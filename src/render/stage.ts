@@ -569,6 +569,8 @@ export class Stage {
       const Lh = (fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11) * 1.08;
       this.wxFog.setRGB(Lh, Lh, Lh * 1.04);
       fc.lerp(this.wxFog, 0.7 * hz);
+      // Low sun and night: mist is not the brightest thing in a dark picture (exactly 1 from sun elevation sine 0.4 up).
+      fc.multiplyScalar(1 - 0.5 * hz * (1 - THREE.MathUtils.smoothstep(this.atmo.sunH, 0.1, 0.4)));
       U.fogCol.value.copy(fc);
       this.fog.density *= 1 + 7 * hz;
       this.sun.intensity *= 1 - 0.3 * hz;
@@ -579,8 +581,12 @@ export class Stage {
     if (c <= 0) return;
     const L = fc.r * 0.3 + fc.g * 0.59 + fc.b * 0.11;
     // Storm haze: grey-blue at the fog's own luminance, darkened (less at night, where it is already dark).
-    this.wxFog.copy(this.wxCool).multiplyScalar(L * (0.4 + 0.4 * night) / 0.57);
-    fc.lerp(this.wxFog, 0.85 * c);
+    // Under a closed layer at low sun and at night the horizon (this colour: far land, the far deck, the sky's horizon
+    // blend) was a near-white band under a dark bank. `ev` is exactly 0 from sun elevation sine 0.4 up and below cloud
+    // 0.3 (noon and fair / cloudy skies unchanged); the share of the hour's own fog colour that stays keeps it warm.
+    const ev = (1 - THREE.MathUtils.smoothstep(this.atmo.sunH, 0.1, 0.4)) * THREE.MathUtils.smoothstep(c, 0.3, 0.55);
+    this.wxFog.copy(this.wxCool).multiplyScalar(L * (0.4 + 0.4 * night) * (1 - 0.55 * ev) / 0.57);
+    fc.lerp(this.wxFog, 0.85 * c).multiplyScalar(1 - 0.5 * ev);
     U.fogCol.value.copy(fc);
     U.skyGain.value *= 1 - 0.72 * c;
     // Overcast: the blue drains out of the sky (tint toward grey at its own luminance) and the sun disc disappears.

@@ -36,7 +36,7 @@ try {
       if (a.clouds) { const C = a.clouds; C.amount = -1; C.stats.frames = 0; C.stats.sumMs = 0; C.stats.maxMs = 0; }
       if (view === 'app') { a.params.camera.autoFrame = true; a.stage.autoCamera?.(); }
       else {
-        const A = a.stage.atmo, d = view === 'wind' ? { x: -a.wind.dirX, y: 0.3, z: -a.wind.dirZ } : view === 'moon' ? A.moonDir : A.sunDir;
+        const A = a.stage.atmo, d = view === 'wind' ? { x: -a.wind.dirX, y: 0.3, z: -a.wind.dirZ } : view === 'moon' ? A.moonDir : view === 'anti' ? { x: -A.sunDir.x, y: 0.3, z: -A.sunDir.z } : A.sunDir;
         const H = a.sim.bboxMax[1], n0 = a.sim.nodes[0], az = Math.atan2(d.z, d.x) + 0.2, D = H * (innerWidth < innerHeight ? 3.0 : 2.1);
         a.params.camera.autoFrame = false; a.stage.takeControl?.(); a.stage.controls.maxPolarAngle = Math.PI;
         const px = n0.wx - Math.cos(az) * D, pz = n0.wz - Math.sin(az) * D, py = 1.7, el = 0.3, baz = Math.atan2(d.z, d.x) + 0.09;
