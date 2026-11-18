@@ -5,7 +5,7 @@ import type { TreeSim } from '../sim/tree';
 import { makeGrassTexture } from './textures';
 import { Atmosphere } from './atmosphere';
 import { Post } from './post';
-import { makeTerrainGeometry } from './backdrop';
+import { makeTerrainGeometry, terrainHeight } from './backdrop';
 import { tel } from '../tel';
 import { season } from '../season';
 import { groundSeason } from './landseason';
@@ -23,6 +23,11 @@ const GROUND_GAIN = [0.76, 0.9, 0.4];
 const HAZE = 0.3;
 // Hemisphere added on a moonless night (day for night: the tree stays readable on a dim phone). Full moon adds none.
 const NIGHT_FLOOR = 0.34;
+
+/** Lowest eye height above the terrain for any camera pose (the director clamps its shots to 0.42). */
+const GROUND_CLEAR = 0.3;
+/** Hand-set view: zoom-out limit = max(HAND_MAX_MIN, HAND_MAX_FIT x framed distance); clearance over the terrain. */
+const HAND_MAX_MIN = 30, HAND_MAX_FIT = 4, HAND_CLEAR = 0.42;
 
 export class Stage {
   renderer: THREE.WebGLRenderer;
@@ -54,6 +59,8 @@ export class Stage {
   /** True once the user has orbited or zoomed by hand. While set, nothing automatic (cinema, auto-rotate,
    *  auto-frame) writes the camera; only `autoCamera()` clears it. */
   manual = false;
+  /** Polar limit kept from the grab (`takeControl`); the hand-set view's limit shrinks from it with distance. */
+  private grabPolar = Math.PI * 0.495;
   /** Start screen is up: the automatic camera holds a calm wide view of the meadow (slow orbit) instead of the seedling close-up. */
   intro = false;
   /** Ease back into the automatic camera: seconds since `autoCamera()`, and the hand-set view it started from. */
@@ -299,7 +306,12 @@ export class Stage {
     this.manual = true;
     this.easeT = 1e9;
     // Director shots may look up from below the target: keep the polar angle the user grabbed (no snap), else the old limit.
-    this.controls.maxPolarAngle = Math.max(Math.PI * 0.495, Math.min(Math.PI * 0.97, this.controls.getPolarAngle() + 0.02));
+    // Read the angle from the pose itself: `getPolarAngle()` is the value of the last `controls.update`, which can be a
+    // frame (or, for a pose set by a script, a whole other view) old and clamped to the previous limit.
+    const off = this.camera.position.clone().sub(this.controls.target);
+    const polar = Math.acos(Math.max(-1, Math.min(1, off.y / Math.max(1e-6, off.length()))));
+    this.grabPolar = Math.max(Math.PI * 0.495, Math.min(Math.PI * 0.97, polar + 0.02));
+    this.controls.maxPolarAngle = this.grabPolar;
     this.director.rest(0);
   }
 
@@ -313,6 +325,8 @@ export class Stage {
     this.center.copy(this.controls.target);
     this.dist = this.camera.position.distanceTo(this.controls.target);
     this.cineOn = false;
+    // The ease starts from the hand-set pose: keep the grab limit (>= the distance-limited one), no snap.
+    this.controls.maxPolarAngle = this.grabPolar;
     this.director.rest(EASE_S + 6);
   }
 
@@ -510,7 +524,24 @@ export class Stage {
       this.camera.position.lerpVectors(this.easePos, this.camera.position, w);
       this.controls.target.lerpVectors(this.easeTgt, this.controls.target, w);
     }
+    if (this.manual) {
+      // Hand-set view: the zoom-out stops where the tree still reads (about 4 framed distances), and the polar limit
+      // falls with distance so the camera stays HAND_CLEAR + 3 % of its distance above the terrain under it: a low
+      // grabbed shot (looking up, polar up to 0.97 pi) zoomed out rises over the hills instead of sliding along them.
+      this.controls.maxDistance = Math.max(HAND_MAX_MIN, HAND_MAX_FIT * Math.max(MIN_DIST, fit));
+      const cp0 = this.camera.position, tg = this.controls.target, d = Math.max(0.5, cp0.distanceTo(tg));
+      const floor = terrainHeight(cp0.x, cp0.z) + HAND_CLEAR + 0.03 * d;
+      const ground = Math.acos(Math.max(-1, Math.min(1, (floor - tg.y) / d)));
+      this.controls.maxPolarAngle = Math.max(0.02, Math.min(this.grabPolar, ground));
+    } else this.controls.maxDistance = Infinity;
+    // Damping per second, not per frame: 0.06 per frame at 60 fps. Per frame, an 8 fps host glided for over 10 s
+    // after a drag, which looks like the camera moving by itself.
+    this.controls.dampingFactor = 1 - Math.pow(0.94, Math.min(30, Math.max(0.25, dt * 60)));
     this.controls.update(dt);
+    // Never under the terrain, in any mode: a zoom-out from a low grabbed shot (maxPolarAngle up to 0.97 pi) would go
+    // below it. Only an input or an automatic pose can put it there; a hand-set view at rest is never touched.
+    const cp = this.camera.position, gy = terrainHeight(cp.x, cp.z) + GROUND_CLEAR;
+    if (cp.y < gy) { cp.y = gy; this.camera.lookAt(this.controls.target); }
   }
 
   /** Storm inputs, written by `main.ts` from `src/weather.ts` each frame: cloud 0..1, flash 0..1. */

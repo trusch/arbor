@@ -55,6 +55,7 @@ export class Director {
   private lastBird = -1e9;
   private clock = 0;
   private hold = 0;
+  private travelDy = NaN;
   // Smoothed tree box: height, crown radius, centre height, trunk position.
   private H = 0; private R = 0; private cy = 0; private bx = 0; private bz = 0; private fit = 0;
   // Transition state.
@@ -153,7 +154,11 @@ export class Director {
     if (kind === 'wide' || kind === 'hero' || kind === 'storm') {
       const ly = this.lightYaw(env, side);
       if (ly !== null) yaw = ly;
-    } else if (kind === 'branch' || kind === 'bird') {
+    } else if ((kind === 'rise' || kind === 'branch') && !at && env.sunH > 0.08) {
+      // The lit side: camera on the sun's side of the tree, a little round, so the subject is not a backlit mass.
+      yaw = Math.atan2(env.sunDir.x, env.sunDir.z) + side * (0.45 + 0.3 * this.rnd());
+    }
+    if (kind === 'branch' || kind === 'bird') {
       if (at) { s.sx = at.x; s.sy = at.y; s.sz = at.z; yaw = Math.atan2(at.x - this.bx, at.z - this.bz); }
       else if (this.pickBranch(sim, yaw, this.a)) { s.sx = this.a.x; s.sy = this.a.y; s.sz = this.a.z; yaw = Math.atan2(s.sx - this.bx, s.sz - this.bz); }
       else s.kind = 'orbit';
@@ -205,10 +210,12 @@ export class Director {
       }
       case 'rise': {
         // Crane: from the trunk base up through the crown, close enough that the crown breaks the frame.
-        const dh = Math.max(R * 1.5 + 2.5, H * 0.7, 3);
-        const y = 0.6 + (H * 0.82 - 0.6) * smoother(u);
+        // Far enough out that the crown is a shape against the sky, not a wall: the eye stops at 0.7 H and the view
+        // looks up past the crown edge (the tree on one third, sky on the other two).
+        const dh = Math.max(R * 2.3 + 4, H * 1.0, 3);
+        const y = 0.6 + (H * 0.7 - 0.6) * smoother(u);
         put(s.yaw + sd * 0.25 * e, dh, y);
-        this.aim(pos, this.bx, y + 0.1 * dh, this.bz, sd * (P ? 0.1 : 0.26), 0, env, tgt);
+        this.aim(pos, this.bx, y + 0.22 * dh, this.bz, sd * (P ? 0.12 : 0.36), -0.2, env, tgt);
         break;
       }
       case 'canopy': {
@@ -220,12 +227,14 @@ export class Director {
       }
       case 'branch': case 'bird': {
         // Close on an outer branch from outside the crown, a little below it so sky or far meadow is behind; slow push.
-        const far = s.kind === 'bird' ? 4.2 : Math.max(2.3, Math.min(3.4, R * 0.6));
+        const far = s.kind === 'bird' ? 4.2 : Math.max(3, Math.min(4.4, R * 0.75));
         // The camera stands off to one side of the branch (mostly along the crown's edge, a little outward), so the
         // tips are seen against sky and far meadow with the crown mass on one side of the frame only.
-        const d = far * (1 - 0.16 * e), ang = s.yaw + sd * (1.15 + 0.08 * e);
-        pos.set(s.sx + Math.sin(s.yaw) * 0.8 + Math.sin(ang) * d, Math.max(0.5, s.sy - 0.16 * d), s.sz + Math.cos(s.yaw) * 0.8 + Math.cos(ang) * d);
-        this.aim(pos, s.sx, s.sy, s.sz, sd * (P ? 0.1 : 0.25), 0.05, env, tgt);
+        // Further out of the crown (0.8 rad off the tangent) and lower, looking up: the branch is seen against sky and
+        // the crown edge stays a band at the side, not half the frame.
+        const d = far * (1 - 0.16 * e), ang = s.yaw + sd * (0.55 + 0.08 * e);
+        pos.set(s.sx + Math.sin(s.yaw) * 1.2 + Math.sin(ang) * d, Math.max(0.5, s.sy - 0.4 * d), s.sz + Math.cos(s.yaw) * 1.2 + Math.cos(ang) * d);
+        this.aim(pos, s.sx, s.sy, s.sz, sd * (P ? 0.1 : 0.22), 0.22, env, tgt);
         break;
       }
     }
@@ -298,10 +307,15 @@ export class Director {
     this.pose(s, env, this.pos, this.tgt);
     if (this.travelT < TRAVEL_S && !snap) {
       // Travelling move: blend azimuth, radius and height about the trunk (never a straight line through the crown).
+      if (this.travelT === 0) this.travelDy = NaN;
       this.travelT += dt;
       const w = smoother(this.travelT / TRAVEL_S);
       const ax = this.fromPos.x - this.bx, az = this.fromPos.z - this.bz, px = this.pos.x - this.bx, pz = this.pos.z - this.bz;
-      const y0 = Math.atan2(ax, az), y1 = y0 + wrap(Math.atan2(px, pz) - y0), r = Math.hypot(ax, az) + (Math.hypot(px, pz) - Math.hypot(ax, az)) * w, yw = y0 + (y1 - y0) * w;
+      const y0 = Math.atan2(ax, az), dy0 = wrap(Math.atan2(px, pz) - y0);
+      // Keep the way round the trunk chosen at the start: a target azimuth near y0 + pi would flip sides between frames.
+      const dyw = Number.isNaN(this.travelDy) ? dy0 : this.travelDy + wrap(dy0 - this.travelDy);
+      this.travelDy = dyw;
+      const y1 = y0 + dyw, r = Math.hypot(ax, az) + (Math.hypot(px, pz) - Math.hypot(ax, az)) * w, yw = y0 + (y1 - y0) * w;
       this.pos.set(this.bx + Math.sin(yw) * r, this.fromPos.y + (this.pos.y - this.fromPos.y) * w, this.bz + Math.cos(yw) * r);
       this.tgt.lerpVectors(this.fromTgt, this.tgt, w);
     } else if (snap) this.travelT = 1e9;

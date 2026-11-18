@@ -23,6 +23,12 @@ import type { TreeSim } from '../sim/tree';
 const EPS = 1e-7;
 /** Cross-fade from the drawn decal to a new bake: duration (real s, under the 0.5 s minimum bake gap) and uploads. */
 const FADE_S = 0.45, FADE_STEPS = 6;
+/**
+ * A bake whose largest change at a texel is D (of 255) fades in ceil(D / FADE_MAX_STEP) steps (at least FADE_STEPS,
+ * at most FADE_STEPS_MAX), FADE_S / FADE_STEPS seconds each (up to 1.2 s, under the 1.5 s / 2 s bake gaps of a moving
+ * sun / growing tree; a bake that still meets a running fade starts from what is drawn, so it stays continuous).
+ */
+const FADE_MAX_STEP = 5, FADE_STEPS_MAX = 16;
 
 export class CanopyShadow {
   readonly mesh: THREE.Mesh;
@@ -52,6 +58,9 @@ export class CanopyShadow {
   /** Stretch along the azimuth of the drawn frame for a light direction (see `follow`). */
   private static kOf(slopeBaked: number, slopeNow: number) { return slopeBaked < 0.05 ? 1 : Math.min(2.5, Math.max(0.4, slopeNow / slopeBaked)); }
   private fadeP = 1;
+  /** Steps and duration of the running cross-fade (set per bake from its largest change). */
+  private fadeN = FADE_STEPS;
+  private fadeDur = FADE_S;
   private fadeStep = 0;
   /** Texture uploads of fade steps (profiling). */
   fadeUploads = 0;
@@ -295,7 +304,11 @@ export class CanopyShadow {
     P.u0 = u0; P.w0 = w0; P.toU = toU; P.toW = toW; P.ux = ux; P.uz = uz; P.has = true;
     P.slope = slope; P.bx = n0.wx; P.bz = n0.wz; P.bu = n0.wx * ux + n0.wz * uz; P.bw = -n0.wx * uz + n0.wz * ux;
     P.uc = (u0 + u1) / 2; P.wc = (w0 + w1) / 2; P.extU = extU; P.extW = extW; P.dx = dir.x; P.dy = dir.y; P.dz = dir.z;
-    this.fadeP = instant ? 1 : 0; this.fadeStep = instant ? FADE_STEPS - 1 : 0;
+    let maxD = 0;
+    if (!instant) for (let i = 0, n = S * S; i < n; i++) { const d = to[i] - from[i]; if (d > maxD) maxD = d; else if (-d > maxD) maxD = -d; }
+    this.fadeN = instant ? FADE_STEPS : Math.min(FADE_STEPS_MAX, Math.max(FADE_STEPS, Math.ceil(maxD / FADE_MAX_STEP)));
+    this.fadeDur = (FADE_S * this.fadeN) / FADE_STEPS;
+    this.fadeP = instant ? 1 : 0; this.fadeStep = instant ? this.fadeN - 1 : 0;
     this.fadeTo(this.fadeStep + 1);
     this.mesh.visible = true;
     this.follow(now);
@@ -328,16 +341,16 @@ export class CanopyShadow {
 
   /** Per frame (`dt` real seconds): advances the cross-fade to the latest bake; uploads the texture only on a new step. */
   fade(dt: number) {
-    if (this.fadeStep >= FADE_STEPS || !this.fr.has) return;
-    this.fadeP = Math.min(1, this.fadeP + dt / FADE_S);
-    const step = Math.max(this.fadeStep, Math.ceil(this.fadeP * FADE_STEPS));
+    if (this.fadeStep >= this.fadeN || !this.fr.has) return;
+    this.fadeP = Math.min(1, this.fadeP + dt / this.fadeDur);
+    const step = Math.max(this.fadeStep, Math.ceil(this.fadeP * this.fadeN));
     if (step > this.fadeStep) { this.fadeTo(step); this.fadeUploads++; }
   }
 
   private fadeTo(step: number) {
     this.fadeStep = step;
     const t0 = performance.now();
-    const k = Math.round((256 * step) / FADE_STEPS), from = this.from, to = this.to, shown = this.shown, px8 = this.img.data, n = this.S * this.S;
+    const k = Math.round((256 * step) / this.fadeN), from = this.from, to = this.to, shown = this.shown, px8 = this.img.data, n = this.S * this.S;
     for (let i = 0; i < n; i++) { const a = from[i], v = a + (((to[i] - a) * k) >> 8); shown[i] = v; px8[i * 4 + 3] = v; }
     this.ctx.putImageData(this.img, 0, 0);
     this.tex.needsUpdate = true;

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { defaultParams, applyQueryOverrides, paramsVersion, bumpParams, paramsSignature } from './params';
 import { TreeSim } from './sim/tree';
 import { Stage, showNotice } from './render/stage';
+import { terrainHeight } from './render/backdrop';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
 import { CanopyShadow } from './render/canopyShadow';
@@ -728,6 +729,7 @@ requestAnimationFrame(loop);
 /** Automation / test hook. */
 (window as unknown as { __arbor: unknown }).__arbor = {
   params,
+  terrainHeight,
   automation,
   loadPreset: (n: string) => { loadPreset(n); regrow(); stage.autoCamera(); },
   sim,

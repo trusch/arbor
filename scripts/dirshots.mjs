@@ -102,10 +102,12 @@ try {
       const { ctx, page } = await open(layout, 13, '', 90);
       const r = await page.evaluate((S) => new Promise((res) => {
         const A = window.__arbor, st = A.stage, cam = st.camera, D = st.director;
-        let lp = cam.position.clone(), ld = cam.getWorldDirection(new cam.position.constructor()), lt = performance.now(), t0 = lt;
+        let lp = cam.position.clone(), ld = cam.getWorldDirection(new cam.position.constructor()), lt = document.timeline.currentTime, t0 = lt;
         const o = { frames: 0, maxStep: 0, maxStepAt: '', maxSpeed: 0, maxAng: 0, maxAngAt: '', maxAngStep: 0, path: 0, kinds: [], cuts: 0, minY: 1e9, minTrunk: 1e9, maxDt: 0 };
-        const tick = () => {
-          const now = performance.now(), dt = (now - lt) / 1000, s = D.state(), d = cam.getWorldDirection(new cam.position.constructor());
+        // rAF timestamps (the frame time the camera moved by), not performance.now() in this callback: that one can sit
+        // 7 ms after the previous callback in a 100 ms frame and turned a 0.1 m step into "14 to 24 m/s".
+        const tick = (now) => {
+          const dt = (now - lt) / 1000, s = D.state(), d = cam.getWorldDirection(new cam.position.constructor());
           if (s.kind && o.kinds[o.kinds.length - 1] !== s.kind) o.kinds.push(s.kind);
           const n0 = A.sim.nodes[0];
           o.minY = Math.min(o.minY, cam.position.y); o.minTrunk = Math.min(o.minTrunk, Math.hypot(cam.position.x - n0.wx, cam.position.z - n0.wz));

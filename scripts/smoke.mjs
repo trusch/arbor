@@ -142,9 +142,13 @@ try {
   check('cinema camera moves while idle', moved > 0.02, `moved ${moved.toFixed(3)} m`);
 
   // Tree stays in view: crown bounding sphere inside the frustum.
+  // Plain framed view (cinema off): director shots crop the crown by design and have their own check below.
   const inView = await page.evaluate(() => {
-    const { sim, stage } = window.__arbor;
+    const { sim, stage, params } = window.__arbor;
+    const cin = params.camera.cinema;
+    params.camera.cinema = false;
     window.__arbor.fastForward(60);
+    params.camera.cinema = cin;
     const cam = stage.camera; cam.updateMatrixWorld();
     const mn = sim.bboxMin, mx = sim.bboxMax;
     let ok = 0;
@@ -155,7 +159,7 @@ try {
     }
     return ok;
   });
-  check('auto-frame keeps crown bbox in view', inView === 8, `${inView}/8 corners`);
+  check('auto-frame (cinema off) keeps crown bbox in view', inView === 8, `${inView}/8 corners`);
 
   // A view set by hand stays put: real mouse orbit + wheel zoom, then 15 s of growth, day cycle and panel use.
   const camPose = (pg) => pg.evaluate(() => { const s = window.__arbor.stage; return { p: s.camera.position.toArray(), t: s.controls.target.toArray(), manual: s.manual, btn: !document.querySelector('#arbor-auto-camera').hidden }; });
@@ -216,11 +220,20 @@ try {
     const r = await dp.evaluate(() => new Promise((res) => {
       const A = window.__arbor, cam = A.stage.camera, D = A.stage.director, last = cam.position.clone();
       const o = { kinds: [], cuts: 0, frames: 0, maxStep: 0, maxSpeed: 0, at: '', overlay: 0, minY: 1e9 };
-      let lt = performance.now(), t0 = lt, nextGo = lt + 1500, i = 0;
+      let lt = document.timeline.currentTime, t0 = lt, nextGo = lt + 1500, i = 0;
       const order = ['hero', 'wide', 'canopy', 'rise', 'branch', 'orbit'];
-      const tick = () => {
-        const now = performance.now(), dt = (now - lt) / 1000, s = D.state(), step = cam.position.distanceTo(last);
+      const tick = (now) => { // rAF timestamp = the frame time the camera moved by
+        const dt = (now - lt) / 1000, s = D.state(), step = cam.position.distanceTo(last);
         if (s.kind && o.kinds.indexOf(s.kind) < 0) o.kinds.push(s.kind);
+        if (!s.cutting && !s.cutFrame) {
+          // Tree at least partly in frame: any of crown centre, trunk at 1/3 height or a crown box corner on screen.
+          const mn = A.sim.bboxMin, mx = A.sim.bboxMax, V = cam.position.constructor;
+          const pts = [[(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2], [A.sim.nodes[0].wx, mx[1] / 3, A.sim.nodes[0].wz]];
+          for (const x of [mn[0], mx[0]]) for (const y of [mn[1], mx[1]]) for (const z of [mn[2], mx[2]]) pts.push([x, y, z]);
+          cam.updateMatrixWorld();
+          const seen = pts.some((q) => { const v = new V(q[0], q[1], q[2]).project(cam); return v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1; });
+          if (!seen) { o.out = (o.out || 0) + 1; if ((o.outKinds || (o.outKinds = [])).indexOf(s.kind) < 0) o.outKinds.push(s.kind); }
+        }
         o.minY = Math.min(o.minY, cam.position.y);
         if (s.cutFrame) { o.cuts++; o.overlay = Math.max(o.overlay, Number(document.querySelector('#arbor-cut')?.style.opacity ?? 0)); }
         else if (dt > 0 && dt < 0.25) { o.frames++; if (step > o.maxStep) { o.maxStep = step; o.at = s.kind; } o.maxSpeed = Math.max(o.maxSpeed, step / dt); }
@@ -230,11 +243,12 @@ try {
       };
       requestAnimationFrame(tick);
     }));
-    check('director cycles through distinct shots: no per-frame jump outside its cuts, cuts happen under black, camera above ground',
-      r.kinds.length >= 5 && r.cuts >= 2 && r.overlay > 0.95 && r.maxSpeed < 14 && r.maxStep < 1.2 && r.minY > 0.3, JSON.stringify({ ...r, maxStep: +r.maxStep.toFixed(3), maxSpeed: +r.maxSpeed.toFixed(2), minY: +r.minY.toFixed(2) }));
+    check('director cycles through distinct shots: no per-frame jump outside its cuts, cuts happen under black, camera above ground, tree partly in frame in every shot',
+      r.kinds.length >= 5 && r.cuts >= 2 && r.overlay > 0.95 && r.maxSpeed < 14 && r.maxStep < 1.2 && r.minY > 0.3 && !r.out, JSON.stringify({ ...r, maxStep: +r.maxStep.toFixed(3), maxSpeed: +r.maxSpeed.toFixed(2), minY: +r.minY.toFixed(2) }));
     await dp.mouse.move(300, 250); await dp.mouse.down(); await dp.mouse.move(420, 290, { steps: 8 }); await dp.mouse.up();
-    await dp.waitForTimeout(2500);
     const pose = () => dp.evaluate(() => { const st = window.__arbor.stage; return [...st.camera.position.toArray(), ...st.controls.target.toArray(), st.manual ? 1 : 0, document.querySelector('#arbor-next-shot').hidden ? 1 : 0]; });
+    // The OrbitControls damping glide after release is the user's gesture: measure from the settled pose.
+    await camSettled(dp);
     const a0 = await pose();
     await dp.evaluate(() => { const D = window.__arbor.stage.director; D.event('bird', 2, 5, 2); D.go('wide'); });
     await dp.keyboard.press('n');
@@ -242,6 +256,15 @@ try {
     const a1 = await pose();
     check('director never moves a hand-set view (N key, forced shot and an event while manual); next-shot button hidden',
       a0[6] === 1 && a1[6] === 1 && a1[7] === 1 && Math.max(...a0.slice(0, 6).map((v, j) => Math.abs(v - a1[j]))) < 1e-3, JSON.stringify(a1.map((v) => +v.toFixed(3))));
+    // Grab a low shot and zoom far out: the camera must stay above the terrain (maxPolarAngle keeps the low grab angle).
+    // The pose a low director shot hands over (eye 0.6 m, looking up into the crown), grabbed as a drag does.
+    const grab = await dp.evaluate(() => { const s = window.__arbor.stage, n = window.__arbor.sim.nodes[0]; s.camera.position.set(n.wx + 7, 0.6, n.wz); s.controls.target.set(n.wx, 5, n.wz); s.director.go('rise'); s.takeControl(); s.controls.update(); return s.controls.getPolarAngle() / Math.PI; });
+    await dp.mouse.move(300, 250); await dp.mouse.down(); await dp.mouse.move(400, 250, { steps: 6 }); await dp.mouse.up();
+    let lowY = 1e9;
+    for (let i = 0; i < 14; i++) { await dp.mouse.wheel(0, 400); await dp.waitForTimeout(120); lowY = Math.min(lowY, await dp.evaluate(() => { const c = window.__arbor.stage.camera.position; return c.y - window.__arbor.terrainHeight(c.x, c.z); })); }
+    await camSettled(dp);
+    const gz = await dp.evaluate(() => { const s = window.__arbor.stage, c = s.camera.position; return { y: c.y - window.__arbor.terrainHeight(c.x, c.z), d: c.distanceTo(s.controls.target), polar: s.controls.getPolarAngle() / Math.PI, manual: s.manual }; });
+    check('hand-set zoom-out from a low director shot stays above the terrain', gz.manual && grab > 0.52 && lowY >= 0.29 && gz.y >= 0.29 && gz.d > 20, JSON.stringify({ grab: +grab.toFixed(3), lowY: +lowY.toFixed(2), ...gz }));
     await dp.close();
   }
   {
