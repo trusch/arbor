@@ -174,8 +174,8 @@ Order = dependency order. Every package is verified with `scripts/bigtree.mjs` (
 | P4 (built, 6.4; frustum skip not built, target missed) | T5 two-rate sway + frustum skip | `swayshots` rest check passes; paused 2x phone frame under 16 ms JS | ship |
 | P5 (T10 + per-cell light built, 6.4; T7 not built; target missed) | T10 light cell scaling + T7 shell-first leaf pass | 1x unchanged (cell stays 0.88); light tick under 25 ms at 2.75x; pass latency reported | ship |
 | P6 | T8 leaf bookkeeping | `sim.leaves` at 2.75x under 250k; `breakcalib` rerun, `SIGMA_REF` updated | ship (new random draw: needs a look at all presets) |
-| P7 | T6a cluster map + second mesh, off by default (`?clusters=1`) | Phone programs equal with and without at noon, night, storm; cluster cards for all ten forms | ship dark |
-| P8 | T6b distance blend + budget split, on | Phone 2x and 2.75x framed crown as closed as 1x today (coverage of the crown silhouette measured from a mask shot); close view identical to P6; leaf fall, debris, seasons, emergence still pass smoke | ship |
+| P7 (built, 6.5) | T6a cluster map + second mesh, off by default (`?clusters=1`) | Phone programs equal with and without at noon, night, storm; cluster cards for all ten forms | ship dark |
+| P8 (built, 6.5, on for `?years=3`) | T6b distance blend + budget split, on | Phone 2x and 2.75x framed crown as closed as 1x today (coverage of the crown silhouette measured from a mask shot); close view identical to P6; leaf fall, debris, seasons, emergence still pass smoke | ship |
 | P9 | T4 twig culling | Framed vertex count /3; no popping in a 20 s dolly (frame diff) | ship |
 | P10 | T12 world constants from final size | 2.75x: tufts to the drip line + 12 m, shade field covers the 17:30 shadow, litter density per m² within 2x of today's | ship (no effect at S = 1) |
 | P11 (built, 6.2) | G1 + T9 envelope by year, behind `?years=3`, size x1.6 (15 m) | Year-1 tree equal to today's at t = 150 within the random draw; year 2 and 3 add wood; no starvation; phone growing frame over 30 fps on the device | **ship: the first visibly bigger tree** |
@@ -353,6 +353,61 @@ Next levers, in order:
 3. The light tick sliced over several sim steps for `years` trees only: slicing changes the timing of pruning, so it cannot be bit-equal.
 
 Estimate (**E**) for year 3 on the phone path at 4x after this: still about 11 fps live and 22 fps paused. P4 and P5 as built do not change the frame rate the user sees there.
+
+### 6.5 P7 and P8 as built (branch `bigtree-crown`)
+
+**One record set, two meshes.** Cluster cards are records of the leaf pass like single leaves: same placement record (`LEAF_D` 11 floats), same node, same dates. A negative base size marks a cluster card. The pass writes single leaves from the bottom of its back buffers and cluster cards from the top. At the swap the cluster block moves right behind the singles, so the drawn set is singles in `[0, nS)` and clusters in `[nS, nAll)`. `mesh.count` = `nS`. `follow`, `sway`, `takeInstances` and the seasonal scale run over `nAll` in the leaf mesh's own buffers, exactly as before. `syncClusters` then copies the tail into the cluster mesh: matrices after every write, colours at the swap.
+- **Cluster mesh:** `Leaves.clusterMesh` is an `InstancedMesh` that is a child of the leaf mesh. It shares the live leaf geometry. Its material is `leafMaterial.clone()` with only `map` changed: on the safe path the map goes through `cleanLeafTexture(.., true)`; on the full path `onBeforeCompile` and the cache key are shared. It casts and receives shadows like the leaf mesh. Because it is a child, hiding the leaf mesh hides it too.
+- **Cluster map:** `makeClusterTexture(form)` in `textures.ts` paints 7 leaves of the form's own leaf canvas on a twig. The back layer is darker (brightness 0.55 to 0.8) and the front layer is lit. The form's proportions are painted in and the card is square: a cluster record skips the form stretch in `place`. All ten forms work. A form change repaints the live cluster map in place (mip levels on the safe path), like `setForm`.
+- **Distance blend:** a clump becomes a cluster with probability `smooth(CL_NEAR 0.35 H, CL_FAR 0.9 H, distance from the camera)`, where H is the tree height. The decision uses a per-node hash, so a clump switches as a whole. A cluster clump draws one card per K leaves; shell copies count. The card is `CL_SIZE` 2.4 x sqrt(K / 6) times the leaf size, so the area covered per sim leaf stays about the same.
+- **Budget split:** clusters are active only while the single-leaf candidates exceed `maxInstances` (phone 32k; hysteresis 0.9 / 1.1), so a tree under the cap is unchanged. When they are active:
+  - K = cluster leaves / (0.95 cap - single candidates), clamped to 1.5..10.
+  - The singles get their own rank scale, up to 85 % of the cap. Clusters are not thinned by rank.
+  - When K moves by more than 20 %, the next pass starts at once (`clusterSwitch`), so the split settles within 2 to 3 passes.
+- **Switches:** `?clusters=1` turns clusters on. They are on by default with `?years=3`; `?clusters=0` turns them off. Desktop High has no cap (`maxInstances` 0), so clusters never activate there and High is unchanged by choice: it already draws 125k single leaves at year 3.
+- **Default tree (years off):** no cluster mesh is created, so it is unchanged. With `?clusters=1` the default tree at t = 120 is just over the cap (rank scale 0.78) and would get clusters on its far side. I did not look at that case, so it stays off.
+
+What clusters do with each leaf behaviour:
+
+| Behaviour | Clusters |
+|---|---|
+| Lighting bake | Exact: the same bake as a single leaf, with the card's normal. The shade inside the spray is painted into the map. |
+| Seasons | Autumn colour, bud break and fall date per record, as for leaves. A cluster turns and drops as one unit: it carries the dates of its seed leaf, so a far clump goes bare in a few steps instead of leaf by leaf. A cluster that crosses its fall date is not handed to the falling-leaf system (`D[k + 7] > 0` guard), because a big card with a single-leaf map would fall as one giant leaf. It just leaves the crown. Spring flush scales the whole spray. |
+| Emergence | Same record clock. New growth near the camera is single leaves anyway. |
+| Falling leaves | `sampleInstance` samples singles only. |
+| Breakage | `takeInstances` hands cluster cards over too. The debris draws them with the leaf material: approximate, a broken far limb carries a few oversized single leaves. |
+| Sway | Same translation path. |
+
+Measured (**M**). Phone emulation, 4x CPU throttle, ANGLE Vulkan, `?years=3` t = 750, summer held, noon, framed by the app's automatic camera:
+
+| | Before (1931dd3) | Clusters, K fixed 6 | Clusters, budget split (a939b69) | Default 9 m tree t = 120 |
+|---|---|---|---|---|
+| Single leaves / cluster cards drawn | 28 054 / 0 (rank 0.22) | 0 / 8 308 | 0 / 27 952 | 29 867 / 0 |
+| Crown coverage (`scripts/coverage.py`) | 0.709 | 0.876 | 0.817 | 0.619 |
+| Phone programs | 8 | 8 | 8 | 8 |
+
+How coverage is measured: `bigtree.mjs` with `MASK=1` takes the framed shot twice, with and without the leaf meshes. Leaf pixels are the pixels that differ, after a 5 px median filter. Coverage is the share of the per-row silhouette span. The median filter closes gaps under about 5 device px, so the number is resolution-dependent: the default tree fills more of the frame and its gaps are larger in pixels. The K = 6 run scores higher than the budget split because its 8k cards are larger. It was rejected on the picture: big flat cards, and three quarters of the budget unused.
+
+Cost: see the ticket and the final report. The runs in this session shared a host at load 8 to 11, and the before and after runs were not all taken at the same time. The pass slice (`leaves rebuild`) stayed at 1.5 to 2 ms per frame, max 4 to 9 ms. The cluster copy is 16 floats per card per follow or sway frame.
+
+Pictures:
+- `shots/crown-before-{phone,desktop}-sheet.jpg`: before, framed + close.
+- `shots/crown-ab3-phone-sheet.jpg`: before, K 6, budget split framed, then before / after close.
+- `shots/crown-ab2-phone-sheet.jpg`: also autumn (`crown-v2-phone-autumn-*`).
+- `shots/cdolly-phone-sheet.jpg`: dolly from inside the crown to 2.4 H, after the merge with the new oak form.
+- `shots/cprog-form-*.png`: all ten forms with clusters.
+
+Probes:
+- `scripts/clusterdolly.mjs URL prefix`: dolly burst with single and cluster counts.
+- `scripts/clusterprog.mjs URL prefix`: program gate at noon, night and storm, with and without clusters, plus the form shots.
+
+Open:
+- At framing distance every clump is a cluster, and the shell is a field of identical sprays, mirrored and scaled. Seen closely on the phone it reads a little like wallpaper, with pale lit sprays on the outer shell.
+- The dolly took 4 shots about 3 s apart. That shows that singles and clusters switch over by distance, not whether a single frame pops: the split re-settles at every pass, the passes are 25 % camera-distance steps, and the count swings (singles 0 → 8.8k → 0 while the camera moved outward). No frame-diff popping measurement was run.
+- No cluster cross-fade: a clump swaps from leaves to one card at a pass swap.
+- Cluster maps of the stroke forms (spray, spiral) were not looked at closely.
+- Desktop High has no clusters.
+- Never run on the PowerVR device.
 
 ## 7. Not measured
 
