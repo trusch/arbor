@@ -308,6 +308,8 @@ export class TreeSim {
    * the elongating tips are placed (on their parents' last positions). Radii and subtree loads are current every step.
    */
   structureInterval = 0.1;
+  /** Dev switch (`?taper=0`): false = plain pipe radii on a years tree (no taper limit, no butt swell). Set before the tree grows; a later change needs `updateStructure(dt, true)`. */
+  taperOn = true;
   /**
    * Growth over years (big tree P11 + P12, `?years=3`; 0 = off, the tree of one season). Set before `reset()`. The
    * growth clock is sim time (`envelope.ts` YEAR_DATE0); everything below is a function of it, nothing accumulates.
@@ -1257,7 +1259,7 @@ export class TreeSim {
     const chains = this.chains, up = this.sUp, down = this.sDown, T = this.sT, C = this.sC, R = this.sR, first = this.sFirst, next = this.sNext;
     let lo = this.sDownLo, nUp = 0, nThick = 0;
     const inv = 1 / n, kk = dt > 0 ? k : 1, snap = dt <= 0;
-    const taper = this.years > 0 && this.ageQ > 0, Q = this.sQ;
+    const taper = this.taperOn && this.years > 0 && this.ageQ > 0, Q = this.sQ;
     for (let i = N - 1; i >= 0; i--) {
       const f = up[i];
       if (f === 0) continue;
@@ -1434,7 +1436,7 @@ export class TreeSim {
       nodes[i].pipe = 0;
       nodes[i].subLen = 0;
     }
-    const taper = this.years > 0 && this.ageQ > 0, M = this.sM, W = this.sW, Q = this.sQ;
+    const taper = this.taperOn && this.years > 0 && this.ageQ > 0, M = this.sM, W = this.sW, Q = this.sQ;
     if (taper) { M.fill(0, 0, N); W.fill(0, 0, N); }
     // Children always have larger ids than parents: reverse pass is bottom-up.
     for (let i = N - 1; i >= 0; i--) {

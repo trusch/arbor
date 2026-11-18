@@ -166,6 +166,8 @@ if (diag.skyBasic) {
 }
 tel.phase('init sim');
 const sim = new TreeSim(params);
+// Dev switch: `?taper=0` = years tree with plain pipe radii (the trunk of before docs/bigtree.md 6.19), for before / after sheets.
+if (query.get('taper') === '0') sim.taperOn = false;
 // Dev switch: `?structInterval=0` runs the forward structure pass every step (default 0.1 sim seconds, see `TreeSim.structureInterval`).
 if (query.get('structInterval') !== null && Number.isFinite(Number(query.get('structInterval')))) sim.structureInterval = Math.max(0, Number(query.get('structInterval')));
 // Growth over years (big tree P11/P12, lifetime 6.16): `growth.years` >= 2 grows the tree on for that many seasons

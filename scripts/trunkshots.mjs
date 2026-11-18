@@ -1,5 +1,6 @@
 // Trunk orbit + junction close-up contact sheets (trunkfix). Real GPU (GPU env, default vulkan).
-// Usage: node scripts/trunkshots.mjs <tag> [cases] ; PORT env (5860+).
+// Usage: node scripts/trunkshots.mjs <tag> [cases] ; PORT env (5860+), QUERY (extra query string), PREFIX (file prefix, default trunkfix).
+// Whole tree: kind sap with a large dist (e.g. desk:750:13:sap:none:30 = 6 azimuths aimed at 0.4 x height).
 // cases: comma list of mode:t:hour:kind[:probe[:dist]]  mode=phone|desk, kind=orbit|junc|sap, probe=none|double|noshadow|noao|sway0|storm|move
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -88,7 +89,7 @@ try {
     }
     const info = await page.evaluate(() => { const A = window.__arbor, r = A.stage.renderer; return { q: A.params.sky.quality, programs: r.info.programs.length, tris: A.branches.mesh.geometry.drawRange.count / 3, side: A.branches.mesh.material.side }; });
     console.log(name, JSON.stringify(info));
-    const out = `shots/trunkfix-${tag}-${name}.jpg`;
+    const out = `shots/${process.env.PREFIX ?? 'trunkfix'}-${tag}-${name}.jpg`;
     execFileSync('montage', [...files, '-tile', cs.kind === 'junc' ? '6x' : phone ? '6x' : '4x', '-geometry', phone ? '274x518+2+2' : '400x300+2+2', '-quality', '82', out]);
     console.log(out);
     await ctx.close();
