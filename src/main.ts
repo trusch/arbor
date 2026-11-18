@@ -384,7 +384,7 @@ let rebuilds = 0;
 let swayLeafMs = 0;
 /** Wind sway (render-side offsets from the rest pose; ?sway=0). */
 const sway = new Sway();
-/** ?swayrate=1: every node every update (P4 two-rate sway off, the reference). */
+/** ?swayrate=1: every node every update, never key poses (the reference). */
 if (query.get('swayrate') === '1') sway.keyMin = Infinity;
 /** ?swaykey=N: key poses from N live nodes on (0 = always; default 9000, docs/bigtree.md 6.14). */
 if (query.get('swaykey') !== null) sway.keyMin = Number(query.get('swaykey'));

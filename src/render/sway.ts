@@ -54,13 +54,14 @@ export class Sway {
    * node id, one slice per update, every slice at the same key time and from the same forces `FN`, so a key is one
    * consistent pose. Every node is drawn as the linear blend of the last two keys `R0 -> R1`, which lands on `R1` in
    * the update `R1` was computed for: uniform in space (no anchor split, no seam between rates) and no latency while
-   * the update interval holds. Below `keyMin` nothing here runs (the default tree is the direct cascade, bit for bit).
+   * the update interval holds. Below `keyMin`, and while the wood changes (growth, a break), nothing here runs: the
+   * direct cascade, bit for bit.
    */
   private R0 = new Float32Array(0); private R1 = new Float32Array(0); private RN = new Float32Array(0);
   private T0 = new Float32Array(0); private T1 = new Float32Array(0); private TN = new Float32Array(0);
   private FN = new Float32Array(0); private fnChains = 0; private keyT = 0; private keyAmount = 0;
   private keyed = false; private slice = 0; private kR = 1; private kB = new Int32Array(KEY_MAX + 1);
-  private lastT = NaN; private dtW = 0.05;
+  private lastT = NaN; private dtW = 0.05; private still = 0;
   /** Live-node count from which key poses are used (`Infinity` = never: every node every update; 0 = always). Leaves at 0.8 x. */
   keyMin = KEY_ON;
   /** Last update: nodes run through the cascade, keyed or not, slices per key. */
@@ -96,7 +97,6 @@ export class Sway {
       if (this.LV.length < N) this.LV = new Int32Array(D.length / 3);
       if (this.S.length < D.length) { this.S = new Float32Array(D.length); this.K = new Float32Array(D.length / 3); this.C = new Int32Array(D.length / 3); this.CAP = new Float32Array(D.length / 3); this.W = new Float32Array(D.length / 3); }
       const S = this.S, K = this.K, C = this.C, CAP = this.CAP, W = this.W, LV = this.LV, TH = this.THd;
-      const kz = this.keyed ? [this.R0, this.R1, this.RN, this.T0, this.T1, this.TN] : [];
       let nLive = 0;
       for (let i = 0, o = 0; i < N; i++, o += 3) {
         const nd = nodes[i], pi = nd.parent, pn = pi >= 0 ? nodes[pi] : undefined;
@@ -105,7 +105,6 @@ export class Sway {
         if (!pn || chains[nd.chain].pruned) {
           C[i] = -1;
           D[o] = D[o + 1] = D[o + 2] = 0; TH[o] = TH[o + 1] = TH[o + 2] = 0;
-          for (const z of kz) z[o] = z[o + 1] = z[o + 2] = 0;
           continue;
         }
         LV[nLive++] = i;
@@ -135,27 +134,10 @@ export class Sway {
         W[i] = up;
         CAP[i] = TH_MAX / Math.sqrt(1 + q * q);
       }
-      // Keyed: wood added since the last refill gets both drawn keys from its parent's: the parent's offset plus its
-      // own segment turned by the parent's key rotation (copying the offset alone draws a new segment in rest
-      // orientation on a leaning parent). The key in progress reaches it in its last slice (new ids are the largest).
-      if (this.keyed) {
-        const R0 = this.R0, R1 = this.R1, T0 = this.T0, T1 = this.T1, oldN = this.cN > 0 ? Math.min(this.cN, N) : 0;
-        for (let i = oldN, o = oldN * 3; i < N; i++, o += 3) {
-          if (C[i] < 0) continue;
-          const po = P[i] * 3;
-          let tx = T1[po], ty = T1[po + 1], tz = T1[po + 2];
-          const tq = tx * tx + ty * ty + tz * tz, cap = CAP[i], sat = cap / Math.sqrt(cap * cap + tq);
-          T1[o] = tx; T1[o + 1] = ty; T1[o + 2] = tz; T0[o] = T0[po]; T0[o + 1] = T0[po + 1]; T0[o + 2] = T0[po + 2];
-          tx *= sat; ty *= sat; tz *= sat;
-          const sx = S[o], sy = S[o + 1], sz = S[o + 2];
-          let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
-          const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
-          if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
-          const dx = vx - sx, dy = vy - sy, dz = vz - sz;
-          R0[o] = R0[po] + dx; R0[o + 1] = R0[po + 1] + dy; R0[o + 2] = R0[po + 2] + dz;
-          R1[o] = R1[po] + dx; R1[o + 1] = R1[po + 1] + dy; R1[o + 2] = R1[po + 2] + dz;
-        }
-      }
+      // The wood changed: key poses hold offsets of the segments as they were (an elongating tip segment was drawn
+      // straighter than its rotation, one-curve check 0.14 to 0.48 rad on growing trees), so a changing tree is
+      // drawn by the direct cascade and key poses start again once it has been at rest for KEY_STILL updates.
+      this.keyed = false; this.still = 0;
       this.nLive = nLive;
       this.cGeom = sim.geomVersion; this.cTopo = sim.topology; this.cN = N;
     }
@@ -167,7 +149,7 @@ export class Sway {
     }
     this.lastT = t;
     const wasKeyed = this.keyed;
-    const keyed = nLive >= (wasKeyed ? this.keyMin * 0.8 : this.keyMin);
+    const keyed = ++this.still > KEY_STILL && nLive >= (wasKeyed ? this.keyMin * 0.8 : this.keyMin);
     let maxSq = 0, maxNode = -1, evaluated = 0;
     if (!keyed) {
       // Direct: the pose of this instant, every live node.
@@ -316,6 +298,7 @@ const OSC = 0.25;
 const D_LIM = 2.0;
 /**
  * Key poses: used from KEY_ON live nodes (the default tree stays under 6k; left again below 0.8 x), one key about
- * every KEY_S seconds of the wind clock and at most KEY_MAX updates apart.
+ * every KEY_S seconds of the wind clock and at most KEY_MAX updates apart, only on wood that has not changed for
+ * KEY_STILL updates.
  */
-const KEY_ON = 9000, KEY_S = 0.2, KEY_MAX = 4;
+const KEY_ON = 9000, KEY_S = 0.2, KEY_MAX = 4, KEY_STILL = 8;
