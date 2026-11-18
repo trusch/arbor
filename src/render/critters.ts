@@ -8,10 +8,13 @@ import { cleanLeafTexture, type Leaves } from './leaves';
  * that visits the crown. Pure decoration: reads season, night, weather, wind, the sway offsets and node positions;
  * writes nothing but its own meshes. Own xorshift (the sim rng is untouched).
  *
- * PowerVR rule. Butterflies and birds: three `InstancedMesh`es (butterfly wings, bird bodies, bird wings), material =
- * clone of the LIVE leaf material with only `map` swapped (safe path; on the full leaf path the Lambert configuration
- * the meadow and the blossom build), maps = canvas paintings through `cleanLeafTexture`, geometry = doubled cards with
- * position / normal / uv, instance matrices and colours only. Wing beats and body turns are matrices. Fireflies: ONE
+ * PowerVR rule. Butterflies and birds: two `InstancedMesh`es (butterfly wings; the birds), material = clone of the
+ * LIVE leaf material with only `map` swapped (safe path; on the full leaf path the Lambert configuration the meadow
+ * and the blossom build), maps = canvas paintings through `cleanLeafTexture`, attributes position / normal / uv,
+ * instance matrices and colours: the program the meadow tufts already use. Butterfly wings are doubled cards moved by
+ * matrices. The birds are ONE mesh with a single identity instance whose geometry holds a solid model per bird (lofted
+ * body with head and beak, two jointed wings, tail fan, legs), posed on the CPU in world space every frame with real
+ * normals, so the scene's sun and hemisphere light it; plumage = an opaque atlas row per kind. Fireflies: ONE
  * `Mesh` on a clone of the canopy decal material (`map`, `color`, blending changed, like the rain) whose geometry is a
  * batch of camera-facing quads (position / normal / uv / index, the attributes of the decal plane) rewritten on the
  * CPU; the glow level of a fly is a cell of an 8-level atlas chosen through its uv plus the quad size.
@@ -26,6 +29,7 @@ const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math
 /** Butterfly colourings (albedo of the pale wing areas; margins and veins are dark in the map). */
 const BF_COL = [[1.0, 0.5, 0.1], [1.0, 0.97, 0.72], [0.5, 0.68, 1.0]];
 const BF_LOW = 6, BF_HIGH = 9, FF_LOW = 30, FF_HIGH = 48, BIRDS = 2;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Wanted brightness of a white wing under the current light (the Lambert term of an up-facing card is divided out). */
 const LIT = 1.5;
 
@@ -61,35 +65,109 @@ function butterflyCanvas() {
   return c;
 }
 
-/** Songbird from the side, beak to the right, feet at the bottom edge. */
-function birdCanvas() {
-  const [c, g] = canvas(128, 128);
-  const ell = (x: number, y: number, rx: number, ry: number, rot: number, col: string) => { g.fillStyle = col; g.beginPath(); g.ellipse(x, y, rx, ry, rot, 0, TAU); g.fill(); };
-  g.fillStyle = '#3a2d22'; g.beginPath(); g.moveTo(34, 62); g.lineTo(0, 48); g.lineTo(2, 64); g.lineTo(30, 80); g.closePath(); g.fill(); // tail
-  g.fillStyle = '#2a2420'; g.fillRect(52, 88, 6, 38); g.fillRect(66, 88, 6, 38); // legs
-  ell(60, 68, 36, 25, -0.22, '#6b5137'); // back
-  ell(66, 76, 28, 18, -0.2, '#d6c6a8'); // belly
-  ell(80, 66, 18, 16, -0.3, '#cf7f3c'); // breast
-  ell(92, 46, 18, 17, 0, '#6b5137'); // head
-  ell(97, 52, 10, 8, 0, '#cf7f3c'); // face
-  ell(50, 64, 26, 13, 0.12, '#3f3226'); // folded wing
-  g.strokeStyle = '#cbb894'; g.lineWidth = 3; g.beginPath(); g.moveTo(34, 60); g.lineTo(66, 66); g.stroke(); // wing bar
-  g.fillStyle = '#2a2420'; g.beginPath(); g.moveTo(107, 41); g.lineTo(127, 48); g.lineTo(107, 53); g.closePath(); g.fill(); // beak
-  ell(98, 43, 3.2, 3.2, 0, '#0c0a08'); // eye
+/** Bird kinds: body length in metres, proportions against the base profile, plumage (atlas row = index). */
+const KINDS = [
+  // robin: plump, orange face and breast
+  { L: 0.15, fat: 1.1, head: 1.06, beak: 0.8, tail: 0.85, wing: 0.95, glide: false, back: '#6b5137', belly: '#d9cdb4', breast: '#cf6a2c', face: '#cf6a2c', cap: '', cheek: '', bib: '', beakC: '#2a2420', ring: '', wing0: '#3d3024', cov: '#6b5137', bar: '#9a8462', under: '#b9a88c', leg: '#4a382c' },
+  // tit: black cap and bib, white cheek, yellow belly, blue-grey wing with a white bar
+  { L: 0.14, fat: 1.0, head: 1.02, beak: 0.65, tail: 0.95, wing: 0.95, glide: false, back: '#66763a', belly: '#e3c93e', breast: '', face: '', cap: '#14161a', cheek: '#f1efe6', bib: '#14161a', beakC: '#1c1c1e', ring: '', wing0: '#2c3a4a', cov: '#5a7186', bar: '#eeeeea', under: '#c4c8c8', leg: '#3c4652' },
+  // blackbird: larger, slimmer, long tail, yellow beak and eye ring; glides between bursts
+  { L: 0.25, fat: 0.9, head: 0.86, beak: 1.2, tail: 1.3, wing: 1.1, glide: true, back: '#2b2826', belly: '#383330', breast: '', face: '', cap: '', cheek: '', bib: '', beakC: '#eba21c', ring: '#e2a820', wing0: '#211f1d', cov: '#302c2a', bar: '', under: '#4a443f', leg: '#3a2c20' },
+];
+/** Body profile, tail root to beak tip: x along the body, centre height, half height, half width (units of body length). */
+const RINGS = [[-0.25, 0.0, 0.014, 0.014], [-0.18, 0.0, 0.062, 0.056], [-0.08, 0.0, 0.115, 0.105], [0.04, 0.005, 0.135, 0.125], [0.14, 0.02, 0.125, 0.115], [0.21, 0.05, 0.096, 0.09], [0.27, 0.08, 0.092, 0.086], [0.32, 0.09, 0.082, 0.079], [0.36, 0.085, 0.056, 0.052], [0.385, 0.08, 0.026, 0.022], [0.47, 0.068, 0.002, 0.002]];
+const NR = RINGS.length, NA = 10, BODY_V = NR * NA, WING_V = 30, TAIL_V = 20, LEG_V = 12, BIRD_V = BODY_V + 2 * WING_V + TAIL_V + 2 * LEG_V;
+/** Wing stations root to tip: span fraction, chord, leading edge ahead of the span line (units of body length). */
+const WING_S = [0, 0.25, 0.5, 0.78, 1], WING_C = [0.24, 0.3, 0.29, 0.2, 0.04], WING_LE = [0.05, 0.07, 0.06, 0.0, -0.1];
+const WD = new Float32Array(18);
+/** Factor on the plumage albedo (the birds are lit by the scene's sun and sky through their own normals). */
+const BIRD_GAIN = 1.25;
+
+/**
+ * Plumage atlas: one 64 px row per kind. x 0..128 = body, tail root to beak tip (ring i at x = 4 + 12 i), back at the
+ * top of the row and belly at the bottom (both flanks read the same texels); 128..192 upper wing (root left, leading
+ * edge up); 192..248 underwing; 248..256 legs. Opaque.
+ */
+function birdAtlas() {
+  const [c, g] = canvas(256, 256);
+  const ell = (x: number, y: number, rx: number, ry: number, col: string) => { g.fillStyle = col; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill(); };
+  KINDS.forEach((k, i) => {
+    const y = i * 64;
+    g.save(); g.beginPath(); g.rect(0, y, 256, 64); g.clip();
+    const gr = g.createLinearGradient(0, y, 0, y + 64);
+    gr.addColorStop(0, k.back); gr.addColorStop(0.4, k.back); gr.addColorStop(0.6, k.belly); gr.addColorStop(1, k.belly);
+    g.fillStyle = gr; g.fillRect(0, y, 128, 64);
+    // Feather streaks on the back, darker toward the tail.
+    g.strokeStyle = 'rgba(0,0,0,0.22)'; g.lineWidth = 1.5;
+    for (let q = 0; q < 14; q++) { const x = 6 + q * 6; g.beginPath(); g.moveTo(x, y + 2 + (q % 3) * 4); g.lineTo(x - 7, y + 12 + (q % 3) * 4); g.stroke(); }
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, y, 22, 64);
+    g.strokeStyle = 'rgba(255,255,255,0.1)';
+    for (let q = 0; q < 12; q++) { const x = 9 + q * 7; g.beginPath(); g.moveTo(x, y + 6 + (q % 2) * 5); g.lineTo(x - 6, y + 15 + (q % 2) * 5); g.stroke(); }
+    if (k.breast) ell(60, y + 50, 30, 20, k.breast);
+    if (k.face) ell(90, y + 38, 20, 17, k.face);
+    if (k.bib) { ell(70, y + 62, 34, 6, k.bib); ell(96, y + 56, 12, 10, k.bib); }
+    if (k.cap) ell(90, y + 4, 22, 22, k.cap);
+    if (k.cheek) ell(86, y + 33, 10, 7.5, k.cheek);
+    g.fillStyle = k.beakC; g.fillRect(109, y, 19, 64);
+    if (k.ring) ell(89, y + 24, 5, 5, k.ring);
+    ell(89, y + 24, 3.2, 3.2, '#0a0908');
+    // Upper wing: coverts along the leading edge, bar, dark flight feathers with pale edges.
+    g.fillStyle = k.wing0; g.fillRect(128, y, 64, 64);
+    g.fillStyle = k.cov; g.fillRect(128, y, 64, 22);
+    if (k.bar) { g.fillStyle = k.bar; g.fillRect(128, y + 20, 50, 5); }
+    g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 1;
+    for (let q = 0; q < 10; q++) { g.beginPath(); g.moveTo(131 + q * 6, y + 26); g.lineTo(134 + q * 6.4, y + 64); g.stroke(); }
+    g.fillStyle = k.under; g.fillRect(192, y, 56, 64);
+    g.strokeStyle = 'rgba(0,0,0,0.2)';
+    for (let q = 0; q < 9; q++) { g.beginPath(); g.moveTo(195 + q * 6, y + 22); g.lineTo(198 + q * 6.2, y + 64); g.stroke(); }
+    g.fillStyle = k.leg; g.fillRect(248, y, 8, 64);
+    g.restore();
+  });
   return c;
 }
 
-/** One bird wing from above: root at the left edge, leading edge toward the top. */
-function birdWingCanvas() {
-  const [c, g] = canvas(128, 128);
-  g.beginPath(); g.moveTo(0, 28); g.quadraticCurveTo(70, 14, 126, 40); g.quadraticCurveTo(96, 74, 60, 96); g.quadraticCurveTo(26, 108, 0, 100); g.closePath();
-  g.fillStyle = '#5a4633'; g.fill();
-  g.save(); g.clip();
-  g.strokeStyle = '#33281d'; g.lineWidth = 4;
-  for (let k = 0; k < 9; k++) { g.beginPath(); g.moveTo(10 + k * 9, 50); g.lineTo(34 + k * 12, 112 - k * 8); g.stroke(); }
-  g.strokeStyle = '#cbb894'; g.lineWidth = 6; g.beginPath(); g.moveTo(0, 52); g.quadraticCurveTo(50, 44, 96, 50); g.stroke();
-  g.restore();
-  return c;
+/** Body template of a kind in body space (x forward, y up, z right): positions, normals, head weight per vertex. */
+function birdTemplate(k: typeof KINDS[number]) {
+  const P = new Float32Array(BODY_V * 3), N = new Float32Array(BODY_V * 3), W = new Float32Array(BODY_V);
+  const R = RINGS.map(([x, cy, ry, rz], i) => { const f = i >= 1 && i <= 4 ? k.fat : i >= 5 && i <= 8 ? k.head : 1; return [i === NR - 1 ? 0.385 + 0.085 * k.beak : x, cy, ry * f, rz * f]; });
+  for (let i = 0; i < NR; i++) {
+    const a = R[Math.max(0, i - 1)], b = R[Math.min(NR - 1, i + 1)], sl = ((b[2] + b[3]) - (a[2] + a[3])) / 2 / (b[0] - a[0]), [x, cy, ry, rz] = R[i];
+    for (let j = 0; j < NA; j++) {
+      const ph = (j / NA) * TAU, o = (i * NA + j) * 3, c = Math.cos(ph), s = Math.sin(ph), l = Math.hypot(sl, 1);
+      P[o] = x; P[o + 1] = cy + ry * c; P[o + 2] = rz * s;
+      N[o] = -sl / l; N[o + 1] = c / l; N[o + 2] = s / l;
+      W[i * NA + j] = smooth(0.17, 0.27, x);
+    }
+  }
+  return { P, N, W };
+}
+
+/** Geometry for `n` birds: position / normal rewritten per frame in world space, uv per kind, index fixed. */
+function birdGeometry(n: number) {
+  const idx: number[] = [];
+  for (let b = 0; b < n; b++) {
+    const o = b * BIRD_V;
+    for (let i = 0; i < NR - 1; i++) for (let a = 0; a < NA; a++) { const p = o + i * NA + a, q = o + i * NA + ((a + 1) % NA), r = p + NA, s = q + NA; idx.push(p, q, r, q, s, r); }
+    for (let side = 0; side < 2; side++) for (let face = 0; face < 2; face++) {
+      const w = o + BODY_V + side * WING_V + face * 15, flip = side === face;
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) { const A = w + i * 3 + j, B = A + 3, C = A + 1, D = B + 1; if (flip) idx.push(A, C, B, C, D, B); else idx.push(A, B, C, C, B, D); }
+    }
+    for (let face = 0; face < 2; face++) {
+      const t = o + BODY_V + 2 * WING_V + face * 10;
+      for (let k = 0; k < 4; k++) { const A = t + k, B = A + 5, C = A + 1, D = B + 1; if (face) idx.push(A, C, B, C, D, B); else idx.push(A, B, C, C, B, D); }
+    }
+    for (let leg = 0; leg < 2; leg++) {
+      const l = o + BODY_V + 2 * WING_V + TAIL_V + leg * 6;
+      for (let a = 0; a < 3; a++) { const a2 = (a + 1) % 3; idx.push(l + a, l + a2, l + 3 + a, l + a2, l + 3 + a2, l + 3 + a, l + a, l + 3 + a, l + a2, l + a2, l + 3 + a, l + 3 + a2); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * BIRD_V * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * BIRD_V * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * BIRD_V * 2), 2));
+  g.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 6, 0), 90);
+  return g;
 }
 
 /** 4 x 2 cells of a soft glow, level 1/8 .. 8/8, white on transparent (the material colour tints it). */
@@ -161,13 +239,13 @@ interface Butterfly { x: number; y: number; z: number; vx: number; vy: number; v
  * Flight: `B` = cubic curve (4 points), `s` its parameter, `v` speed in m/s; `bx/by/bz` = position on the curve
  * without the bound offset. Every bird has its own cruise speed, wing rate and bound lengths.
  */
-interface Bird { st: number; t: number; dur: number; node: number; to: number; x: number; y: number; z: number; bx: number; by: number; bz: number; hx: number; hz: number; gx: number; gz: number; wait: number; next: number; pitch: number; bank: number; flapping: boolean; flap: number; fold: number; B: Float32Array; s: number; v: number; vc: number; rate: number; rateK: number; cyc: number; per: number; amp: number; air: number; launched: boolean; bob: number; flick: number; settle: number; hop: number; sat: number }
+interface Bird { st: number; t: number; dur: number; node: number; to: number; x: number; y: number; z: number; bx: number; by: number; bz: number; hx: number; hz: number; gx: number; gz: number; wait: number; next: number; pitch: number; bank: number; flapping: boolean; flap: number; fold: number; B: Float32Array; s: number; v: number; vc: number; rate: number; rateK: number; cyc: number; per: number; amp: number; air: number; launched: boolean; bob: number; flick: number; settle: number; hop: number; sat: number; kind: number; beat: number; look: number; lookT: number; fan: number; flare: number }
 
 export class Critters {
   group = new THREE.Group();
   wings: THREE.InstancedMesh;
+  /** The birds: one mesh, one identity instance, geometry posed per frame (`BIRD_V` vertices per bird). */
   bodies: THREE.InstancedMesh;
-  birdWings: THREE.InstancedMesh;
   glow: THREE.Mesh;
   /** Test hooks: presence 0..1 per kind instead of the computed one (null = computed). */
   force: { butterflies?: number; fireflies?: number; birds?: number } | null = null;
@@ -183,6 +261,9 @@ export class Critters {
   private right = new THREE.Vector3();
   private up = new THREE.Vector3();
   private P = [0, 0, 0];
+  private tpl = KINDS.map(birdTemplate);
+  /** Bird basis of the vertex being written: forward, up, right, centre, size. */
+  private bb = new Float32Array(13);
   private flushNow = false;
   private lastViolence = 0;
 
@@ -222,11 +303,12 @@ export class Critters {
     // Wing: root on the local z axis, span along +x, chord along z (uv v = toward the head).
     const wingGeo = cards([[[0, 0, -0.5], [1, 0, 0], [0, 0, 1]]]);
     this.wings = inst(butterflyCanvas(), wingGeo, nb * 2);
-    // Body: an upright side view and a flat top view crossed (beak toward +x).
-    this.bodies = inst(birdCanvas(), cards([[[-0.5, -0.5, 0], [1, 0, 0], [0, 1, 0]], [[-0.5, 0.02, -0.2], [1, 0, 0], [0, 0, 0.4]]]), BIRDS);
-    this.birdWings = inst(birdWingCanvas(), wingGeo, BIRDS * 2);
+    this.bodies = inst(birdAtlas(), birdGeometry(BIRDS), 1);
+    (this.bodies.instanceMatrix.array as Float32Array).set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    (this.bodies.instanceColor!.array as Float32Array).fill(BIRD_GAIN);
     for (let i = 0; i < nb; i++) this.bf.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, hx: 1, hz: 0, tx: 0, ty: 0, tz: 0, has: false, sit: false, timer: 0, flap: this.rnd() * 6, rate: 9 + 3 * this.rnd(), jx: 0, jy: 0, jz: 0, jt: 0, a: 0, col: i % 3, size: 0.85 + 0.3 * this.rnd() });
-    for (let i = 0; i < BIRDS; i++) this.birds.push({ st: 0, t: 0, dur: 1, node: -1, to: -1, x: 0, y: 0, z: 0, bx: 0, by: 0, bz: 0, hx: 1, hz: 0, gx: 1, gz: 0, wait: 2 + 6 * this.rnd() + i * (3 + 8 * this.rnd()), next: 1, pitch: 0, bank: 0, flapping: false, flap: this.rnd() * 6, fold: 0, B: new Float32Array(12), s: 0, v: 0, vc: 10, rate: 14, rateK: 1, cyc: 0, per: 0.5, amp: 0.25, air: 0, launched: false, bob: 0.3, flick: 0, settle: 0, hop: 0.2, sat: 0 });
+    for (let i = 0; i < BIRDS; i++) this.birds.push({ st: 0, t: 0, dur: 1, node: -1, to: -1, x: 0, y: 0, z: 0, bx: 0, by: 0, bz: 0, hx: 1, hz: 0, gx: 1, gz: 0, wait: 2 + 6 * this.rnd() + i * (3 + 8 * this.rnd()), next: 1, pitch: 0, bank: 0, flapping: false, flap: this.rnd() * 6, fold: 0, B: new Float32Array(12), s: 0, v: 0, vc: 10, rate: 14, rateK: 1, cyc: 0, per: 0.5, amp: 0.25, air: 0, launched: false, bob: 0.3, flick: 0, settle: 0, hop: 0.2, sat: 0, kind: i ? 2 : 0, beat: 0, look: 0, lookT: 0, fan: 0, flare: 0 });
+    for (let i = 0; i < BIRDS; i++) this.birdUv(i, this.birds[i].kind);
 
     // Fireflies: one batch of quads on a decal clone.
     const n = this.ffN = low ? FF_LOW : FF_HIGH;
@@ -266,7 +348,7 @@ export class Critters {
   state() {
     return {
       butterflies: this.bf.filter((b) => b.a > 0).map((b) => ({ x: b.x, y: b.y, z: b.z, sit: b.sit, col: b.col })),
-      birds: this.birds.map((b) => ({ st: b.st, x: b.x, y: b.y, z: b.z, hx: b.hx, hz: b.hz, node: b.node, t: b.t, dur: b.dur, s: b.s, v: b.v, flapping: b.flapping })),
+      birds: this.birds.map((b) => ({ kind: b.kind, st: b.st, x: b.x, y: b.y, z: b.z, hx: b.hx, hz: b.hz, node: b.node, t: b.t, dur: b.dur, s: b.s, v: b.v, flapping: b.flapping })),
     };
   }
 
@@ -291,7 +373,7 @@ export class Critters {
     const lit = LIT / E;
     this.butterflies(dt, env, pb, lit);
     this.fireflies(env, pf);
-    this.birdFrame(dt, sim, env, pbird, lit, winter);
+    this.birdFrame(dt, sim, env, pbird, winter);
     this.lastViolence = env.violence;
     const ms = performance.now() - t0;
     S.frames++; S.sumMs += ms; if (ms > S.maxMs) S.maxMs = ms;
@@ -510,7 +592,8 @@ export class Critters {
     const bound = landing ? smooth(3.5, 13, rem) : smooth(0.8, 1.9, b.air);
     b.cyc += dt / b.per;
     if (b.cyc >= 1) { b.cyc -= 1; b.per = 0.4 + 0.32 * this.rnd(); b.amp = 0.5 * b.per * (0.8 + 0.4 * this.rnd()); }
-    const oy = -b.amp * bound * Math.cos(TAU * b.cyc), flare = landing ? 1 - smooth(0.3, 2.4, rem) : 0;
+    const oy = -b.amp * bound * Math.cos(TAU * b.cyc) * (KINDS[b.kind].glide ? 0.4 : 1), flare = landing ? 1 - smooth(0.3, 2.4, rem) : 0;
+    b.flare = flare;
     const ny = y + oy, vy = (ny - b.y) / Math.max(dt, 1e-3);
     const dx = x - b.x, dz = z - b.z, dl = Math.hypot(dx, dz);
     if (dl > 1e-6) {
@@ -527,7 +610,7 @@ export class Critters {
     return landing ? rem : 99;
   }
 
-  private birdFrame(dt: number, sim: TreeSim, env: CritterEnv, p: number, lit: number, winter: boolean) {
+  private birdFrame(dt: number, sim: TreeSim, env: CritterEnv, p: number, winter: boolean) {
     const S = this.stats, want = Math.round(BIRDS * Math.min(1, p)), P = this.P, CROUCH = 0.24;
     // Storm front arriving, or a limb coming off under a bird: everybody goes, each after its own reaction time.
     let flush = this.flushNow || (env.violence > 0.4 && this.lastViolence <= 0.4) || env.rain > 0.05;
@@ -540,13 +623,13 @@ export class Critters {
       if (any) S.flushes++;
     }
     let out = 0, perched = 0;
-    const A = this.bodies.instanceMatrix.array as Float32Array, W = this.birdWings.instanceMatrix.array as Float32Array;
+    const geo = this.bodies.geometry, VP = geo.attributes.position.array as Float32Array, VN = geo.attributes.normal.array as Float32Array;
     for (let i = 0; i < BIRDS; i++) {
       const b = this.birds[i], w = i < want;
       if (env.jumped && !w) b.st = 0;
       let vis = 1, crouch = 0;
       if (b.st === 0) {
-        A.fill(0, i * 16, i * 16 + 16); W.fill(0, i * 32, i * 32 + 32);
+        VP.fill(0, i * BIRD_V * 3, (i + 1) * BIRD_V * 3);
         b.wait -= dt;
         if (!w || b.wait > 0) continue;
         // Its own visit: own perch (now and then near the other bird), own route in, own final approach.
@@ -561,7 +644,12 @@ export class Critters {
         B[3] = sx + (dx / dl) * 22 - (dz / dl) * side; B[4] = sy - 1; B[5] = sz + (dz / dl) * 22 + (dx / dl) * side;
         B[6] = P[0] - Math.cos(fa) * 7; B[7] = P[1] - 0.25 + 0.9 * this.rnd(); B[8] = P[2] - Math.sin(fa) * 7;
         B[9] = P[0]; B[10] = P[1]; B[11] = P[2];
-        b.st = 1; b.t = 0; b.s = 0; b.air = 2; b.vc = 8.5 + 3 * this.rnd(); b.v = b.vc; b.rate = 12.5 + 3 * this.rnd();
+        // Its kind for this visit (never the kind of the bird that is out already).
+        b.kind = (this.rnd() * KINDS.length) | 0;
+        if (other && other.st !== 0 && other.kind === b.kind) b.kind = (b.kind + 1) % KINDS.length;
+        this.birdUv(i, b.kind);
+        const big = KINDS[b.kind].glide;
+        b.st = 1; b.t = 0; b.s = 0; b.air = 2; b.vc = 8.5 + 3 * this.rnd(); b.v = b.vc; b.rate = big ? 8 + 2 * this.rnd() : 12.5 + 3 * this.rnd();
         b.cyc = this.rnd(); b.per = 0.4 + 0.32 * this.rnd(); b.amp = 0.5 * b.per; b.fold = 1; b.bank = 0; b.pitch = 0;
         b.x = b.bx = sx; b.y = b.by = sy; b.z = b.bz = sz; b.hx = dx / dl; b.hz = dz / dl;
       }
@@ -605,8 +693,8 @@ export class Critters {
             const an = Math.atan2(P[2] - a2, P[0] - a0) + (this.rnd() - 0.5) * 0.3;
             b.gx = Math.cos(an); b.gz = Math.sin(an);
             b.st = 4; b.to = to; b.sat = b.t; b.t = 0; b.hop = 0.17 + 0.08 * this.rnd();
-          } else if (act < 0.45) b.flick = 0.16;
-          else if (act < 0.7) { b.bob = 0.12 + 0.38 * this.rnd(); const an = Math.atan2(b.gz, b.gx) + (this.rnd() - 0.5) * 0.7; b.gx = Math.cos(an); b.gz = Math.sin(an); }
+          } else if (act < 0.45) { b.flick = 0.16; b.lookT = (this.rnd() - 0.5) * 1.2; }
+          else if (act < 0.7) { b.lookT = (this.rnd() - 0.5) * 2; b.bob = 0.12 + 0.38 * this.rnd(); const an = Math.atan2(b.gz, b.gx) + (this.rnd() - 0.5) * 0.7; b.gx = Math.cos(an); b.gz = Math.sin(an); }
           else { const an = Math.atan2(b.gz, b.gx) + (this.rnd() < 0.5 ? -1 : 1) * (0.6 + 1.8 * this.rnd()); b.gx = Math.cos(an); b.gz = Math.sin(an); }
         }
         // Leaves on its own clock, outward from the crown.
@@ -634,40 +722,108 @@ export class Critters {
         } else {
           this.fly(b, dt, false);
           vis = 1 - smooth(0.86, 1, b.s);
-          if (b.s >= 1) { b.st = 0; b.wait = (winter ? 18 : 5) + 16 * this.rnd(); A.fill(0, i * 16, i * 16 + 16); W.fill(0, i * 32, i * 32 + 32); out--; continue; }
+          if (b.s >= 1) { b.st = 0; b.wait = (winter ? 18 : 5) + 16 * this.rnd(); VP.fill(0, i * BIRD_V * 3, (i + 1) * BIRD_V * 3); out--; continue; }
         }
       }
       b.flap += dt * TAU * b.rate * b.rateK;
-      // Wings spread and fold over a few frames; folded they lie along the body (painted there) and are not drawn.
-      b.fold += ((b.flapping ? 1 : 0) - b.fold) * Math.min(1, dt * (b.flapping ? 34 : 24));
-      // Body: crossed side and top view, feet on the perch; rolled into the turn.
-      const L = 0.17 * this.boost(env, b.x, b.y, b.z, 2.6) * vis, cp = Math.cos(b.pitch), sn = Math.sin(b.pitch), cb = Math.cos(b.bank), sb = Math.sin(b.bank);
-      const fx = b.hx, fz = b.hz, o = i * 16;
+      const K = KINDS[b.kind], T = this.tpl[b.kind], flying = b.st === 1 || (b.st === 3 && b.launched), glide = K.glide && flying && !b.flapping;
+      // Wings spread and fold over a few frames; the larger kind holds them out between bursts, the small ones tuck.
+      b.fold += ((b.flapping || glide ? 1 : 0) - b.fold) * Math.min(1, dt * (b.flapping ? 34 : 24));
+      b.beat += ((b.flapping ? 1 : 0) - b.beat) * Math.min(1, dt * 20);
+      b.look += ((flying ? 0 : b.lookT) - b.look) * Math.min(1, dt * 18);
+      const flick = Math.sin(Math.PI * Math.min(1, b.flick / 0.16));
+      const fanT = flying ? Math.max(b.flare, glide ? 0.3 : 0.1, b.st === 3 ? 0.7 * (1 - smooth(0.1, 0.6, b.air)) : 0) : 0.5 * flick + (b.flapping ? 0.6 : 0);
+      b.fan += (fanT - b.fan) * Math.min(1, dt * 12);
+      // Body frame: forward (pitched), up and right (rolled into the turn); the feet are at the bird's position.
+      const L = K.L * this.boost(env, b.x, b.y, b.z, 2.6) * vis, cp = Math.cos(b.pitch), sn = Math.sin(b.pitch), cb = Math.cos(b.bank), sb = Math.sin(b.bank);
+      const fx = b.hx, fz = b.hz, o = i * BIRD_V * 3, bb = this.bb;
       const Xx = fx * cp, Xy = sn, Xz = fz * cp, ux = -fx * sn, uy = cp, uz = -fz * sn;
       const Yx = ux * cb - fz * sb, Yy = uy * cb, Yz = uz * cb + fx * sb, Rx = -fz * cb - ux * sb, Ry = -uy * sb, Rz = fx * cb - uz * sb;
-      const lift = L * (0.48 - 0.13 * crouch);
+      const lift = L * (0.215 - 0.07 * crouch);
       const cx = b.x + Yx * lift, cy = b.y + Yy * lift, cz = b.z + Yz * lift;
-      A[o] = Xx * L; A[o + 1] = Xy * L; A[o + 2] = Xz * L; A[o + 3] = 0;
-      A[o + 4] = Yx * L; A[o + 5] = Yy * L; A[o + 6] = Yz * L; A[o + 7] = 0;
-      A[o + 8] = Rx * L; A[o + 9] = Ry * L; A[o + 10] = Rz * L; A[o + 11] = 0;
-      A[o + 12] = cx; A[o + 13] = cy; A[o + 14] = cz; A[o + 15] = 1;
-      // Stroke between 65 degrees up and 45 down; a folding wing swings back to the flank while its span closes.
-      const f = b.fold, th = (0.18 + 0.95 * Math.sin(b.flap)) * f - 0.5 * (1 - f), c = Math.cos(th), s = Math.sin(th), ws = f > 0.05 ? L * 0.95 : 0, span = ws * (0.25 + 0.75 * f);
+      bb[0] = Xx; bb[1] = Xy; bb[2] = Xz; bb[3] = Yx; bb[4] = Yy; bb[5] = Yz; bb[6] = Rx; bb[7] = Ry; bb[8] = Rz; bb[9] = cx; bb[10] = cy; bb[11] = cz; bb[12] = L;
+      // Body, head (turned by `look` about the neck) and beak: the kind's lofted template.
+      for (let k = 0; k < BODY_V; k++) {
+        let lx = T.P[k * 3], lz = T.P[k * 3 + 2], nx = T.N[k * 3], nz = T.N[k * 3 + 2];
+        const w = T.W[k];
+        if (w > 0 && b.look !== 0) { const a = b.look * w, ca = Math.cos(a), sa = Math.sin(a), dx = lx - 0.2, n0 = nx; lx = 0.2 + dx * ca - lz * sa; lz = dx * sa + lz * ca; nx = n0 * ca - nz * sa; nz = n0 * sa + nz * ca; }
+        this.put(VP, VN, o + k * 3, lx, T.P[k * 3 + 1], lz, nx, T.N[k * 3 + 1], nz);
+      }
+      // Wings: shoulder, inner part, wrist, outer part. Spread: stroke between 62 degrees up and 46 down, the outer
+      // part flexed down and swept back on the upstroke. Folded: a blade along the flank, upper side out.
+      const th = 0.12 + (0.03 + 0.95 * Math.sin(b.flap)) * b.beat, flex = Math.max(0, Math.cos(b.flap)) * 0.9 * b.beat, f = b.fold, so = th - flex;
+      const WL = K.wing * 0.62 * (0.62 + 0.38 * f), cs = (0.5 + 0.5 * f) * K.wing, D = WD;
       for (let side = 0; side < 2; side++) {
-        const q = side ? -1 : 1, wo = (i * 2 + side) * 16;
-        W[wo] = (q * Rx * c + Yx * s) * span; W[wo + 1] = (q * Ry * c + Yy * s) * span; W[wo + 2] = (q * Rz * c + Yz * s) * span; W[wo + 3] = 0;
-        W[wo + 4] = (-q * Rx * s + Yx * c) * ws; W[wo + 5] = (-q * Ry * s + Yy * c) * ws; W[wo + 6] = (-q * Rz * s + Yz * c) * ws; W[wo + 7] = 0;
-        W[wo + 8] = Xx * ws * 0.7; W[wo + 9] = Xy * ws * 0.7; W[wo + 10] = Xz * ws * 0.7; W[wo + 11] = 0;
-        W[wo + 12] = cx + Xx * L * 0.05 + Yx * L * 0.1 + q * Rx * L * 0.07; W[wo + 13] = cy + Xy * L * 0.05 + Yy * L * 0.1 + q * Ry * L * 0.07; W[wo + 14] = cz + Xz * L * 0.05 + Yz * L * 0.1 + q * Rz * L * 0.07; W[wo + 15] = 1;
+        const q = side ? -1 : 1, wo = o + (BODY_V + side * WING_V) * 3;
+        const sx = 0.1, sy = -0.04 + 0.11 * f, sz = q * K.fat * (0.128 - 0.04 * f);
+        D[0] = lerp(-0.97, -0.05, f); D[1] = lerp(-0.1, Math.sin(th), f); D[2] = q * lerp(-0.12, Math.cos(th), f);
+        D[3] = lerp(-0.95, -0.25 - 0.6 * flex, f); D[4] = lerp(0.05, Math.sin(so), f); D[5] = q * lerp(-0.3, Math.cos(so), f);
+        const ccx = lerp(-0.2, -1, f), ccy = 1 - f;
+        for (let g = 0; g < 2; g++) {
+          const d = g * 3, c = 6 + g * 3, n = 12 + g * 3;
+          let l = Math.hypot(D[d], D[d + 1], D[d + 2]) || 1; D[d] /= l; D[d + 1] /= l; D[d + 2] /= l;
+          const dot = ccx * D[d] + ccy * D[d + 1];
+          D[c] = ccx - dot * D[d]; D[c + 1] = ccy - dot * D[d + 1]; D[c + 2] = -dot * D[d + 2];
+          l = Math.hypot(D[c], D[c + 1], D[c + 2]) || 1; D[c] /= l; D[c + 1] /= l; D[c + 2] /= l;
+          D[n] = q * (D[c + 1] * D[d + 2] - D[c + 2] * D[d + 1]); D[n + 1] = q * (D[c + 2] * D[d] - D[c] * D[d + 2]); D[n + 2] = q * (D[c] * D[d + 1] - D[c + 1] * D[d]);
+        }
+        for (let st = 0; st < 5; st++) {
+          const a = Math.min(0.5, WING_S[st]) * WL, e = Math.max(0, WING_S[st] - 0.5) * WL, m = st < 2 ? 0 : st > 2 ? 1 : 0.5;
+          const px = sx + D[0] * a + D[3] * e, py = sy + D[1] * a + D[4] * e, pz = sz + D[2] * a + D[5] * e;
+          const kx = lerp(D[6], D[9], m), ky = lerp(D[7], D[10], m), kz = lerp(D[8], D[11], m), nx = lerp(D[12], D[15], m), ny = lerp(D[13], D[16], m), nz = lerp(D[14], D[17], m);
+          for (let j = 0; j < 3; j++) {
+            const h = cs * (WING_C[st] * j * 0.5 - WING_LE[st]), v = wo + (st * 3 + j) * 3;
+            this.put(VP, VN, v, px + kx * h, py + ky * h, pz + kz * h, nx, ny, nz);
+            this.put(VP, VN, v + 45, px + kx * h, py + ky * h, pz + kz * h, -nx, -ny, -nz);
+          }
+        }
+      }
+      // Tail: a flat fan from the rump, spread while braking and at take-off, dipped on the perch, flicked up.
+      const ta = flying ? 0.05 - 0.5 * b.flare : -0.3 + 0.8 * flick, tc = Math.cos(ta), ts = Math.sin(ta), tl = 0.36 * K.tail, to = o + (BODY_V + 2 * WING_V) * 3;
+      for (let r = 0; r < 2; r++) for (let k = 0; k < 5; k++) {
+        const u = (k - 2) / 2, len = r ? tl * (1 - 0.12 * u * u) : 0, lz = u * (r ? 0.045 + 0.15 * b.fan : 0.035), v = to + (r * 5 + k) * 3;
+        this.put(VP, VN, v, -0.2 - tc * len, 0.01 + ts * len, lz, ts, tc, 0);
+        this.put(VP, VN, v + 30, -0.2 - tc * len, 0.01 + ts * len, lz, -ts, -tc, 0);
+      }
+      // Legs: hip to the twig while perched, stretched forward in the flare, otherwise tucked away (collapsed).
+      const lo = o + (BODY_V + 2 * WING_V + TAIL_V) * 3, reach = flying ? smooth(0.3, 0.8, b.flare) * 0.17 * L : 0, rad = 0.014 * L;
+      for (let leg = 0; leg < 2; leg++) {
+        const q = leg ? -1 : 1, hy = -0.1 * K.fat * L, hz = q * 0.045 * L, hxl = -0.02 * L;
+        const ax = cx + Xx * hxl + Yx * hy + Rx * hz, ay = cy + Xy * hxl + Yy * hy + Ry * hz, az = cz + Xz * hxl + Yz * hy + Rz * hz;
+        let tx = ax + (Xx * 0.5 - Yx * 0.85) * reach, ty = ay + (Xy * 0.5 - Yy * 0.85) * reach, tz = az + (Xz * 0.5 - Yz * 0.85) * reach;
+        if (!flying) { tx = b.x + Rx * hz; ty = b.y + Ry * hz; tz = b.z + Rz * hz; }
+        const show = !flying || reach > 0 ? 1 : 0;
+        for (let e = 0; e < 2; e++) for (let a = 0; a < 3; a++) {
+          const an = (a / 3) * TAU, c = Math.cos(an), s = Math.sin(an), v = lo + (leg * 6 + e * 3 + a) * 3, nx = Xx * c + Rx * s, ny = Xy * c + Ry * s, nz = Xz * c + Rz * s;
+          VP[v] = (e ? tx : ax) + nx * rad * show; VP[v + 1] = (e ? ty : ay) + ny * rad * show; VP[v + 2] = (e ? tz : az) + nz * rad * show;
+          VN[v] = nx; VN[v + 1] = ny; VN[v + 2] = nz;
+        }
       }
     }
     S.birds = out; S.perched = perched;
     if (out || this.bodies.visible) {
-      const C = this.bodies.instanceColor!.array as Float32Array, WC = this.birdWings.instanceColor!.array as Float32Array;
-      C.fill(lit * 1.7); WC.fill(lit * 1.9);
-      this.bodies.visible = this.birdWings.visible = out > 0;
-      this.bodies.instanceMatrix.needsUpdate = this.birdWings.instanceMatrix.needsUpdate = true;
-      this.bodies.instanceColor!.needsUpdate = this.birdWings.instanceColor!.needsUpdate = true;
+      this.bodies.visible = out > 0;
+      geo.attributes.position.needsUpdate = geo.attributes.normal.needsUpdate = true;
     }
+  }
+
+  /** One vertex of the bird being drawn: body space (x forward, y up, z right, units of body length) to world. */
+  private put(P: Float32Array, N: Float32Array, o: number, lx: number, ly: number, lz: number, nx: number, ny: number, nz: number) {
+    const b = this.bb, L = b[12];
+    P[o] = b[9] + (b[0] * lx + b[3] * ly + b[6] * lz) * L; P[o + 1] = b[10] + (b[1] * lx + b[4] * ly + b[7] * lz) * L; P[o + 2] = b[11] + (b[2] * lx + b[5] * ly + b[8] * lz) * L;
+    N[o] = b[0] * nx + b[3] * ny + b[6] * nz; N[o + 1] = b[1] * nx + b[4] * ny + b[7] * nz; N[o + 2] = b[2] * nx + b[5] * ny + b[8] * nz;
+  }
+
+  /** Texture coordinates of bird `i` for a kind (its row of the plumage atlas). */
+  private birdUv(i: number, kind: number) {
+    const at = this.bodies.geometry.attributes.uv, U = at.array as Float32Array, o = i * BIRD_V * 2, v0 = 1 - (kind + 1) / 4, vh = 0.25;
+    for (let r = 0; r < NR; r++) for (let a = 0; a < NA; a++) { const k = o + (r * NA + a) * 2; U[k] = (4 + r * 12) / 256; U[k + 1] = v0 + vh * (0.06 + 0.88 * (Math.cos((a / NA) * TAU) + 1) / 2); }
+    for (let side = 0; side < 2; side++) for (let face = 0; face < 2; face++) for (let st = 0; st < 5; st++) for (let j = 0; j < 3; j++) {
+      const k = o + (BODY_V + side * WING_V + face * 15 + st * 3 + j) * 2;
+      U[k] = ((face ? 195 : 131) + WING_S[st] * (face ? 50 : 58)) / 256; U[k + 1] = v0 + vh * (0.94 - 0.88 * j * 0.5);
+    }
+    for (let face = 0; face < 2; face++) for (let r = 0; r < 2; r++) for (let q = 0; q < 5; q++) { const k = o + (BODY_V + 2 * WING_V + face * 10 + r * 5 + q) * 2; U[k] = (138 + q * 9) / 256; U[k + 1] = v0 + vh * (0.5 - 0.4 * r); }
+    for (let q = 0; q < LEG_V; q++) { const k = o + (BODY_V + 2 * WING_V + TAIL_V + q) * 2; U[k] = 252 / 256; U[k + 1] = v0 + vh * 0.5; }
+    at.needsUpdate = true;
   }
 }
