@@ -60,11 +60,12 @@ if (process.env.PROF) {
   for (let ci = 1; ci < C.length; ci++) { const c = C[ci]; if (c.order === 1 && !c.pruned && c.nodes.length > 6) top.push(c); }
   top.sort((a, b) => N[b.nodes[1]].radius - N[a.nodes[1]].radius);
   for (const c of top.slice(0, 5)) {
-    const ids = c.nodes, we = [], re = [], sg = [];
+    const ids = c.nodes, we = [], re = [], sg = []; let y1 = 0;
     for (let k = 0; k + 3 < ids.length; k += 3) { const A = N[ids[k]], Bn = N[ids[k + 3]];
       we.push(Math.round(Math.atan2(Bn.wy - A.wy, Math.hypot(Bn.wx - A.wx, Bn.wz - A.wz)) * 57.3));
+      if (N[ids[k]].born < 264) y1 = we.length + 1;
       re.push(Math.round(Math.atan2(Bn.ry - A.ry, Math.hypot(Bn.rx - A.rx, Bn.rz - A.rz)) * 57.3)); sg.push(+Bn.sag.toFixed(2)); }
     const wav = (a) => { let n = 0, s = 0; for (let k = 1; k < a.length; k++) { const d = a[k] - a[k - 1]; if (Math.abs(d) < 3) continue; const ns = Math.sign(d); if (s && ns !== s) n++; s = ns; } return n; };
-    console.log(`limb r=${(N[ids[1]].radius * 100).toFixed(1)} y0=${N[ids[0]].wy.toFixed(1)} wavy(world/rest)=${wav(we)}/${wav(re)}\n  world ${we.join(' ')}\n  rest  ${re.join(' ')}\n  sag   ${sg.join(' ')}`);
+    console.log(`limb r=${(N[ids[1]].radius * 100).toFixed(1)} y0=${N[ids[0]].wy.toFixed(1)} wavy(world/rest)=${wav(we)}/${wav(re)} years2-3 from chord ${y1}: ${wav(we.slice(y1))}/${wav(re.slice(y1))}\n  world ${we.join(' ')}\n  rest  ${re.join(' ')}\n  sag   ${sg.join(' ')}`);
   }
 }

@@ -157,6 +157,8 @@ const YEAR_TWIG = 0.4;
  * Levelling (years 2-3): orders 1 and 2 aim at an outward set-point elevation (rad) that falls with radial distance
  * from YEAR_LEVEL_E0 to YEAR_LEVEL_E1 over the crown radius, with weight YEAR_LEVEL, and wander x YEAR_CALM.
  */
+/** Wander factor on scaffold wood (orders 1-2, not sup) in years 2-3: a smooth sweep, no waves. */
+const YEAR_SCAF_CALM = 0, YEAR_SCAF_ATT = 0.35, YEAR_SCAF_STR = 2, YEAR_SCAF_TURN = 0.5;
 const YEAR_LEVEL = 1.4, YEAR_LEVEL_E0 = 0.35, YEAR_LEVEL_E1 = 0.02, YEAR_CALM = 0.35;
 /**
  * Settling (years 2-3, lever 1 of 6.8): scaffold wood (order 1 and 2, not `sup`) bends down in the rest pose under its
@@ -612,14 +614,18 @@ export class TreeSim {
       }
     }
     // Years 2-3: calmer wood on every order (the wander term reads as tangle at 15 m).
-    if (this.years > 0 && this.growYear >= 1 && ch.order >= 1 && ch.juv === undefined) wan *= YEAR_CALM;
+    if (this.years > 0 && this.growYear >= 1 && ch.order >= 1 && ch.juv === undefined) wan *= (ch.order <= 2 && !ch.sup) ? YEAR_SCAF_CALM : YEAR_CALM;
+    // Years 2-3 scaffold wood: a smooth sweep. The patchy shell pull and the per-segment turn made the rest direction
+    // wave +-10 to 20 degrees every metre (archcensus PROF); weaker pull, more inertia, half the turn per segment.
+    const smoothScaf = this.years > 0 && this.growYear >= 1 && (ch.order === 1 || ch.order === 2) && !ch.sup && ch.juv === undefined;
+    const att2 = smoothScaf ? att * YEAR_SCAF_ATT : att, str = smoothScaf ? g.straightness * YEAR_SCAF_STR : g.straightness;
     // Trunk below the crown: strong upward drive.
     const lead = ch.order === 0 ? (cnt === 0 ? 1.2 : 0.6) : 0;
     // Weeping: twigs of order >= 2 bend down (positive gravitropism) ∝ gravity.
     const weep = ch.order >= 2 ? g.weeping * Math.min(3, g.gravity) * Math.min(1, (ch.order - 1) * 0.6) : 0;
-    let dx = n.dx * g.straightness + pull[0] * att + sun[0] * g.phototropism + wx * wan + lx;
-    let dy = n.dy * g.straightness + pull[1] * att + sun[1] * g.phototropism + (gr + lead - weep) * UP[1] + wy * wan + ly;
-    let dz = n.dz * g.straightness + pull[2] * att + sun[2] * g.phototropism + wz * wan + lz;
+    let dx = n.dx * str + pull[0] * att2 + sun[0] * g.phototropism + wx * wan + lx;
+    let dy = n.dy * str + pull[1] * att2 + sun[1] * g.phototropism + (gr + lead - weep) * UP[1] + wy * wan + ly;
+    let dz = n.dz * str + pull[2] * att2 + sun[2] * g.phototropism + wz * wan + lz;
     // Torsion: twist the direction about the vertical axis each segment (spiralling growth).
     if (g.torsion !== 0) {
       const ta = ((g.torsion * Math.PI) / 180) * (ch.order % 2 ? -1 : 1);
@@ -648,7 +654,7 @@ export class TreeSim {
         const f = Math.sqrt(1 - maxDy * maxDy) / h; dx = hx * f; dz = hz * f; dy = maxDy;
       }
     }
-    const maxT = (g.maxTurn * Math.PI) / 180;
+    const maxT = ((g.maxTurn * Math.PI) / 180) * (smoothScaf ? YEAR_SCAF_TURN : 1);
     const cosA = Math.max(-1, Math.min(1, dx * n.dx + dy * n.dy + dz * n.dz));
     const ang = Math.acos(cosA);
     if (ang > maxT && ang > 1e-5) {
