@@ -176,7 +176,7 @@ Adding a section: controls are declared as data (`TREE`, `SKY`, `ADVANCED` lists
 - **Presets** (chips on the Grow tab, regrows): Oak meadow, Windswept cypress, Weeping willow, Low-gravity alien, Crimson world, Bioluminescent night, Heavy world, Journey: Earth → alien. URL: `?preset=Crimson%20world`.
 - **Automation** (More tab): *Journey* keyframes (`Add keyframe (now)` snapshots every numeric param at the current tree age; values smoothstep between keyframes as the tree grows; presets can ship a journey). *Drift*: pick a param, toggle drift, set rate (Hz of sim time) and range (± relative); smooth low-frequency noise around the base value. The sim reads params live, so new growth records the history (bends, colour bands). If gravity/crown changes move the crown envelope, attractors are re-sampled during growth.
 - **Cinema** camera (default on) is a director (`src/render/director.ts`): from 2.7 m of tree on it cuts between composed shots: **wide** (the tree on a third in its landscape, horizon low), **hero** (low eye, trunk base low in the frame, crown against the sky), **orbit** (medium, slow arc), **rise** (crane from the trunk base up past the crown), **canopy** (beside the trunk, looking up) and **branch** (close on an outer branch). Below 2.7 m it is the close seedling view. Low sun and a bright moon pull wide and hero shots round so the light is in frame; bloom and autumn favour branch, canopy and rise; heavy cloud favours wide; lightning, a landing bird, a breaking limb and the first leaves / blossom / leaf fall of a year get a shot of their own (at most one every 28 s, never within 7 s of a shot's start). Near shots are joined by a 6 s travelling move, far ones by a short dip through black. **N** or the small button top left steps to the next shot. Any drag or scroll takes the camera; it stays yours until the "Auto camera" pill or **C**. Cinema off = the plain framed view.
-- Keys: **H** hide/show all UI (watch mode, also `?hideui=1`), **C** toggle cinema, **N** next shot. A small overlay (preset · age · clock) fades out after 4 s without mouse movement.
+- Keys: **H** hide/show all UI (watch mode, also `?hideui=1`), **C** toggle cinema, **N** next shot. The info overlay (time of day, time of year, weather, tree) stays on screen; see "Info overlay".
 - Alien params: `growth.weeping` (twig downward tropism ∝ gravity), `growth.torsion` (spiral twist per segment), `crown.bole` (how high the grown trunk ends up clean: the seedling is leafy from its first node and carries short low side shoots, which are shed as the trunk thickens; 0 = no juvenile phase), `leaves.shape` (fan ↔ narrow), `leaves.lightness`, `leaves.glow`/`glowHue` (bioluminescence, strongest at night), `sky.skyHue`/`skyTint` (sky+fog tint), `sky.sunHue`/`sunTint`, `sky.sun2`/`sun2Hue`/`sun2Yaw` (companion star: fill light + disc), `sky.sunSize`, `sky.groundHue`/`groundTint`.
 
 ## Telemetry and diagnostics
@@ -329,9 +329,21 @@ autumn 11, clear winter night -3. Nothing reacts to it yet; `weather.snow` is tr
 below (nothing draws snow).
 
 The readout (`#wx`, DOM and CSS only) shows an icon and the name of the weather, the temperature, and the wind in words
-(Calm, Light air, Light breeze, Breeze, Fresh wind, Strong wind, Gale) with the compass point it blows from. It stays
-on screen while watching (the preset / season / clock line under it fades when idle, the readout does not: a glance
-should always answer "how warm, how windy"); H, the start screen and the open controls panel hide it.
+(Calm, Light air, Light breeze, Breeze, Fresh wind, Strong wind, Gale) with the compass point it blows from. It is the
+third part of the info overlay (below) and stays on screen with it; H and the start screen hide it.
+
+### Info overlay
+
+One instrument at the top left (on a phone: across the top) that never fades (`src/hud.ts`, DOM and CSS only, updated
+twice a second). The strip has three parts: the **day** (a small sky dial with the sun on its arc between sunrise and
+sunset, under the horizon at night, and the moon in its phase when it is up; beside it the clock), the **year** (a ring
+of the four seasons with a marker at today's date; season name and "Year N") and the **weather** (the readout above).
+Under it one line for the tree: name, age, height, state (growing, resting, fully grown, paused) and the growth speed
+when it is not 1x. Tap the strip for a card with the rest: what the tree is doing right now, trunk girth, crown width,
+twigs, leaves, limbs lost to storms, days and nights lived, moon phase, sunrise and sunset, wind in m/s; the choice is
+remembered. More tab, "Info overlay": full, compact (strip only) or off. H hides it with everything else. The
+auto-camera and next-shot buttons sit directly under it. `PORT=... node scripts/hudshots.mjs [prefix] [phone|desk|both]`
+takes it in every condition and prints its text next to the values it must agree with.
 
 Controls: Sky tab, "Right now" selector (`weather.kind`: Automatic or one of the ten kinds, held until set back to
 Automatic; `?weather.kind=mist`). The "Weather" selector below is unchanged, and "Always calm" still means the plain

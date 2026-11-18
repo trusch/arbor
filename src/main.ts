@@ -15,7 +15,8 @@ import { tel, diagSwitches } from './tel';
 import { Meadow, type MeadowLight } from './render/meadow';
 import { wind } from './wind';
 import { weather, windWord, windFrom, KINDS, type WeatherEvent, type WeatherKind } from './weather';
-import { season } from './season';
+import { season, SUMMER, AUTUMN, WINTER, leafSeason } from './season';
+import { mountHud, type HudState } from './hud';
 import { Rain } from './render/rain';
 import { Celestial } from './render/celestial';
 import { Clouds } from './render/clouds';
@@ -216,6 +217,7 @@ if (clouds) stage.scene.add(clouds.group);
   else if (params.weather.event === 'auto' && params.weather.kind in KINDS) weather.snap(params.weather.kind as WeatherKind);
 }
 let bakedCloud = 0, decalSeen = false;
+const fleckLight = new THREE.Color();
 /** Before `stage.frame`: advance the weather and hand its scalars to the stage. */
 function weatherFrame(dt: number) {
   tel.phase('weather', true);
@@ -233,6 +235,7 @@ function weatherRender(dt: number) {
   stage.applyFlash();
   (canopy.mesh.material as THREE.MeshBasicMaterial).opacity = canopyStrength * (1 - 0.65 * weather.cloud);
   canopy.fade(dt);
+  canopy.flicker(wind, fleckLight.copy(stage.sun.color).multiplyScalar(Math.min(stage.sun.intensity, stage.atmo.keyIntensity)), 1 - stage.atmo.night);
   celestial?.frame(stage.camera, stage.atmo, weather.cloud, stage.fog.density, dt, params.sky.quality === 'Low');
   clouds?.frame(stage.camera, { sunDir: stage.atmo.sunDir, sunH: stage.atmo.sunH, night: stage.atmo.night, sunColor: stage.atmo.sunColor, moonLight: stage.atmo.moonLight, cloud: weather.cloud, type: weather.cloudType, storm: weather.kind === 'storm', flash: weather.flash, dirX: wind.dirX, dirZ: wind.dirZ, speed: weather.cloudSpeed(wind.base), fogDensity: stage.fog.density, lowQ: params.sky.quality === 'Low', fogColor: stage.fog.color, moonDir: stage.atmo.moonDir }, dt);
   if (!rain) return;
@@ -275,11 +278,12 @@ function breakagePre(_dt: number) {
 }
 /** After `redraw` (the branch mesh has dropped the limb, the leaf follow is done): hand the limb over to the debris. */
 function breakagePost(dt: number) {
-  if (sim.time < debrisSimT) debris.clear(); // tree was reset
+  if (sim.time < debrisSimT) { debris.clear(); limbsLost = 0; } // tree was reset
   debrisSimT = sim.time;
   if (sim.breaks.length) {
     tel.phase('debris spawn');
     for (const ev of sim.breaks) {
+      if (!ev.shed && ev.nodeIds.length >= 12) limbsLost++;
       if (diag.leaves) debris.spawn(sim, ev, wind);
       if (!ev.shed) { const n = sim.nodes[ev.root]; audio.limb(ev.nodeIds.length < 12 ? 0.08 : Math.min(1, 0.25 + ev.nodeIds.length / 400), n.wx, n.wy, n.wz, ev.leaves); }
       tel.log('limb_break', { root: ev.root, nodes: ev.nodeIds.length, leaves: ev.leaves, r: +ev.radius.toFixed(3), t: +ev.time.toFixed(1), ms: +debris.stats.lastBuildMs.toFixed(1) });
@@ -573,12 +577,11 @@ if (query.get('nogui') !== '1') {
   el.addEventListener('wheel', () => stage.takeControl(), { passive: true });
 }
 
-// Watch mode: H hides all UI; a small age/time overlay fades in on activity and out when idle.
-const overlay = document.getElementById('overlay')!;
+// Watch mode: H hides all UI, the info overlay (src/hud.ts) included.
 let uiHidden = query.get('hideui') === '1';
 let activity = 0;
 const applyUi = () => document.body.classList.toggle('watch', uiHidden);
-/** Weather readout (temperature, wind, sky), above the corner overlay; it stays while the overlay fades. */
+/** Weather readout (temperature, wind, sky): the third part of the info overlay's strip (`mountHud` moves it there). */
 const wxEl = document.getElementById('wx')!;
 const WX_ICON: Record<string, string> = {
   sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
@@ -607,6 +610,31 @@ function updateWx() {
   wxEl.setAttribute('aria-label', `${label}, ${t} degrees, ${windWord(wind.base).toLowerCase()} from ${windFrom(wind.dirX, wind.dirZ)}`);
 }
 applyUi();
+/** Info overlay (almanac strip, tree line, card): fed at the 2 Hz status tick. */
+const hudUpdate = query.get('nogui') !== '1' ? mountHud(wxEl) : null;
+let limbsLost = 0;
+/** Wind strength (`wind.base`) in m/s, matching the Beaufort-like words of `windWord`. */
+function windMs(b: number) {
+  const P = [0, 0, 0.07, 0.3, 0.2, 1.5, 0.42, 3.3, 0.56, 7.9, 0.72, 10.7, 0.9, 17.1, 1.3, 26];
+  for (let i = 2; i < P.length; i += 2) if (b <= P[i]) return P[i - 1] + ((P[i + 1] - P[i - 1]) * (b - P[i - 2])) / (P[i] - P[i - 2]);
+  return 26;
+}
+const hudState = {} as HudState;
+function updateHud() {
+  if (!hudUpdate) return;
+  const s = hudState, k = params.sky, A = stage.atmo;
+  // Sunrise / sunset of `sunDirection` (fixed declination 18 deg): cos H0 = -tan(lat) tan(dec).
+  const h0 = (Math.acos(Math.max(-1, Math.min(1, -Math.tan((k.latitude * Math.PI) / 180) * Math.tan((18 * Math.PI) / 180)))) * 12) / Math.PI;
+  s.hour = k.timeOfDay; s.rise = 12 - h0; s.set = 12 + h0; s.sunH = A.sunH; s.moonH = A.moonDir.y; s.moonPhase = A.moonPhase;
+  s.seasons = season.active; s.phase = season.phase; s.marks = HUD_MARKS; s.season = season.name; s.year = season.year; s.yearLength = params.season.yearLength;
+  s.name = presetName; s.age = sim.time; s.height = Math.max(0, sim.bboxMax[1]); s.width = Math.max(0, sim.bboxMax[0] - sim.bboxMin[0], sim.bboxMax[2] - sim.bboxMin[2]);
+  s.girth = 2 * Math.PI * (sim.nodes[0]?.radius ?? 0); s.nodes = sim.nodes.length; s.leaves = leaves.mesh.count; s.leafOn = season.leafOn; s.limbs = limbsLost;
+  s.grown = sim.time > 1 && (sim.nodes.length >= params.growth.maxNodes || !sim.chains.some((c) => c.alive));
+  s.paused = params.time.paused; s.speed = params.time.speed; s.blossom = !!blossom && params.season.blossom > 0 && params.season.blossomType !== 'none'; s.evergreen = !leafSeason(leaves.formId).drop;
+  s.cycle = k.cycle; s.windMs = windMs(wind.base);
+  hudUpdate(s);
+}
+const HUD_MARKS: [number, number, number] = [SUMMER, AUTUMN, WINTER];
 /** Keys H/C/D stay live on sliders, switches and buttons; only real text entry swallows them. */
 function typing(el: HTMLElement | null) {
   if (!el) return false;
@@ -703,11 +731,12 @@ function frame(now: number) {
     birdSat = !!b;
   }
   activity += dt;
-  overlay.style.opacity = String(Math.max(0, Math.min(1, 1 - (activity - 4) / 2)) * 0.85);
   const lp = params.leaves;
   glow.setHSL(lp.glowHue, 0.9, 0.55).multiplyScalar(lp.glow * (0.12 + 0.88 * stage.atmo.night));
   leaves.setGlow(glow, 1 - stage.atmo.night);
-  leaves.setSun(stage.atmo.keyDir, stage.atmo.keyColor, stage.atmo.keyIntensity, stage.camera.matrixWorldInverse);
+  // Post-weather key (storm dims the translucency glow with the sun; derived each frame from the calm value). Capped at the
+  // calm key so a lightning flash does not light the crown from inside.
+  leaves.setSun(stage.atmo.keyDir, stage.sun.color, Math.min(stage.sun.intensity, stage.atmo.keyIntensity), stage.camera.matrixWorldInverse, stage.atmo.night);
   // Without the High grade/bloom the bark reads pale grey: warm it on Low.
   // Moonlight: the bark joins the dim, cool range of the crown (lerp from the day value each frame; exactly the day value while night = 0).
   const barkCol = (branches.mesh.material as THREE.MeshStandardMaterial).color.setHex(params.sky.quality === 'High' ? 0xffffff : 0xb08a6a);
@@ -722,9 +751,8 @@ function frame(now: number) {
     fps = frames / fpsT;
     frames = 0;
     fpsT = 0;
-    const hr = params.sky.timeOfDay, hh = Math.floor(hr), mm = Math.floor((hr - hh) * 60);
-    overlay.textContent = `${presetName} · ${params.season.on ? `${season.name}, year ${season.year}` : `age ${sim.time.toFixed(0)} s`} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     updateWx();
+    updateHud();
     hud.textContent = `t ${sim.time.toFixed(1)}s  nodes ${sim.nodes.length}  leaves ${leaves.mesh.count}  free attractors ${sim.attractorCount}  ${fps.toFixed(0)} fps`;
   }
 }

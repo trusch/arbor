@@ -1,4 +1,5 @@
 import './ui.css';
+import { hudMode, setHudMode, type HudMode } from './hud';
 import { season, seasonName } from './season';
 import type { ArborParams } from './params';
 import { type Automation, numericPaths } from './automation';
@@ -506,6 +507,9 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
   const quality = h('select', { id: 'arbor-quality' }, h('option', { value: 'High', text: 'High' }), h('option', { value: 'Low', text: 'Low' }));
   quality.addEventListener('change', () => set('sky.quality', quality.value));
   syncers.push(() => (quality.value = p.sky.quality));
+  const hudSel = h('select', { id: 'arbor-hud-mode' }, h('option', { value: 'full', text: 'Full (with the tree line)' }), h('option', { value: 'compact', text: 'Compact (strip only)' }), h('option', { value: 'off', text: 'Off' }));
+  hudSel.addEventListener('change', () => setHudMode(hudSel.value as HudMode));
+  syncers.push(() => (hudSel.value = hudMode()));
 
   tab('more', 'More',
     note('Everything else, with its technical name. Nothing here is needed for everyday play.'),
@@ -526,9 +530,10 @@ export function buildPanel(p: ArborParams, auto: Automation, a: UiActions, opts:
       check('Auto-rotate', () => p.camera.autoRotate, (v) => (p.camera.autoRotate = v)),
       check('Cinema camera: composed shots (key C; N = next shot)', () => p.camera.cinema, (v) => (p.camera.cinema = v)),
       h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-quality', text: 'quality' }), quality),
+      h('div', { class: 'ap-raw' }, h('label', { for: 'arbor-hud-mode', text: 'info overlay' }), hudSel),
       raw('seed.seed', 'seed', 0, 999999, 1),
       raw('time.speed', 'speed', 0, 20, 0.05),
-      note('Keys: H hides all controls, C toggles the cinema camera, N steps to the next shot, D shows a debug line.')));
+      note('Keys: H hides all controls and the info overlay, C toggles the cinema camera, N steps to the next shot, D shows a debug line.')));
 
   // ---- status ----
   syncers.push(() => {

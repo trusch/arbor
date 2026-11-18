@@ -404,13 +404,16 @@ export class Critters {
       if (H[h + 7] < 0.25 && s > 1.45 && s < 2.1) { const s2 = s - 1.45; b = s2 < 0.15 ? s2 / 0.15 : 1 - (s2 - 0.15) / 0.5; }
       b = b * b * Math.min(1, shown - i);
       if (b < 0.02) continue;
-      lit++;
       // Slow drifting path around a home spot, low over the grass, denser under and around the crown.
       const an = H[h + 2] * TAU, rad = 1.6 + 13 * H[h + 3] * H[h + 3], f = 0.6 + 0.8 * H[h + 4];
       const x = Math.cos(an) * rad + 1.3 * Math.sin(t * 0.19 * f + h) + 0.5 * Math.sin(t * 0.53 * f + 2.1 * h);
       const z = Math.sin(an) * rad + 1.3 * Math.sin(t * 0.17 * f + 1.7 * h) + 0.5 * Math.cos(t * 0.47 * f + h);
       const y = 0.5 + 1.5 * H[h + 5] * H[h + 5] + (H[h + 6] < 0.2 ? 1.6 * H[h + 6] * 5 : 0) + 0.22 * Math.sin(t * 0.37 * f + 3 * h) + 0.18 * b;
       const d = Math.hypot(x - env.cam.x, y - env.cam.y, z - env.cam.z);
+      // Never past the lens: a fly within a few metres of the camera was a large glowing disc in the sky.
+      b *= smooth(2, 5, d);
+      if (b < 0.02) continue;
+      lit++;
       // A pinpoint with a small soft glow: about 6 CSS px of quad from the framing distance, nearer ones a little larger.
       const sz = Math.max(0.035, d * 0.0029 * (1 + 0.7 * (1 - smooth(10, 38, d)))) * (0.75 + 0.25 * b);
       const cell = Math.min(7, Math.floor(b * 8)), u0 = (cell % 4) / 4, v0 = 1 - ((cell >> 2) + 1) / 2;

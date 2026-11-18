@@ -26,6 +26,12 @@ const browser = await chromium.launch({
     ? ['--headless=new', '--use-gl=angle', `--use-angle=${process.env.SMOKE_GPU}`, '--enable-gpu', '--ignore-gpu-blocklist', '--enable-precise-memory-info']
     : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-precise-memory-info'],
 });
+// SMOKE_NAV_MS: page-load timeout (default 30 s). On a host loaded by other jobs a cold load can take longer.
+const NAV_MS = Number(process.env.SMOKE_NAV_MS ?? 30000);
+{ const np = browser.newPage.bind(browser), nc = browser.newContext.bind(browser);
+  browser.newPage = async (o) => { const p = await np(o); p.setDefaultNavigationTimeout(NAV_MS); return p; };
+  browser.newContext = async (o) => { const c = await nc(o); c.setDefaultNavigationTimeout(NAV_MS); return c; }; }
+
 try {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
@@ -633,10 +639,16 @@ try {
     const on = await phone('?cycle=false&speed=0&weather=calm'), off = await phone('?cycle=false&speed=0&weather=calm&season.on=false');
     for (const pg of [on.mp, off.mp]) await pg.evaluate(() => { const A = window.__arbor; A.params.sky.timeOfDay = 13; A.fastForward(60); });
     await on.mp.waitForTimeout(8000);
+    // Like with like: safe-path instance colours carry the view-dependent bake, and the director changes the shot between
+    // stations (light branch, auto camera: summer read 16.8 and 9.8 at the same date, flush 9.9). One hand-set view for the
+    // whole block; under it flush 13.7 / summer 10.2 (main 15.6 / 11.6), repeatable to the third decimal.
+    await on.mp.evaluate(() => { const S = window.__arbor.stage; S.takeControl(); S.camera.position.set(14, 4, 14); S.controls.target.set(0, 4.5, 0); });
     const st = {}, offP = [], land = {};
     for (const [name, d] of [['flush', 0.045], ['summer', 0.38], ['turning', 0.56], ['peak', 0.62], ['thin', 0.7], ['winter', 0.88], ['spring2', 0.075], ['summer2', 0.38]]) {
       await on.mp.evaluate((dd) => { const A = window.__arbor; window.__p0 = A.leaves.passes; A.automation.userSet('season.hold', true); A.automation.userSet('season.date', dd); }, d);
       await settle(1);
+      // The drawn colours are from a pass that began at this date (a pass begun before the scrub, e.g. for the view, does not count).
+      await on.mp.waitForFunction((dd) => { const L = window.__arbor.leaves; return !L.passOpen && Math.abs(L.passPhase - dd) < 1e-3; }, d, { timeout: 30000 });
       st[name] = await read(on.mp);
       offP.push((await read(off.mp)).programs);
       land[name] = await on.mp.evaluate(() => window.__arbor.meadow.probe());
@@ -926,6 +938,7 @@ try {
     // The untouched default: the day cycle runs, the readout shows and follows the weather, H hides it.
     const { ctx, mp, merr } = await phone('?start=0');
     await mp.waitForTimeout(2500);
+    await mp.waitForFunction(() => document.getElementById('wx')?.textContent.length > 5, null, { timeout: 30000 }).catch(() => {}); // first 2 Hz tick (late on a loaded host)
     const rd = () => mp.evaluate(() => { const A = window.__arbor, el = document.getElementById('wx'); return { cycle: A.params.sky.cycle, hour: A.params.sky.timeOfDay, event: A.params.weather.event, kind: A.weather.kind, temp: A.weather.temp, text: el.textContent, shown: getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 60, icon: el.querySelector('svg').childElementCount, cloud: A.weather.cloud, rain: A.weather.rain, programs: A.stage.renderer.info.programs.length, cover: A.weather.cover, snow: A.weather.snow }; });
     const a = await rd();
     await mp.waitForTimeout(3000);
@@ -952,9 +965,19 @@ try {
     await mp.waitForTimeout(400);
     const calm = await mp.evaluate(() => { const W = window.__arbor.weather; return new Promise((res) => setTimeout(() => res({ cloud: W.cloud, rain: W.rain, wind: W.wind, clear: W.clear, haze: W.haze, breeze: W.breeze }), 45000)); });
     check('weather=calm settles to exactly the calm sky (all weather scalars 0, breeze 1)', calm.cloud === 0 && calm.rain === 0 && calm.wind === 0 && calm.clear === 0 && calm.haze === 0 && calm.breeze === 1, JSON.stringify(calm));
+    // Info overlay: a minute after the last input the strip is still fully visible and shows the real clock, season and year.
+    const hudS = await mp.evaluate(() => {
+      const A = window.__arbor, el = document.getElementById('arbor-hud-strip'), r = el.getBoundingClientRect();
+      let op = 1; for (let e = el; e; e = e.parentElement) op *= Number(getComputedStyle(e).opacity);
+      const h = A.params.sky.timeOfDay, hh = Math.floor(h), mm = Math.floor((h - hh) * 60);
+      return { w: r.width, h: r.height, top: r.top, op, vis: getComputedStyle(el).visibility, clock: el.querySelector('.hud-clock').textContent, want: hh * 60 + mm, season: el.querySelector('.hud-season').textContent, yr: el.querySelector('.hud-yr').textContent, year: A.season.year, name: A.season.name, tree: document.getElementById('arbor-hud-tree').textContent };
+    });
+    const cm = /^(\d{1,2}):(\d{2})$/.exec(hudS.clock ?? ''), cmin = cm ? Number(cm[1]) * 60 + Number(cm[2]) : -99, cd = Math.abs(cmin - hudS.want);
+    check('info overlay: still fully visible a minute after the last input, with the real clock, season and year',
+      hudS.w > 200 && hudS.h > 30 && hudS.top >= 0 && hudS.op === 1 && hudS.vis === 'visible' && Math.min(cd, 1440 - cd) <= 45 && hudS.season.length > 3 && /^Year \d+$/.test(hudS.yr) && hudS.tree.length > 8, JSON.stringify(hudS));
     await mp.keyboard.press('h');
-    const hid = await mp.evaluate(() => getComputedStyle(document.getElementById('wx')).display);
-    check('H hides the weather readout', hid === 'none', hid);
+    const hid = await mp.evaluate(() => [getComputedStyle(document.getElementById('wx')).display, getComputedStyle(document.getElementById('arbor-hud')).display].join(','));
+    check('H hides the weather readout and the info overlay', await mp.evaluate(() => document.getElementById('arbor-hud-strip').getBoundingClientRect().width === 0), hid);
     await ctx.close();
   }
   // Sound: nothing exists before the gesture; the speaker button starts a running context with live levels; off releases it.

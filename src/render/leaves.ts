@@ -214,6 +214,10 @@ export class Leaves {
     uWind: { value: 1 },
     uSunDirV: { value: new THREE.Vector3(0, 1, 0) },
     uSunCol: { value: new THREE.Color(1, 1, 1) },
+    /** 1 when the key light is low (golden hour, moon near the horizon), 0 above about 35 degrees. */
+    uSunLow: { value: 0 },
+    /** 1 by day, 0 at night (`1 - Atmosphere.night`): the backlit-crown terms fade to the plain translucency of the night look. */
+    uDayK: { value: 1 },
     uGlow: { value: new THREE.Color(0, 0, 0) },
   };
   private capacity = 0;
@@ -359,9 +363,11 @@ export class Leaves {
       sh.uniforms.uWind = u.uWind;
       sh.uniforms.uSunDirV = u.uSunDirV;
       sh.uniforms.uSunCol = u.uSunCol;
+      sh.uniforms.uSunLow = u.uSunLow;
+      sh.uniforms.uDayK = u.uDayK;
       sh.uniforms.uGlow = u.uGlow;
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;\nuniform vec3 uGlow;')
+        .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirV;\nuniform vec3 uSunCol;\nuniform float uSunLow;\nuniform float uDayK;\nuniform vec3 uGlow;')
         .replace(
           '#include <emissivemap_fragment>',
           `#include <emissivemap_fragment>
@@ -377,11 +383,16 @@ export class Leaves {
           `#include <lights_fragment_end>
           {
             // Leaf translucency: light through the blade from behind, strongest looking into the sun.
+            // Vd: fragment -> camera (three's vViewPosition is -mvPosition). Wide lobe + tight core looking into the sun,
+            // rim on the crown's outline (grazing blades), both stronger with a low sun: the backlit crown glows.
             vec3 Vd = normalize(vViewPosition);
             float back = max(0.0, -dot(normal, uSunDirV));
-            float into = pow(max(0.0, dot(-Vd, uSunDirV)), 5.0);
-            vec3 tcol = diffuseColor.rgb * vec3(1.15, 1.2, 0.55);
-            reflectedLight.indirectDiffuse += tcol * uSunCol * (0.45 * back + 1.6 * into);
+            float ic = max(0.0, dot(-Vd, uSunDirV));
+            // At night (uDayK 0) exactly the old moonlit translucency: no halo, no rim, no low-light boost.
+            float into = mix(1.6 * pow(ic, 5.0), 0.9 * ic * ic + 1.6 * pow(ic, 6.0), uDayK);
+            float rim = pow(1.0 - abs(dot(normal, Vd)), 3.0) * (0.25 + 1.2 * ic) * uDayK;
+            vec3 tcol = diffuseColor.rgb * mix(vec3(1.15, 1.2, 0.55), vec3(1.2, 1.25, 0.5), uDayK);
+            reflectedLight.indirectDiffuse += tcol * uSunCol * (mix(0.45, 0.5, uDayK) * back + (1.0 + 2.6 * uSunLow) * (into + rim));
           }`,
         );
       sh.vertexShader = sh.vertexShader
@@ -538,9 +549,11 @@ export class Leaves {
   }
 
   /** dir points toward the light in world space. */
-  setSun(dir: THREE.Vector3, col: THREE.Color, intensity: number, view: THREE.Matrix4) {
+  setSun(dir: THREE.Vector3, col: THREE.Color, intensity: number, view: THREE.Matrix4, night = 0) {
     this.uniforms.uSunDirV.value.copy(dir).transformDirection(view);
     this.uniforms.uSunCol.value.copy(col).multiplyScalar(intensity * 0.35);
+    this.uniforms.uDayK.value = 1 - night;
+    this.uniforms.uSunLow.value = (1 - Math.min(1, Math.max(0, (dir.y - 0.08) / 0.5))) * (1 - night);
   }
 
   /**
@@ -983,7 +996,7 @@ export class Leaves {
         if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll, 2.1); hh = c[0]; ss = c[1]; ll = c[2]; }
         this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
-        if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1 + NIGHT_FULL_LIFT * this.nightFloor);
+        if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1 + NIGHT_FULL_LIFT * this.nightFloor, this.nightFloor);
         carr[w * 3] = this.col.r; carr[w * 3 + 1] = this.col.g; carr[w * 3 + 2] = this.col.b;
         if (isCl) n2++; else n++;
         continue;
@@ -992,7 +1005,9 @@ export class Leaves {
       if (sOn) { const c = leafSeasonColour(sPh, fs, tOn, tTurn, tFall, thisYear, lf.tint, su, hh, ss, ll); hh = c[0]; ss = c[1]; ll = c[2]; }
       this.col.setHSL(hh, ss, Math.min(0.85, ll), THREE.SRGBColorSpace);
       // Sky occlusion from the light grid: bright outer shell → dark (green, never black) interior.
-      const occ = 0.42 + 0.78 * smooth(0.15, 0.85, nd.light);
+      // Backlit-crown terms of the day look fade out with the night (dK 0 = the moonlit bake as before them).
+      const dK = 1 - this.nightGrade;
+      const occ = 0.42 - 0.12 * dK + (0.78 + 0.12 * dK) * smooth(0.15, 0.85, nd.light);
       let kr: number, kg: number, kb: number;
       if (!bakeAll) {
         const k = 0.5 + 0.5 * occ;
@@ -1018,8 +1033,14 @@ export class Leaves {
         const hw = 0.5 * ny + 0.5;
         // Lambert will apply: E_l = hemi(n) + sun · max(0, n·L). We want: E_w = hemi(n) · occ + sun · |n·L| · vis + glow.
         const into = Math.max(0, -(vx * L.x + vy * L.y + vz * L.z)); // sun behind the leaf as seen from the camera
-        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + 0.55 * into * into) * vis;
-        const sd = Math.abs(ndl) * vis;
+        // Low key light (golden hour, low moon): stronger glow through the blades and a rim on blades seen edge-on
+        // (the crown's outline), so a backlit crown glows instead of reading as a silhouette.
+        const lowK = (1 - smooth(0.08, 0.55, L.y)) * dK;
+        const edge = 1 - Math.abs(nx * vx + ny * vy + nz * vz);
+        const rimB = edge * edge * (0.25 + 0.75 * into) * (0.35 + 1.5 * lowK) * dK;
+        const glow = (0.15 * (ndl < 0 ? 1 : 0.3) + (0.55 + 1.3 * lowK) * into * into + rimB) * vis;
+        // Lit face full, the face turned away only partly (it is lit through the blade via `glow`): form across the crown.
+        const sd = (ndl > 0 ? ndl : -(1 - 0.55 * dK) * ndl) * vis;
         const fl = emg ? Math.hypot(e2[8], e2[9], e2[10]) : 0;
         if (fl > 0) {
           // Emerging: the card is narrow (folded), and the instance normal transform fans the cupped blade's normals
@@ -1054,7 +1075,14 @@ export class Leaves {
       }
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
-      if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.95 : 1);
+      if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.95 * (1 - NIGHT_FLOOR_DARK * this.nightFloor) : 1, this.nightFloor);
+      // Blue hour (safe path): between sunset and night there is no key light, and the hemisphere-normalised bake left
+      // the crown a saturated green brighter than the meadow. A window on the night grade (0 by day and at full night).
+      const duskK = bakeAll ? duskOf(this.nightGrade) : 0;
+      if (duskK > 0) {
+        const c = this.col, r = c.r * mm.r, g = c.g * mm.g, bl = c.b * mm.b, L = 0.3 * r + 0.59 * g + 0.11 * bl, sd = DUSK_DESAT * duskK, kd = 1 - DUSK_DIM * duskK;
+        c.r = ((r + (L * DUSK_GREY[0] - r) * sd) * kd) / mm.r; c.g = ((g + (L * DUSK_GREY[1] - g) * sd) * kd) / mm.g; c.b = ((bl + (L * DUSK_GREY[2] - bl) * sd) * kd) / mm.b;
+      }
       carr[w * 3] = this.col.r; carr[w * 3 + 1] = this.col.g; carr[w * 3 + 2] = this.col.b;
       if (isCl) n2++; else n++;
       }
@@ -1143,8 +1171,9 @@ function h01(a: number) { a = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b); a ^= a >>> 
  * Works on the drawn colour (instance x map mean): `NIGHT_DESAT` of the chroma goes to a cool grey-blue of the same
  * luminance at full night (muted blue-green, not grey); `dim` < 1 marks the safe path (range compression, see below).
  */
-function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number) {
-  const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = NIGHT_DESAT * g;
+function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number, floor = 0) {
+  // Without moonlight (`floor`) nearly colourless: a dark grey shape, not a mint one.
+  const r = c.r * mm.r, gg = c.g * mm.g, b = c.b * mm.b, L = 0.3 * r + 0.59 * gg + 0.11 * b, s = (NIGHT_DESAT + NIGHT_FLOOR_DESAT * floor) * g;
   // Safe path (dim < 1): the bake spans black interior leaves to 8x lit ones; moonlight is flat, so the luminance is
   // compressed toward NIGHT_LREF (power 0.7) before the dim. Full path: the shader lights the leaf, chroma only.
   // dim > 1: full path without moonlight (no key light, no translucency): plain gain so the crown is not a silhouette.
@@ -1155,7 +1184,14 @@ function nightTone(c: THREE.Color, mm: THREE.Color, g: number, dim: number) {
 export const NIGHT_DESAT = 0.62;
 export const NIGHT_GREY = [0.74, 1.0, 1.22];
 const NIGHT_LREF = 0.4;
-const NIGHT_FULL_LIFT = 10;
+const NIGHT_FULL_LIFT = 4;
+/** Moonless night: the safe-path crown is darkened by this share of the floor (it was the brightest thing on the ground) and loses this much more chroma. */
+const NIGHT_FLOOR_DARK = 0.55;
+const NIGHT_FLOOR_DESAT = 0.3;
+/** Blue hour on the safe path: share of chroma that goes to a cool grey, the dim, and the grey (unit luminance). */
+const DUSK_DESAT = 0.6, DUSK_DIM = 0.55, DUSK_GREY = [0.8, 1.0, 1.25];
+/** 0..1 window between sunset and night from the night grade (night 0.41 = sun 3.4 degrees down, the middle of it). */
+const duskOf = (night: number) => smooth(0.04, 0.3, night) * (1 - smooth(0.72, 1, night));
 
 function bakeCh(sky: number, gr: number, sun: number, tint: number, i: number, hw: number, ndl: number, occ: number, sd: number, glow: number) {
   const hemi = gr + (sky - gr) * hw;
