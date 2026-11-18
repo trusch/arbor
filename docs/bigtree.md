@@ -408,6 +408,36 @@ Open:
 - Cluster maps of the stroke forms (spray, spiral) were not looked at closely.
 - Desktop High has no clusters.
 - Never run on the PowerVR device.
+### 6.6 Year-3 form and breakage at size (branch `bigtree-years`, behind `?years=3`)
+
+Architecture census (`node scripts/archcensus.mjs 'growth.maxNodes=40000'`, headless, seed 7, t = 750 = end of the year-3 season; width = 2 x p95 of leafy-node distance from the axis; limbs = order-1 chains, girth = radius at the chain's first node):
+
+| Year 3, t = 750 | Before (1931dd3) | After |
+|---|---|---|
+| Height / crown width / width : height | 13.95 / 14.14 m / 1.01 | 14.56 / 17.95 m / 1.23 |
+| Trunk radius at 1.3 m (design 36 cm at x1.6) | 32.0 cm | 40.6 cm |
+| Trunk taper 2 / 3 / 6 / 10 m | 30.5 / 20.8 / 9.6 / 1.4 cm | 40.6 / 20.2 / 9.9 / 2.6 cm |
+| Order-1 limbs: count, over 10 cm, over 5 cm, thickest | 30, 2, 12, 13.2 cm | 32, 3, 10, 24.5 cm |
+| Leafy radius by height band (ground .. top, m) | 8.9 7.8 7.7 8.4 8.2 8.5 8.1 7.5 6.5 5.4 | 6.2 8.6 10.1 10.8 10.7 10.9 10.8 10.1 8.9 6.2 |
+| Lowest leaf | -2.52 m (low limbs on the ground) | 0.04 m |
+| Nodes / sim leaves | 32 948 / 255k | 35 501 / 276k (+8 %) |
+
+Rules (all only when `years` > 0 and from growth year 2 on; year 1 and `years` = 0 are untouched: t = 150 gives 4910 nodes, 9.09 m, 16.8 cm with both):
+
+| Rule | Built as |
+|---|---|
+| Envelope per year | `YEAR_H` 1.7 crown height, `YEAR_R` 2.3 radius, `YEAR_B` 1.6 crown base (the crown lifts as the low limbs go): broader than tall |
+| Lobed shells | `sampleShell` modulates reach x (1 +- `YEAR_LOBE` 0.22) and density (bays down to 1 - `YEAR_BAY` 0.6) by `yearLobe(seed, azimuth, h)` (3 + 5 lobes, phases per seed); `YEAR_DENSITY` 0.25 -> 0.17 holds the node count |
+| Old wood thickens more | pipe exponent x (1 - `YEAR_EXP` 0.03 x `ageQ`), `ageQ` = the quantised years done that already drives `girth`: same full-pass steps, exact (`structureCheck` 0 at every sample, also in the app at t = 750 summer and winter) |
+| G3 | `LEADER_VIGOR` 1 / 0.45 / 0.2 |
+| G4 lower-limb shedding | `shedLowLimb` once per growth year at phase 0.3: of the order-1 limbs starting below this year's lifted crown base, minus the `YEAR_KEEP` 4 thickest (scaffold), the one whose wood hangs lowest goes through `breakAt` with `shed: true` (stub, debris path, birds flush only on non-shed) |
+| P13 breakage at size | `loadRatios` strength x (1 + `YEAR_SIGMA` 0.65 x `ageQ`) (exactly 1 in year 1); `sim.yearSigma` for sweeps |
+
+Breakage (**M**, `node scripts/breaksize.mjs` = headless `stormTest`: same `windLoad` loop, 4 Hz, 120 s, fresh tree per base; `YSIG` overrides the gain). Year 3 (t = 750), limbs / twigs at wind.base 1.0 / 0.8 / 0.6: gain 0 (as before) 24 / 24 limbs at 1.0, gain 0.5: 6 / 5 / 0, gain 0.8: 2 / 0 / 0, gain 1.2: 0 / 0 / 0; **gain 0.65 (shipped): 4 / 2 / 0 limbs, 0 twigs, u p98 0.67, max 1.49**. What breaks at size are the long thin new laterals of years 2 and 3 (0.9 to 2.3 cm, 30 to 177 nodes), not scaffold. Year 1 is unchanged by construction (gain x 0); headless t = 90: p98 0.65, 1.0 -> 1 twig, 0.8 -> 1 twig, 0.6 -> 0 (the in-app `breakcalib.mjs` numbers differ: different wind clock start; compare like with like).
+
+What the pictures say (`node scripts/majestic.mjs URL prefix`: wide 2.6 H out, the app's framed camera, under the crown; summer 0.3 / winter 0.85 held, noon, calm, real GPU; `shots/maj-{before,after}-{desktop,phone}-{summer,winter}-{wide,framed,under}.png`): after is wider than tall, sits on a visibly heavier trunk with a cleaner bole, and the low curtain is shorter; but summer is still a dense dome with leafy curtains hanging to the meadow at the sides, and winter shows a broom of many similar wavy limbs, not a few heavy scaffold limbs that lean out and level. The lobes do not read: the dome stays closed. Not majestic yet.
+
+Open (next levers, in order): scaffold dominance (few order-1 limbs carry most of the crown: today 32 limbs of similar size; suppress or shed weak order-1 laterals in years 2-3 and give the 4 to 6 strongest the shell's attractors); limbs that level out (an outward gravitropic set-point for order 1 in years 2-3 instead of attractor pull alone: limbs are 40 to 60 degrees and climb); the crown must open (the leaf density of the year-2/3 shell, and the interior prune, decide whether sky shows; lobes in attractor density do not make gaps when every tip still fills its neighbourhood); wavy wood (the wander term reads as tangle at 15 m); root flare is the renderer's `rootFlare` scaled by trunk radius (proportional; not changed).
 
 ## 7. Not measured
 
