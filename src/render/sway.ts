@@ -46,8 +46,13 @@ export class Sway {
   private slice = 0; private keys = 0; private thin = 0; private cyN = 0;
   /** Update counter inside the current key cycle and how many thin nodes the last update evaluated (stats). */
   stats = { thick: 0, thin: 0, evaluated: 0, keys: 0 };
-  /** Two-rate switch (`?swayrate=1` = every node every update, the reference). */
-  twoRate = true;
+  /**
+   * Two-rate switch, OFF by default: every node every update. The two-rate path draws thin wood 3 to 6 updates behind
+   * (keys interpolated R0 -> R1) while its anchor is current; thin wood oscillates at up to 7 rad/s, so on Low (update
+   * every second frame) that is 1.4 to 2.8 rad of phase against the anchor and the one-curve check fails (lean lost
+   * 0.33 to 0.71 rad in a storm, `swaycheck.mjs`). Keep it off until the keys are computed for a lead time.
+   */
+  twoRate = false;
 
   /**
    * Recompute D. Returns true when the pose changed (moving, or it just returned to rest and consumers must draw
@@ -120,8 +125,23 @@ export class Sway {
           const ao = a * 3, po = pi * 3;
           // New node: starts where its parent is drawn (the parent's keys, set earlier in this loop; 0 on its anchor).
           // D of a new parent is not written yet, so new nodes never read D.
-          if (i >= oldN) for (let j = 0; j < 3; j++) { const r = A[pi] >= 0 ? R1[po + j] : 0; R0[o + j] = A[pi] >= 0 ? R0[po + j] : 0; R1[o + j] = r; RN[o + j] = A[pi] >= 0 ? RN[po + j] : 0; }
-          else for (let j = 0; j < 3; j++) { const r = D[o + j] - D[ao + j]; R0[o + j] = R1[o + j] = RN[o + j] = r; }
+          // Its own segment is turned by the parent's rotation (raw, saturated by its own limit) on top of the parent's
+          // relative offset; copying the parent's keys alone drew the new segment in rest orientation (upright) on a
+          // leaning parent until two keys had passed (growing sapling in a storm: lean drop 0.37 rad above the stem).
+          if (i >= oldN) {
+            const PT = A[pi] >= 0 ? TN : TH, th = A[pi] >= 0;
+            let tx = PT[po], ty = PT[po + 1], tz = PT[po + 2];
+            const tq = tx * tx + ty * ty + tz * tz, cap = CAP[i], sat = cap / Math.sqrt(cap * cap + (tq > RAW_MAX * RAW_MAX ? RAW_MAX * RAW_MAX : tq));
+            tx *= sat; ty *= sat; tz *= sat;
+            const sx = S[o], sy = S[o + 1], sz = S[o + 2];
+            let vx = sx + ty * sz - tz * sy, vy = sy + tz * sx - tx * sz, vz = sz + tx * sy - ty * sx;
+            const sl = sx * sx + sy * sy + sz * sz, vl = vx * vx + vy * vy + vz * vz;
+            if (vl > 1e-12) { const q = Math.sqrt(sl / vl); vx *= q; vy *= q; vz *= q; }
+            const dx = vx - sx, dy = vy - sy, dz = vz - sz;
+            R0[o] = (th ? R0[po] : 0) + dx; R0[o + 1] = (th ? R0[po + 1] : 0) + dy; R0[o + 2] = (th ? R0[po + 2] : 0) + dz;
+            R1[o] = (th ? R1[po] : 0) + dx; R1[o + 1] = (th ? R1[po + 1] : 0) + dy; R1[o + 2] = (th ? R1[po + 2] : 0) + dz;
+            RN[o] = (th ? RN[po] : 0) + dx; RN[o + 1] = (th ? RN[po + 1] : 0) + dy; RN[o + 2] = (th ? RN[po + 2] : 0) + dz;
+          } else for (let j = 0; j < 3; j++) { const r = D[o + j] - D[ao + j]; R0[o + j] = R1[o + j] = RN[o + j] = r; }
           const to = was === -1 && i < oldN ? o : pi * 3, TT = was === -1 && i < oldN ? TH : (A[pi] >= 0 ? TN : TH);
           TN[o] = TT[to]; TN[o + 1] = TT[to + 1]; TN[o + 2] = TT[to + 2];
         }
@@ -187,7 +207,10 @@ export class Sway {
       let tx = T[po] + (sy * fz - sz * fy) * k, ty = T[po + 1] + (sz * fx - sx * fz) * k, tz = T[po + 2] + (sx * fy - sy * fx) * k;
       const tq = tx * tx + ty * ty + tz * tz;
       if (tq > RAW_MAX * RAW_MAX) { const q = RAW_MAX / Math.sqrt(tq); tx *= q; ty *= q; tz *= q; }
-      if (an >= 0) { TN[o] = tx; TN[o + 1] = ty; TN[o + 2] = tz; } else { TH[o] = tx; TH[o + 1] = ty; TH[o + 2] = tz; }
+      // TH is written for thin wood too (its key-in-progress rotation): nothing in the cascade reads TH of a thin node,
+      // but probes take the model axis from it (it stayed 0 on thin wood, and swayProbe skipped every thin segment).
+      if (an >= 0) { TN[o] = tx; TN[o + 1] = ty; TN[o + 2] = tz; }
+      TH[o] = tx; TH[o + 1] = ty; TH[o + 2] = tz;
       // Drawn rotation: saturates gradually toward the node's limit (raw * cap / sqrt(cap^2 + raw^2): equal to raw
       // while small, monotonic in raw and in cap), so the lean keeps growing toward the tip and never meets a corner.
       const cap = CAP[i], sat = cap / Math.sqrt(cap * cap + (tq > RAW_MAX * RAW_MAX ? RAW_MAX * RAW_MAX : tq));
