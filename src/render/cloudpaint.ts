@@ -116,10 +116,10 @@ function paintAtlas() {
         // A thin bright margin along the upper outline (the rim of a cloud against the light), and the underside on
         // the light's side: what a sun at the horizon, or a strike below the cloud, lights. Painted warmer (`warm`).
         const rim = 0.45 * edge * edge * smooth(0.15, 0.5, up);
-        under = 0.8 * (1 - smooth(0.04, 0.42, up)) * smooth(-0.35, 0.25, (0.5 - x) * 0.9 + 0.5 * (bil - 0.5)) * (0.6 + 0.4 * smooth(0.3, 0.7, fine));
+        under = (1 - smooth(0.06, 0.5, up)) * smooth(-0.45, 0.2, (0.5 - x) * 0.9 + 0.5 * (bil - 0.5)) * (0.6 + 0.4 * smooth(0.3, 0.7, fine));
         lit = Math.max(lit, rim);
       }
-      b = Math.min(1, Math.max(tower ? 0.08 : 0.3, b));
+      b = Math.min(1, Math.max(tower ? 0.08 : 0.36, b));
       const o = ((oy + j) * W + ox + i) * 4;
       // sRGB bytes: white tops, grey-blue shade.
       d[o] = 255 * b * (0.84 + 0.16 * b);

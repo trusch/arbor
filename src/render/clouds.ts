@@ -43,15 +43,15 @@ function dataTex(W: number, H: number, cs: string, repeat: boolean) {
 /** Layer height above the camera x fog density (see the header): fog fraction 1 - exp(-(LAYER / sin(elevation))^2). */
 const LAYER = 0.05, HEAP_LAYER = 0.032;
 /** Half side of the square of slots around the camera, and of the deck plane, in layer heights. */
-const BOX = 10, DECK = 30;
+const BOX = 8, DECK = 30;
 const GRID = 16, SLOTS = GRID * GRID, PARTS = 3;
 /**
  * The sky as a dome: a cloud at ground distance r (layer heights) is drawn `dome(r)` layer heights above the camera.
  * It falls to the horizon at `R_HOR` and well under it by `R_OUT`, where slots are dropped, so a cloud enters and
  * leaves the picture over the horizon at its full size and is never scaled in or out.
  */
-const R_HOR = 7.6, R_OUT = 9.6;
-const dome = (r: number) => 1 - (r / R_HOR) * (r / R_HOR) * (r / R_HOR) - 1.5 * smooth(R_HOR, R_OUT, r);
+const R_HOR = 6.4, R_OUT = 7.8;
+const dome = (r: number) => 1 - ((r / R_HOR) * (r / R_HOR)) ** 3 - 1.5 * smooth(R_HOR, R_OUT, r);
 /** Drift in layer heights per m/s of cloud speed, and the speed of the layer (heights / s) while a change of weather is on its way in. */
 const DRIFT = 0.008, TRANSIT = 0.5;
 /** Deck: seconds to close once the bank has arrived, seconds to open; share of slots that must already carry the new weather. */
@@ -67,16 +67,18 @@ const TILES = 9, TILES_U = 5, TILE = (2 * DECK) / TILES, DECK_L = TILES_U * TILE
 /** Largest angular width (rad) of a cloud at its closest approach: a limit on the size of clouds on high routes, fixed at entry. */
 const MAX_ANG = 0.34;
 /** Flash glow under the deck: map size, half side of the plane and its ground distance from the camera toward the strike (deck heights), share of the flash left on the whole deck. */
-const GLOW_S = 128, GLOW_R = 8, GLOW_D = 3.4, DECK_FLASH = 0.12;
+const GLOW_S = 128, GLOW_R = 2.6, GLOW_D = 3, DECK_FLASH = 0.05;
+/** Closest a cloud's route comes to straight overhead (layer heights): 1 left a cloudless corridor 28 degrees wide straight up- and downwind, a whole phone frame. */
+const OVERHEAD = 0.55;
 /** Seconds of opacity fade-in once the painted maps have arrived. */
 const FADE_S = 1.5;
 /** Night heap colour as a share of the live fog colour (plus the share a full moon adds); scud colour as a share of the deck colour, and its opacity. */
 const NIGHT_BODY = 0.16, NIGHT_MOON = 0.12, SCUD_TONE = 0.8, SCUD_NIGHT = 0.6, SCUD_OPACITY = 0.5;
 /** Low sun: share of the sun's light taken out of the body mix, and the gain of the sunlit side drawn over it. */
-const LOW_SPLIT = 0.75, LOW_GAIN = 0.85;
+const LOW_SPLIT = 0.75, LOW_GAIN = 1.1, LOW_WARM = 0.2, BODY_CAP = 1.15;
 /** Target share of slots shown, size factor and darkness per cloud type. */
 const TYPES: Record<string, [number, number, number]> = {
-  none: [0.07, 0.6, 0], cumulus: [0.55, 1.1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
+  none: [0.07, 0.6, 0], cumulus: [0.6, 1.1, 0], stratocumulus: [0.95, 1.45, 0.12], stratus: [0, 1.2, 0.35],
   nimbostratus: [0.3, 1.3, 1], cumulonimbus: [0.8, 1.5, 0.55], fog: [0, 0.7, 0.1],
 };
 
@@ -346,7 +348,7 @@ export class Clouds {
     this.lit.copy(E.sunColor).multiplyScalar(1.9 * sunUp * (0.55 + 0.45 * smooth(0, 0.35, h)));
     this.shade.setRGB(0.5, 0.58, 0.72).multiplyScalar(1.15 * day);
     // The painted shade is in the texture; the material colour is one mix of both lights. Under a deck the heaps grey.
-    const mixLit = 0.5 * (1 - 0.8 * c);
+    const mixLit = 0.62 * (1 - 0.8 * c);
     const flash = E.flash * 1.6;
 
     // ---- deck ----
@@ -387,7 +389,7 @@ export class Clouds {
       gw.position.set(cam.position.x + Math.sin(gYaw) * GLOW_D * HD, cam.position.y + HD * 0.992, cam.position.z + Math.cos(gYaw) * GLOW_D * HD);
       gw.rotation.set(0, gYaw, 0);
       gw.scale.set(2 * GLOW_R * HD, 1, 2 * GLOW_R * HD);
-      gm.color.setRGB(1.5, 1.55, 1.7); gm.opacity = gO;
+      gm.color.setRGB(1.5, 1.55, 1.7); gm.opacity = 0.9 * gO;
     }
 
     // ---- storm tower: comes up over the upwind horizon at a fixed size and advances; the deck closes over it ----
@@ -430,6 +432,11 @@ export class Clouds {
     const ll = 0.3 * this.lit.r + 0.55 * this.lit.g + 0.15 * this.lit.b, wk = 0.9 * (1 - low);
     this.white.setRGB(this.lit.r + (ll - this.lit.r) * wk, this.lit.g + (ll - this.lit.g) * wk, this.lit.b + (ll * 1.04 - this.lit.b) * wk);
     this.tmp.copy(this.shade).lerp(this.white, mixLit * (1 - LOW_SPLIT * low)).multiplyScalar(1 - 0.8 * dark);
+    // The sky behind is near the tone-mapping ceiling by day: a heap brighter than `BODY_CAP` loses its painted shade to the same ceiling (white on white).
+    const bl = 0.3 * this.tmp.r + 0.55 * this.tmp.g + 0.15 * this.tmp.b;
+    if (bl > BODY_CAP) this.tmp.multiplyScalar(BODY_CAP / bl);
+    // Low sun: the whole body, base included, takes a share of the sun's colour (warm mauve, not grey-black bases).
+    this.tmp.r += this.lit.r * LOW_WARM * low; this.tmp.g += this.lit.g * LOW_WARM * low; this.tmp.b += this.lit.b * LOW_WARM * low;
     const F = E.fogColor, fl = 0.3 * F.r + 0.5 * F.g + 0.2 * F.b, nk = (NIGHT_BODY + NIGHT_MOON * E.moonLight) * (1 - day);
     let r = this.tmp.r + nk * (F.r + 0.4 * (fl - F.r)), g = this.tmp.g + nk * (F.g + 0.4 * (fl - F.g)), b = this.tmp.b + nk * (F.b + 0.4 * (fl - F.b));
     // Under a deck the heaps are scud: the deck's own colour a little darker (never lighter than what is behind them,
@@ -472,7 +479,7 @@ export class Clouds {
       const gn = this.gen[i], h2 = hash2(i + 0.3, gn + 9.1), h3 = hash2(i + 0.7, gn * 1.7 + 17.3), h4 = hash2(i + 0.1, gn * 2.3 + 23.9);
       let v = ((Math.floor(i / GRID) + 0.1 + 0.8 * h2) / GRID) * L - BOX;
       // Nothing passes straight overhead (a card there would spin).
-      if (Math.abs(v) < 1) v = v < 0 ? -1 : 1;
+      if (Math.abs(v) < OVERHEAD) v = v < 0 ? -OVERHEAD : OVERHEAD;
       const xr = u * wx - v * wz, zr = u * wz + v * wx, r = Math.hypot(xr, zr);
       if (r > R_OUT) continue;
       const isScud = this.kindOf[i] === 1;
