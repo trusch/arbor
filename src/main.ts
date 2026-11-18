@@ -6,7 +6,7 @@ import { terrainHeight } from './render/backdrop';
 import { BranchMesh } from './render/branchMesh';
 import { Leaves, LEAF_VARIANTS, type LeafMode } from './render/leaves';
 import { CanopyShadow } from './render/canopyShadow';
-import { makeBarkTextures, makeLeafTexture, leafForm } from './render/textures';
+import { makeBarkTextures, makeLeafTexture, makeClusterTexture, leafForm } from './render/textures';
 import { buildPanel } from './ui';
 import { Automation } from './automation';
 import { PRESETS, presetParams } from './presets';
@@ -159,6 +159,10 @@ const branches = new BranchMesh(makeBarkTextures());
 const leafMode = pickLeafMode();
 // Final capacity up front (Low is capped at 32k drawn leaves): no InstancedMesh re-creation while the tree grows.
 const leaves = new Leaves(makeLeafTexture(params.leaves.form), leafMode, params.sky.quality === 'Low' ? 32000 : 48000);
+// Cluster cards (big tree P7 / P8): `?clusters=1`, on with `?years=3`, `?clusters=0` off. They are drawn only while the
+// single leaves exceed the phone cap (`leaves.maxInstances`), so a tree under the cap and desktop High are unchanged.
+{ const cq = query.get('clusters'); leaves.clusters = cq === '1' || (cq !== '0' && sim.years > 1); }
+if (leaves.clusters) leaves.setClusterMap(makeClusterTexture(params.leaves.form));
 /** Safe leaves on PowerVR/Imagination GPUs (first leaf draw hung the driver → context loss), on mobile Low and after a context loss. */
 function pickLeafMode(): LeafMode {
   const gpu = gpuRenderer(stage.renderer.getContext());
@@ -424,6 +428,7 @@ function redraw(time: number, dt: number, force = false) {
     if (params.leaves.form !== leaves.formId) {
       tel.phase('leaf form');
       leaves.setForm(makeLeafTexture(params.leaves.form));
+      if (leaves.clusters) leaves.setClusterMap(makeClusterTexture(params.leaves.form));
       formPlaced = leaves.follow(sim, params, stage.camera.position, Infinity, 0);
       leavesDirty = true; leafRestart = true;
     }
@@ -490,6 +495,7 @@ function redraw(time: number, dt: number, force = false) {
   if (leaves.passOpen && (force || leaves.passes === 0 || !low || !branchMoved)) {
     tel.phase('leaves rebuild', true);
     placed = leaves.stepPass(sim, params, force || leaves.passes === 0 ? Infinity : LEAF_BUDGET_MS, stage.camera.position);
+    if (leaves.clusterSwitch) { leaves.clusterSwitch = false; leavesDirty = true; }
   }
   // Leaves ride their branches: whenever the branch mesh was rebuilt, every drawn leaf is re-placed on its node.
   if (branchMoved && !placed) {

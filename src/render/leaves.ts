@@ -194,6 +194,8 @@ export function leafOpen(age: number, grow = GROW_TIME): typeof leafOpenState {
   o.swing = 0.1 + 0.9 * smooth(0.1, 0.85, u);
   return o;
 }
+/** Cluster cards: blend distances (x crown height), leaves per card, card size vs a leaf (P8). */
+export const CL_NEAR = 0.35, CL_FAR = 0.9, CL_K = 6, CL_SIZE = 2.4;
 const LEAF_D = 11; // floats per instance placement record (see `Leaves.place`); 9 = bud-break date, 10 = fall date (seasons)
 const FOLLOW_EPS = 0.0015; // node travel (world units; leaf ≈ 0.1) below which its leaves are not re-placed
 const FOLLOW_EPS_R = 0.0002; // same for the node radius (drives the fade on thickening wood)
@@ -232,6 +234,24 @@ export class Leaves {
   /** Max drawn leaves (0 = unlimited); Low caps it for the phone budget. */
   maxInstances = 0;
   private rankScale = 1;
+  /**
+   * Cluster cards (big tree P7 / P8, `docs/bigtree.md` T6): a second InstancedMesh (child of `mesh`, same geometry,
+   * a clone of the live material with only `map` swapped) draws records [nS, nAll) of the same record set: a far
+   * clump is one painted spray instead of its leaves. Off unless `clusters` is set (main.ts: `?clusters=1`, or on
+   * with `?years=3`) and the single leaves would exceed `maxInstances`.
+   */
+  clusterMesh: THREE.InstancedMesh | null = null;
+  private clusterMat: THREE.Material | null = null;
+  private clusterMean = new THREE.Color(0.7, 0.78, 0.6);
+  clusters = false;
+  /** Clusters in use (hysteresis on the single-leaf candidate count against `maxInstances`). */
+  clusterActive = false;
+  nS = 0;
+  nAll = 0;
+  /** Set when `clusterActive` changed at a swap (the caller restarts a pass). */
+  clusterSwitch = false;
+  private passN2 = 0;
+  private passCandS = 0;
   private m = new THREE.Matrix4();
   /** Resumable leaf pass (see `beginPass` / `stepPass`): cursor, instances written, candidates seen, input snapshot, back buffers. */
   passOpen = false;
@@ -402,6 +422,7 @@ export class Leaves {
     m.frustumCulled = false;
     if (this.gbufferMaterial) m.userData.gbufferMaterial = this.gbufferMaterial;
     m.count = 0;
+    if (this.clusterMat) this.attachClusters(m, geo, cap);
     if (old) {
       // Capacity grew: carry the drawn instances over so the crown does not blink until the next pass completes.
       (m.instanceMatrix.array as Float32Array).set(old.instanceMatrix.array as Float32Array);
@@ -418,6 +439,69 @@ export class Leaves {
       this.frontD = fd; this.frontNode = fn;
     }
     return m;
+  }
+
+  private attachClusters(m: THREE.InstancedMesh, geo: THREE.BufferGeometry, cap: number) {
+    const old = this.clusterMesh;
+    const c = new THREE.InstancedMesh(geo, this.clusterMat!, cap);
+    c.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    c.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    c.castShadow = m.castShadow; c.receiveShadow = m.receiveShadow; c.frustumCulled = false;
+    c.count = 0;
+    if (old) {
+      (c.instanceMatrix.array as Float32Array).set((old.instanceMatrix.array as Float32Array).subarray(0, Math.min(old.instanceMatrix.array.length, cap * 16)));
+      (c.instanceColor.array as Float32Array).set((old.instanceColor!.array as Float32Array).subarray(0, Math.min(old.instanceColor!.array.length, cap * 3)));
+      c.count = old.count;
+      old.removeFromParent(); old.dispose();
+    }
+    m.add(c);
+    this.clusterMesh = c;
+  }
+
+  /**
+   * Cluster map (`makeClusterTexture`): builds the cluster material on first call (PowerVR rule: clone of the live leaf
+   * material, only `map` changed; safe path through `cleanLeafTexture(.., true)`), later calls repaint the live map in
+   * place like `setForm`.
+   */
+  setClusterMap(map: THREE.Texture): void {
+    this.clusterMean.copy(mapMeanColor(map));
+    const lm = this.material as THREE.MeshLambertMaterial;
+    if (this.clusterMat) {
+      const live = (this.clusterMat as THREE.MeshLambertMaterial).map;
+      if (this.variant && live && live.mipmaps && live.mipmaps.length) {
+        const fresh = cleanLeafTexture(map, true);
+        const dst = live.mipmaps as unknown as { data: Uint8Array }[], src = fresh.mipmaps as unknown as { data: Uint8Array }[];
+        for (let i = 0; i < dst.length && i < src.length; i++) dst[i].data.set(src[i].data);
+        live.needsUpdate = true; fresh.dispose(); map.dispose();
+      } else if (live) { live.image = map.image; live.needsUpdate = true; }
+      return;
+    }
+    if (this.variant && this.variant.map !== 'leaf') { map.dispose(); return; } // dev variants without a leaf map
+    const cm = lm.clone() as THREE.MeshLambertMaterial;
+    cm.map = this.variant && !diagRawLeafMap ? cleanLeafTexture(map, true) : map;
+    if (!this.variant) { cm.onBeforeCompile = lm.onBeforeCompile; cm.customProgramCacheKey = lm.customProgramCacheKey.bind(lm); }
+    this.clusterMat = cm;
+    this.attachClusters(this.mesh, this.mesh.geometry, this.capacity);
+  }
+
+  /** Copy the cluster records' drawn matrices (tail [nS, nAll) of the leaf mesh) into the cluster mesh. */
+  private syncClusters(colours = false): void {
+    const c = this.clusterMesh;
+    if (!c) return;
+    const a = this.nS, b = this.nAll;
+    c.count = b - a;
+    if (b <= a) return;
+    const src = this.mesh.instanceMatrix.array as Float32Array, M = c.instanceMatrix;
+    (M.array as Float32Array).set(src.subarray(a * 16, b * 16));
+    M.clearUpdateRanges(); M.addUpdateRange(0, (b - a) * 16); M.needsUpdate = true;
+    if (colours) {
+      const sc = this.mesh.instanceColor!.array as Float32Array, C = c.instanceColor!, dc = C.array as Float32Array;
+      // Leaf colours divide by the leaf map's mean; a cluster's map has its own mean (twig, shade inside the spray).
+      const mm = this.mapMean, cm = this.clusterMean;
+      const fr = mm.r / Math.max(0.02, cm.r), fg = mm.g / Math.max(0.02, cm.g), fb = mm.b / Math.max(0.02, cm.b);
+      for (let i = a, j = 0; i < b; i++, j += 3) { dc[j] = sc[i * 3] * fr; dc[j + 1] = sc[i * 3 + 1] * fg; dc[j + 2] = sc[i * 3 + 2] * fb; }
+      C.clearUpdateRanges(); C.addUpdateRange(0, (b - a) * 3); C.needsUpdate = true;
+    }
   }
 
   /**
@@ -522,7 +606,7 @@ export class Leaves {
       replaced = this.mesh;
     }
     this.passT = this.variant ? this.sunTransmittance(sim) : null;
-    this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0;
+    this.passLi = 0; this.passEnd = sim.leaves.length; this.passN = 0; this.passCand = 0; this.passN2 = 0; this.passCandS = 0;
     this.passTime = sim.time; this.passRs = this.rankScale;
     this.passPhase = season.phase; this.passSpring = season.springTime; this.passSeasonOn = season.active; this.passFs = leafSeason(this.formId);
     this.passAcc = 0;
@@ -591,7 +675,7 @@ export class Leaves {
       const ks = sOn ? leafSeasonScale(ph, D[k + 9], D[k + 10], D[k + 8] > spr || (D[k + 8] < 0 && D[k + 8] >= -2 && spr > -1e8)) : 1;
       if (ks === 0) {
         // Not in leaf (bud, or fallen). A leaf that lets go now is handed to the falling-leaf system as it was drawn.
-        if (dropP > 0 && ph >= D[k + 10] && DQ.n < 48 && out[o + 4] * out[o + 4] + out[o + 5] * out[o + 5] + out[o + 6] * out[o + 6] > 1e-8 && Math.random() < dropP) {
+        if (dropP > 0 && ph >= D[k + 10] && D[k + 7] > 0 && DQ.n < 48 && out[o + 4] * out[o + 4] + out[o + 5] * out[o + 5] + out[o + 6] * out[o + 6] > 1e-8 && Math.random() < dropP) {
           const q = DQ.n++, col = this.mesh.instanceColor!.array as Float32Array;
           for (let j = 0; j < 16; j++) DQ.m[q * 16 + j] = out[o + j];
           DQ.c[q * 3] = col[i * 3]; DQ.c[q * 3 + 1] = col[i * 3 + 1]; DQ.c[q * 3 + 2] = col[i * 3 + 2];
@@ -630,8 +714,9 @@ export class Leaves {
       const rzx = axx * sr + azx * cr, rzy = azy * cr, rzz = axz * sr + azz * cr;
       // Size: unfolding, fade on thickening wood, distance LOD (up to 1.5x far from the camera so the silhouette fills).
       const ddx = x - cx, ddy = y - cy, ddz = z - cz;
-      const s = D[k + 7] * ks * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
-      const sx = s * kx * gw, sy = s * ky * gl, sz = s * gl;
+      const sz0 = D[k + 7], cl = sz0 < 0; // negative size = cluster card (square map, form proportions painted in)
+      const s = (cl ? -sz0 : sz0) * ks * fade * (1 + 0.5 * smooth(l0, l1, Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)));
+      const sx = s * (cl ? 1 : kx) * gw, sy = s * (cl ? 1 : ky) * gl, sz = s * gl;
       out[o] = rxx * sx; out[o + 1] = rxy * sx; out[o + 2] = rxz * sx; out[o + 3] = 0;
       out[o + 4] = ayx * sy; out[o + 5] = ayy * sy; out[o + 6] = ayz * sy; out[o + 7] = 0;
       out[o + 8] = rzx * sz; out[o + 9] = rzy * sz; out[o + 10] = rzz * sz; out[o + 11] = 0;
@@ -650,7 +735,7 @@ export class Leaves {
    * pass step of the frame: both write rest translations.
    */
   sway(D: Float32Array, P: Int32Array): void {
-    const n = this.followOk ? this.mesh.count : 0;
+    const n = this.followOk ? this.nAll : 0;
     if (n === 0) return;
     const M = this.mesh.instanceMatrix, arr = M.array as Float32Array, RT = this.restT, ND = this.frontNode, FD = this.frontD;
     const N = D.length / 3;
@@ -666,6 +751,7 @@ export class Leaves {
     M.clearUpdateRanges();
     M.addUpdateRange(0, n * 16);
     M.needsUpdate = true;
+    this.syncClusters();
   }
 
   /**
@@ -675,7 +761,7 @@ export class Leaves {
    * Call after `follow` in a frame (follow clears the update ranges), and restart an open pass afterwards.
    */
   takeInstances(inSub: Uint8Array): { n: number; matrices: Float32Array; colours: Float32Array } {
-    const n = this.followOk ? this.mesh.count : 0, ND = this.frontNode, N = inSub.length;
+    const n = this.followOk ? this.nAll : 0, ND = this.frontNode, N = inSub.length;
     let k = 0;
     for (let i = 0; i < n; i++) { const id = ND[i]; if (id >= 0 && id < N && inSub[id]) k++; }
     const matrices = new Float32Array(k * 16), colours = new Float32Array(k * 3);
@@ -699,6 +785,7 @@ export class Leaves {
     }
     M.addUpdateRange(a * 16, (b - a + 1) * 16);
     M.needsUpdate = true;
+    if (b >= this.nS) this.syncClusters();
     return { n: k, matrices, colours };
   }
 
@@ -741,7 +828,7 @@ export class Leaves {
    * last completed pass; same instance order). Cheap enough to run on every branch rebuild. `cam` drives the size LOD.
    */
   follow(sim: TreeSim, p: ArborParams, cam: THREE.Vector3, budgetMs = Infinity, from = 0): boolean {
-    const n = this.mesh.count;
+    const n = this.nAll;
     if (!this.followOk || n === 0) return false;
     const t0 = performance.now();
     const M = this.mesh.instanceMatrix, arr = M.array as Float32Array;
@@ -769,7 +856,7 @@ export class Leaves {
       }
       this.followAt = at;
     }
-    if (done > 0) M.needsUpdate = true;
+    if (done > 0) { M.needsUpdate = true; if (this.nAll > this.nS) this.syncClusters(); }
     this.followPlaced = done;
     this.followMs = performance.now() - t0;
     if (this.followMs > this.followMaxMs) this.followMaxMs = this.followMs;
@@ -798,8 +885,11 @@ export class Leaves {
     const Lt = this.lit, L = Lt.sun, mm = this.mapMean;
     const rs = this.passRs, now = this.passTime;
     const sOn = this.passSeasonOn, sPh = this.passPhase, fs = this.passFs, sH = Math.max(2, sim.bboxMax[1]);
-    let n = this.passN;
-    let cand = this.passCand;
+    let n = this.passN, n2 = this.passN2;
+    let cand = this.passCand, candS = this.passCandS;
+    // Cluster cards (P8 distance blend): a clump further than CL_NEAR x crown height becomes a cluster with rising
+    // probability (per-node hash, so a clump switches whole), all clumps beyond CL_FAR; one card per CL_K leaves.
+    const clOn = this.clusterActive && !!this.clusterMesh, cN = CL_NEAR * sH, cF = CL_FAR * sH;
     const cap = this.capacity;
     const camX = Lt.cam.x, camY = Lt.cam.y, camZ = Lt.cam.z;
     const end = Math.min(this.passEnd, sim.leaves.length);
@@ -813,15 +903,24 @@ export class Leaves {
       if (!nd || sim.chains[nd.chain].pruned) continue;
       // No leaf chains on hanging twigs (steeply down-pointing segments read as strands under the crown).
       if (nd.wdy < -0.75) continue;
+      let isCl = false;
+      if (clOn) {
+        const qx = nd.wx - camX, qy = nd.wy - camY, qz = nd.wz - camZ;
+        isCl = h01(lf.node * 7 + 3) < smooth(cN, cF, Math.sqrt(qx * qx + qy * qy + qz * qz));
+      }
       // Outer-shell fill: sunlit-shell clumps get up to one extra leaf per sim leaf (8 → ~13 per node), the shaded
       // interior stays sparse. Copies come from a per-leaf hash (render-only; the sim rng and tree shapes are untouched).
       hs = (li * 2246822519 + lf.node * 3266489917 + 374761393) >>> 0;
       const shell = smooth(0.06, 0.4, nd.light); // light is mostly 0..0.4 in a grown crown
-      const copies = hr() < 0.85 * shell ? 2 : 1;
+      const copies0 = hr() < 0.85 * shell ? 2 : 1;
+      candS += copies0;
+      if (isCl && h01(li * 13 + 5) * CL_K >= copies0) continue; // about one card per CL_K / copies sim leaves
+      const copies = isCl ? 1 : copies0;
       for (let cp = 0; cp < copies; cp++) {
       const rank = cp === 0 ? lf.rank : (lf.rank + hr()) % 1;
       cand++;
-      if (rank * 4 >= lp.density * rs || n >= cap) continue;
+      if (rank * 4 >= lp.density * rs || n + n2 >= cap) continue;
+      const w = isCl ? cap - 1 - n2 : n; // clusters fill the back buffers from the top, moved behind the singles at the swap
       const fade = 1 - smooth(lp.maxBranchRadius * 0.7, lp.maxBranchRadius, nd.radius);
       const size = lp.size * lf.size * (cp === 0 ? 1 : 0.8 + 0.25 * hr());
       if (size * fade < 1e-4) continue;
@@ -850,18 +949,18 @@ export class Leaves {
       const around = cp === 0 ? lf.around : lf.around + 1.9 + 0.8 * hr();
       const tilt = cp === 0 ? lf.tilt : 0.3 + 0.7 * hr();
       const roll = cp === 0 ? lf.roll : (hr() - 0.5) * 1.4;
-      const k = n * LEAF_D;
+      const k = w * LEAF_D;
       D[k] = t; D[k + 1] = Math.cos(around); D[k + 2] = Math.sin(around); D[k + 3] = Math.cos(tilt); D[k + 4] = Math.sin(tilt);
-      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
-      ND[n] = lf.node;
+      D[k + 5] = Math.cos(roll); D[k + 6] = Math.sin(roll); D[k + 7] = isCl ? -size * CL_SIZE : size; D[k + 8] = em < 0 ? -1 - stag : em + stag; D[k + 9] = tOn; D[k + 10] = tFall;
+      ND[w] = lf.node;
       // Matrix for the bake only (normal, position); the drawn matrices come from `follow` when the pass completes.
-      this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0);
+      this.place(D, ND, w, w + 1, sim, p, camX, camY, camZ, e, 0);
       // Safe path, emerging leaf: the bake wants the light of the GROWN pose (`e2`) and compensates the Lambert term of
       // the pose it is drawn in (`e`, taken at least 0.2 s into the emergence: at scale 0 there is no normal).
       const emg = bakeAll && age < GROW_TIME, e2 = this.scratch2;
       if (emg) {
-        this.poseAge = GROW_TIME; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e2, 0);
-        if (sim.time - D[k + 8] < 0.2 || em < 0) { this.poseAge = 0.2; this.place(D, ND, n, n + 1, sim, p, camX, camY, camZ, e, 0); }
+        this.poseAge = GROW_TIME; this.place(D, ND, w, w + 1, sim, p, camX, camY, camZ, e2, 0);
+        if (sim.time - D[k + 8] < 0.2 || em < 0) { this.poseAge = 0.2; this.place(D, ND, w, w + 1, sim, p, camX, camY, camZ, e, 0); }
         this.poseAge = -1;
       }
       this.pos.set(e[12], e[13], e[14]);
@@ -881,8 +980,8 @@ export class Leaves {
         this.col.setHSL(hh, ss, Math.min(0.85, ll * ao), THREE.SRGBColorSpace);
         this.col.r *= REF_MAP_MEAN.r / mm.r; this.col.g *= REF_MAP_MEAN.g / mm.g; this.col.b *= REF_MAP_MEAN.b / mm.b;
         if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, 1 + NIGHT_FULL_LIFT * this.nightFloor);
-        carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
-        n++;
+        carr[w * 3] = this.col.r; carr[w * 3 + 1] = this.col.g; carr[w * 3 + 2] = this.col.b;
+        if (isCl) n2++; else n++;
         continue;
       }
       let hh = lp.hue + (lf.tint - 0.5) * 0.07 - fresh * 0.05 - flush * 0.05, ss = Math.min(1, lp.saturation * (0.85 + lf.tint * 0.35) + fresh * 0.12 + flush * 0.15), ll = (0.3 + lf.tint * 0.12 + fresh * 0.12 - flush * 0.04) * lp.lightness;
@@ -952,11 +1051,11 @@ export class Leaves {
       if (!bakeAll) { kr /= mm.r; kg /= mm.g; kb /= mm.b; }
       this.col.r *= kr; this.col.g *= kg; this.col.b *= kb;
       if (this.nightGrade > 0) nightTone(this.col, mm, this.nightGrade, bakeAll ? 0.95 : 1);
-      carr[n * 3] = this.col.r; carr[n * 3 + 1] = this.col.g; carr[n * 3 + 2] = this.col.b;
-      n++;
+      carr[w * 3] = this.col.r; carr[w * 3 + 1] = this.col.g; carr[w * 3 + 2] = this.col.b;
+      if (isCl) n2++; else n++;
       }
     }
-    this.passLi = li; this.passN = n; this.passCand = cand;
+    this.passLi = li; this.passN = n; this.passCand = cand; this.passN2 = n2; this.passCandS = candS;
     this.passAcc += performance.now() - t0;
     if (li < end) return false;
     // The swap (which may re-place the whole set) gets a frame of its own instead of riding on a full slice.
@@ -964,6 +1063,14 @@ export class Leaves {
     this.passOpen = false;
     this.passes++;
     const C = this.mesh.instanceColor!;
+    // Cluster records sit at the top of the back buffers: move them right behind the singles.
+    const nS = n;
+    if (n2 > 0) {
+      D.copyWithin(n * LEAF_D, (cap - n2) * LEAF_D, cap * LEAF_D);
+      ND.copyWithin(n, cap - n2, cap);
+      carr.copyWithin(n * 3, (cap - n2) * 3, cap * 3);
+      n += n2;
+    }
     // Swap the record sets together with the colours, then place the new set on the nodes as they are now (the pass
     // ran over many frames, so matrices computed during it would be stale and uneven).
     // Instances whose record is unchanged at the same index (the usual case on a tree that only sags and thickens)
@@ -978,7 +1085,7 @@ export class Leaves {
     const H = Math.max(2, sim.bboxMax[1]);
     if (this.followOk && budgetMs !== Infinity && !(season.active ? Math.abs(season.phase - this.lodPhase) > 0.02 : this.lodPhase !== -1) && lp.shape === this.lodShape && this.formId === this.lodForm && lp.maxBranchRadius === this.lodFade && Math.abs(H - this.lodH) < 0.03 * H
       && Math.hypot(cam.x - this.lodX, cam.y - this.lodY, cam.z - this.lodZ) < 0.05 * H) {
-      const oD = this.frontD, oN = this.frontNode, m = Math.min(n, this.mesh.count);
+      const oD = this.frontD, oN = this.frontNode, m = Math.min(n, this.nAll);
       for (let k = 0; same < m; same++, k += LEAF_D) {
         if (oN[same] !== ND[same] || oD[k] !== D[k] || oD[k + 1] !== D[k + 1] || oD[k + 3] !== D[k + 3] || oD[k + 5] !== D[k + 5]
           || oD[k + 7] !== D[k + 7] || oD[k + 8] !== D[k + 8] || oD[k + 10] !== D[k + 10]) break;
@@ -988,11 +1095,16 @@ export class Leaves {
     this.backNode = this.frontNode; this.frontNode = ND;
     this.followOk = true;
     (C.array as Float32Array).set(n * 3 === carr.length ? carr : carr.subarray(0, n * 3));
-    this.mesh.count = n;
+    this.mesh.count = nS;
+    this.nS = nS; this.nAll = n;
     this.lastN = n;
     // Phone budget: thin by rank (whole clumps stay, sparser everywhere) so the next pass draws ≤ maxInstances.
     this.rankScale = this.maxInstances > 0 && cand > this.maxInstances ? this.maxInstances / cand : 1;
+    // Clusters only where single leaves do not fit the budget (hysteresis 10 %): a tree under the cap is unchanged.
+    const want = this.clusters && !!this.clusterMesh && this.maxInstances > 0 && candS > this.maxInstances * (this.clusterActive ? 0.9 : 1.1);
+    if (want !== this.clusterActive) { this.clusterActive = want; this.rankScale = want ? Math.min(1, this.rankScale * 4) : this.rankScale / 4; this.clusterSwitch = true; }
     this.follow(sim, p, cam, Infinity, same);
+    this.syncClusters(true);
     C.clearUpdateRanges();
     C.addUpdateRange(0, n * 3);
     C.needsUpdate = true;

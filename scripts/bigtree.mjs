@@ -57,7 +57,7 @@ try {
     let attrAlive = 0; for (let i = 0; i < s.attrAlive.length; i++) attrAlive += s.attrAlive[i];
     const lg = s.lightGrid;
     return { t: +s.time.toFixed(1), height: +s.bboxMax[1].toFixed(2), width: +Math.max(s.bboxMax[0] - s.bboxMin[0], s.bboxMax[2] - s.bboxMin[2]).toFixed(2), rBase: +(s.nodes[1]?.radius ?? 0).toFixed(3),
-      nodes: s.nodes.length, maxNodes: a.params.growth.maxNodes, chains: live, pruned, growingTips: alive, attr: s.attrAlive.length, attrAlive, simLeaves: s.leaves.length, drawn: a.leaves.mesh.count,
+      nodes: s.nodes.length, maxNodes: a.params.growth.maxNodes, chains: live, pruned, growingTips: alive, attr: s.attrAlive.length, attrAlive, simLeaves: s.leaves.length, drawn: a.leaves.mesh.count, clusters: a.leaves.clusterMesh ? a.leaves.clusterMesh.count : 0,
       leafCap: a.leaves.maxInstances, rankScale: +(a.leaves.rankScale ?? 1).toFixed(3), lightCells: lg ? lg.dens.length : 0, lightDims: lg ? [lg.nx, lg.ny, lg.nz] : null,
       heapMb: Math.round(performance.memory.usedJSHeapSize / 1e6), gl: { ...r.info.memory }, programs: r.info.programs?.length, pixelRatio: r.getPixelRatio(),
       camDist: +a.stage.camera.position.distanceTo(a.stage.controls.target).toFixed(1), fog: a.stage.scene?.fog?.density ?? null };
@@ -109,6 +109,15 @@ try {
     await page.waitForTimeout(5000);
     out.autoCam = await page.evaluate(() => { const a = window.__arbor, c = a.stage.camera; return { pos: c.position.toArray().map((v) => +v.toFixed(1)), target: a.stage.controls.target.toArray().map((v) => +v.toFixed(1)), far: c.far }; });
     await page.screenshot({ path: `shots/bigtree-${NAME}-framed.png` });
+    // Mask pair for crown coverage (scripts/coverage.py): the same frame with the leaf meshes hidden (clusters are a child).
+    if (E.MASK === '1') {
+      await page.evaluate(() => { const a = window.__arbor; a.leaves.mesh.visible = false; a.params.time.paused = true; });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `shots/bigtree-${NAME}-framed-noleaf.png` });
+      await page.evaluate(() => { const a = window.__arbor; a.leaves.mesh.visible = true; });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `shots/bigtree-${NAME}-framed.png` });
+    }
     const H = out.grown.height;
     const cam = async (tx, ty, px, py, pz, tag) => {
       await page.evaluate(([tx, ty, px, py, pz]) => { const a = window.__arbor; a.params.camera.autoFrame = false; a.stage.takeControl?.(); a.stage.controls.target.set(tx, ty, 0); a.stage.camera.position.set(px, py, pz); a.stage.controls.update?.(); a.fastForward(0); }, [tx, ty, px, py, pz]);
