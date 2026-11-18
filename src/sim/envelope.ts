@@ -53,13 +53,15 @@ export const YEAR_DATE0 = 0.12;
  * Final envelope scale after the last growing year (majestic-oak pass): crown height x1.7 over a crown base lifted x1.6
  * (the low limbs are shed, G4), radius x2.3: a crown broader than tall on a short, clean bole.
  */
-export const YEAR_H = 1.7, YEAR_R = 2.3, YEAR_B = 1.6;
+export const YEAR_H = 2.2, YEAR_R = 1.95, YEAR_B = 1.6;
 /** Lobes of the year shells: radial reach and attractor density vary with azimuth (domes and bays, a few long limbs). */
 export const YEAR_LOBE = 0.22, YEAR_BAY = 0.6;
 /** Share of the total extra size gained in year 2 (section 5 table: 54 %); the rest comes in year 3. */
 const YEAR2_SHARE = 0.54;
 /** Attractor density of the new shells relative to the year-1 crown (coarser twig structure, bounded node count). */
 export const YEAR_DENSITY = 0.25;
+/** Share of shell samples that fall inside last year's envelope and are kept (interior shade shoots, years 2-3); none in the lowest YEAR_INNER_H of last year's crown height (they hung twigs to the ground). */
+export const YEAR_INNER = 0.5, YEAR_INNER_H = 0.3;
 
 /** Envelope scale (height, radius) of growth year `yi` (0 = first year = today's crown). */
 export function yearScale(yi: number, years: number): { h: number; r: number; b: number } {
@@ -84,9 +86,12 @@ export function yearLobe(seed: number, a: number, h: number): number {
 /**
  * Domes and bays (lever 3 of 6.8): with the scaffold picked, the shell lobes sit on the scaffold limbs' azimuths (one
  * dome per limb, gaussian SCAF_SIGMA rad wide, a slight twist with height) and the bays between them are thinned to
- * 1 - SCAF_BAY and pulled in by SCAF_LOBE. The attractor count stays the same (it is redistributed, not removed).
+ * 1 - SCAF_BAY and pulled in by SCAF_LOBE. 6.13: shallow bays (0.95 / 0.3 cut four clefts 0.6 crown radii deep from
+ * the rim to the top: a heart-shaped crown). The attractor count stays the same (it is redistributed, not removed).
  */
-export const SCAF_SIGMA = 0.3, SCAF_LOBE = 0.3, SCAF_BAY = 0.95;
+export const SCAF_SIGMA = 0.3, SCAF_LOBE = 0.1, SCAF_BAY = 0.45, SCAF_REACH = 1.3;
+/** The bays close with height (6.13): from SCAF_TOP0 to SCAF_TOP1 of the crown height the lobe value rises to 1, so no bay reaches the top. */
+export const SCAF_TOP0 = 0.4, SCAF_TOP1 = 0.75;
 export function scafLobe(az: number[], a: number, h: number, sigma = SCAF_SIGMA): number {
   let m = 0;
   for (const b of az) {
@@ -115,12 +120,14 @@ export function sampleShell(p: ArborParams, seed: number, yi: number, years: num
     const x = rng.range(-1.25, 1.25), z = rng.range(-1.25, 1.25), h = rng.next();
     const rr = Math.sqrt(x * x + z * z);
     // Lobed crown: reach x (1 - YEAR_LOBE .. 1 + YEAR_LOBE) by azimuth, and bays thinned (density down to 1 - YEAR_BAY).
-    const lb = scaf ? scafLobe(az, Math.atan2(z, x), h) : yearLobe(seed, Math.atan2(z, x), h);
-    if (rr > envelopeProfile(sh, h) * (1 + LOBE * (2 * lb - 1)) || rng.next() > 1 - BAY * (1 - lb)) continue;
+    let lb = scaf ? scafLobe(az, Math.atan2(z, x), h) : yearLobe(seed, Math.atan2(z, x), h);
+    if (scaf) { const u = Math.min(1, Math.max(0, (h - SCAF_TOP0) / (SCAF_TOP1 - SCAF_TOP0))); lb += (1 - lb) * u * u * (3 - 2 * u); }
+    if (rr > envelopeProfile(sh, h) * (scaf ? SCAF_REACH - 2 * LOBE * (1 - lb) : 1 + LOBE * (2 * lb - 1)) || rng.next() > 1 - BAY * (1 - lb)) continue;
     const px = x * b.radius, py = b.base + h * b.height, pz = z * b.radius;
     // Inside last year's envelope: already colonised.
     const ha = (py - a.base) / a.height;
-    if (ha >= 0 && ha <= 1 && Math.hypot(px, pz) <= envelopeProfile(sh, ha) * a.radius) continue;
+    // Shade shoots (6.12): a share YEAR_INNER of those points stays, so the old crown's interior is re-colonised in layers.
+    if (ha >= 0 && ha <= 1 && Math.hypot(px, pz) <= envelopeProfile(sh, ha) * a.radius && (yi < 1 || ha < YEAR_INNER_H || rng.next() > YEAR_INNER)) continue;
     out[i * 3] = px; out[i * 3 + 1] = py; out[i * 3 + 2] = pz;
     i++;
   }
