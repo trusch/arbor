@@ -137,9 +137,11 @@ const YEAR_KEEP = 4;
  * Breakage at size (P13): wood strength x max(0.25, 1 + YEAR_SIGMA x growing years done) when `years` > 0 (exactly 1
  * in year 1, so the t = 90 calibration of SIGMA_REF holds). Calibrated with `scripts/breaksize.mjs` on the year-3
  * settled tree (docs/bigtree.md 6.8): 0 = year-3 wood as strong as year-1 wood; wind.base 1.0 and 0.8 each break 1
- * limb in 120 s (-0.25 gave 3 / 3 there, and made old wood weaker, which is backwards).
+ * limb in 120 s. Recalibrated on the 6.10 tree (27 230 nodes, straightened limbs, fewer twigs), where 0 breaks nothing
+ * at any base (u p98 0.42): -0.3 (year-3 wood at 0.4 x) gives u p98 1.06, the t = 90 oak's value, and 7 / 3 / 0 limbs
+ * at wind.base 1.0 / 0.8 / 0.6. Old wood weaker per stress is a stand-in for the missing size term (6.8).
  */
-export const YEAR_SIGMA = 0;
+export const YEAR_SIGMA = -0.3;
 /**
  * Scaffold dominance (majestic architecture, years 2-3): at the year-2 bud break the YEAR_SCAF thickest order-1 limbs,
  * at least YEAR_SCAF_SEP rad apart in azimuth, become scaffold; every other order-1 limb and all wood on it is
